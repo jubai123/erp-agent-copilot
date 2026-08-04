@@ -1,0 +1,9 @@
+# Exclude frozen V5 baseline code from the knowledge graph
+agent-copilot-v5-20260317/
+
+# Exclude virtual environments
+.venv/
+**/.venv/
+
+# Exclude session history (docs only)
+session-history/
