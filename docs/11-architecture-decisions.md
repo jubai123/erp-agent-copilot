@@ -157,7 +157,7 @@ def should_use_tool_retrieval(candidates, budget_tokens) -> bool: ...
 **评测如何验证**：消融四组对比（Vector-only / Hybrid / Vector+Rerank / Hybrid+Rerank），报 Recall@1/5、MRR、NDCG@5、P50/P95 延迟。
 
 **留的活口**：
-- 3/42 查询（接口 / 敏感数据 / 泄露）关键词通道仍空——查询词在 KB 中不以原词出现。若后续评测证明这是检索主要失败源，用 LLM 查询重写做术语对齐；代价是每查询 +200~500ms，先量化再上。
+- **已排除的担忧**：关键词通道"为空"不是失败信号。逐查询分析（42 条中 3 条关键词为空：敏感数据泄露 / 商品目录 / 幂等保护）证明两段式管线全部兜底，R@5 均为 1.0——前两条靠向量通道本身即可，幂等保护靠 Rerank 把 `api-order-create` 从召回池提进 top-5（该条 Vector-only 仅 0.50）。关键词为空时 RRF 退化为纯向量结果，无副作用。**LLM 查询重写不启用**（省每查询 +200~500ms）。触发条件收紧为：仅当后续评测出现"关键词为空 **且** 相关文档落在向量召回池之外"的查询（两段式都救不回）才需要术语对齐，先量化再上。
 - RRF 融合参数（关键词 top_k、k 值）可调，前提是消融数据证明裸 Hybrid 不再劣化于 Vector-only。
 - 已知 `ndcg_at_k` 签名 `(retrieved_ids, relevant_ids, graded_relevance=None, k=None)` 位置参数易踩坑（`k` 在 `graded_relevance` 之后），调用需用关键字参数，后续可考虑重排签名。
 
