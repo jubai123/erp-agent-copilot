@@ -1,0 +1,2308 @@
+{
+  "configs": [
+    {
+      "config": "Vector-only",
+      "num_queries": 42,
+      "recall@1": 0.3968,
+      "recall@5": 0.8571,
+      "mrr": 0.8381,
+      "ndcg@5": 0.7791,
+      "precision@5": 0.4103,
+      "p50_latency_ms": 49.78,
+      "p95_latency_ms": 53.97
+    },
+    {
+      "config": "Hybrid",
+      "num_queries": 42,
+      "recall@1": 0.3532,
+      "recall@5": 0.7381,
+      "mrr": 0.7937,
+      "ndcg@5": 0.6824,
+      "precision@5": 0.3111,
+      "p50_latency_ms": 52.79,
+      "p95_latency_ms": 55.7
+    },
+    {
+      "config": "Hybrid+Rerank",
+      "num_queries": 42,
+      "recall@1": 0.377,
+      "recall@5": 0.9167,
+      "mrr": 0.8294,
+      "ndcg@5": 0.8249,
+      "precision@5": 0.4187,
+      "p50_latency_ms": 226.04,
+      "p95_latency_ms": 245.28
+    }
+  ],
+  "l1_coverage": {
+    "coverage_rate": 1.0,
+    "details": [
+      {
+        "query": "如何创建订单",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "订单有哪些状态",
+        "intent": "order/query",
+        "l1_skills": [
+          "order-state-machine",
+          "order-param-constraints"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "怎么取消订单",
+        "intent": "order/cancel",
+        "l1_skills": [
+          "order-state-machine",
+          "order-cancel-constraint",
+          "approval-policy",
+          "idempotency-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "创建订单需要哪些参数",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "订单的生命周期是怎样的",
+        "intent": "order/query",
+        "l1_skills": [
+          "order-state-machine",
+          "order-param-constraints"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "如何查询订单信息",
+        "intent": "order/query",
+        "l1_skills": [
+          "order-state-machine",
+          "order-param-constraints"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "订单取消有哪些限制条件",
+        "intent": "order/cancel",
+        "l1_skills": [
+          "order-state-machine",
+          "order-cancel-constraint",
+          "approval-policy",
+          "idempotency-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "订单创建后可以修改吗",
+        "intent": "order/modify",
+        "l1_skills": [
+          "order-modify-constraint",
+          "order-state-machine",
+          "approval-policy"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "什么情况下订单不能取消",
+        "intent": "order/cancel",
+        "l1_skills": [
+          "order-state-machine",
+          "order-cancel-constraint",
+          "approval-policy",
+          "idempotency-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "订单创建时的幂等机制",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "订单金额是如何计算的",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "如何处理重复提交的订单",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "有哪些商品",
+        "intent": "product/query",
+        "l1_skills": [
+          "product-unit-constraint",
+          "product-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "如何查询库存",
+        "intent": "product/check_stock",
+        "l1_skills": [
+          "product-fields",
+          "scenario-awareness"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "库存不足怎么处理",
+        "intent": "product/check_stock",
+        "l1_skills": [
+          "product-fields",
+          "scenario-awareness"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "如何按名称查询商品",
+        "intent": "product/query",
+        "l1_skills": [
+          "product-unit-constraint",
+          "product-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "商品库存信息包括哪些字段",
+        "intent": "product/check_stock",
+        "l1_skills": [
+          "product-fields",
+          "scenario-awareness"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "苹果的库存还有多少",
+        "intent": "product/check_stock",
+        "l1_skills": [
+          "product-fields",
+          "scenario-awareness"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "商品目录包含哪些信息",
+        "intent": "product/query",
+        "l1_skills": [
+          "product-unit-constraint",
+          "product-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "哪些商品按重量计价",
+        "intent": "product/query",
+        "l1_skills": [
+          "product-unit-constraint",
+          "product-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "供应商不可用怎么办",
+        "intent": "supplier/query",
+        "l1_skills": [
+          "region-enum-constraint",
+          "supplier-status-constraint",
+          "supplier-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "如何查询供应商信息",
+        "intent": "supplier/query",
+        "l1_skills": [
+          "region-enum-constraint",
+          "supplier-status-constraint",
+          "supplier-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "供应商有哪些地区限制",
+        "intent": "supplier/query",
+        "l1_skills": [
+          "region-enum-constraint",
+          "supplier-status-constraint",
+          "supplier-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "如何选择合适的供应商",
+        "intent": "supplier/query",
+        "l1_skills": [
+          "region-enum-constraint",
+          "supplier-status-constraint",
+          "supplier-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "供应商的状态有哪些",
+        "intent": "supplier/query",
+        "l1_skills": [
+          "region-enum-constraint",
+          "supplier-status-constraint",
+          "supplier-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "为什么供应商显示为不可用",
+        "intent": "supplier/query",
+        "l1_skills": [
+          "region-enum-constraint",
+          "supplier-status-constraint",
+          "supplier-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "供应商的评分体系是怎样的",
+        "intent": "supplier/query",
+        "l1_skills": [
+          "region-enum-constraint",
+          "supplier-status-constraint",
+          "supplier-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "订单创建需要校验库存吗",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "下单时如何验证供应商可用性",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "订单可以跳过一个状态直接到终态吗",
+        "intent": "order/query",
+        "l1_skills": [
+          "order-state-machine",
+          "order-param-constraints"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "什么样的订单需要审批",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "什么时候需要调用审批流程",
+        "intent": "order/cancel",
+        "l1_skills": [
+          "order-state-machine",
+          "order-cancel-constraint",
+          "approval-policy",
+          "idempotency-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "超时了怎么办",
+        "intent": "order/query",
+        "l1_skills": [
+          "order-state-machine",
+          "order-param-constraints"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "库存不足的案例怎么处理",
+        "intent": "product/check_stock",
+        "l1_skills": [
+          "product-fields",
+          "scenario-awareness"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "下单超时重试会不会重复创建订单",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "同一个订单重复提交会怎样",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "所有供应商都不可用时系统怎么处理",
+        "intent": "supplier/query",
+        "l1_skills": [
+          "region-enum-constraint",
+          "supplier-status-constraint",
+          "supplier-fields"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "幂等键是什么",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "需要审批的操作有哪些",
+        "intent": "order/cancel",
+        "l1_skills": [
+          "order-state-machine",
+          "order-cancel-constraint",
+          "approval-policy",
+          "idempotency-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "哪些接口需要幂等保护",
+        "intent": "order/create",
+        "l1_skills": [
+          "order-param-constraints",
+          "stock-check-rule",
+          "supplier-availability-rule",
+          "idempotency-rule",
+          "approval-policy",
+          "scenario-awareness",
+          "price-calculation-rule"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "如何避免敏感数据泄露",
+        "intent": "security/data_access",
+        "l1_skills": [
+          "data-security-policy"
+        ],
+        "l1_covered": true
+      },
+      {
+        "query": "模拟器有哪些测试场景",
+        "intent": "system/scenario",
+        "l1_skills": [
+          "scenario-awareness"
+        ],
+        "l1_covered": true
+      }
+    ]
+  },
+  "queries_used": 42,
+  "per_query": {
+    "Vector-only": [
+      {
+        "query": "如何创建订单",
+        "relevant": [
+          "process-order-creation",
+          "api-order-create",
+          "rule-order-lifecycle"
+        ],
+        "retrieved": [
+          "process-order-creation",
+          "api-order-create",
+          "rule-stock-validation",
+          "domain-order-model",
+          "case-timeout-retry",
+          "policy-approval-requirements",
+          "security-data-access",
+          "api-order-query"
+        ]
+      },
+      {
+        "query": "订单有哪些状态",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "rule-order-lifecycle",
+          "api-order-query",
+          "domain-order-model",
+          "case-timeout-retry",
+          "process-order-cancellation",
+          "policy-approval-requirements"
+        ]
+      },
+      {
+        "query": "怎么取消订单",
+        "relevant": [
+          "process-order-cancellation",
+          "rule-order-lifecycle"
+        ],
+        "retrieved": [
+          "process-order-cancellation",
+          "policy-approval-requirements",
+          "security-data-access",
+          "rule-order-lifecycle"
+        ]
+      },
+      {
+        "query": "创建订单需要哪些参数",
+        "relevant": [
+          "process-order-creation",
+          "api-order-create",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "api-order-query",
+          "process-order-creation",
+          "api-order-create",
+          "domain-order-model",
+          "policy-approval-requirements",
+          "case-timeout-retry",
+          "rule-stock-validation"
+        ]
+      },
+      {
+        "query": "订单的生命周期是怎样的",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "rule-order-lifecycle",
+          "domain-order-model",
+          "api-order-query",
+          "api-order-create",
+          "case-timeout-retry",
+          "policy-approval-requirements",
+          "process-stock-insufficient"
+        ]
+      },
+      {
+        "query": "如何查询订单信息",
+        "relevant": [
+          "api-order-query",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "api-order-query",
+          "process-order-cancellation",
+          "api-product-stock",
+          "domain-product-catalog",
+          "domain-order-model",
+          "case-order-apples"
+        ]
+      },
+      {
+        "query": "订单取消有哪些限制条件",
+        "relevant": [
+          "process-order-cancellation",
+          "rule-order-lifecycle",
+          "policy-approval-requirements"
+        ],
+        "retrieved": [
+          "security-data-access",
+          "process-order-cancellation",
+          "policy-approval-requirements",
+          "rule-order-lifecycle",
+          "process-stock-insufficient"
+        ]
+      },
+      {
+        "query": "订单创建后可以修改吗",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "api-order-create",
+          "process-order-cancellation",
+          "case-timeout-retry",
+          "security-data-access",
+          "domain-order-model",
+          "case-insufficient-stock",
+          "rule-stock-validation",
+          "process-order-creation",
+          "api-order-query"
+        ]
+      },
+      {
+        "query": "什么情况下订单不能取消",
+        "relevant": [
+          "process-order-cancellation",
+          "rule-order-lifecycle"
+        ],
+        "retrieved": [
+          "process-order-cancellation",
+          "security-data-access",
+          "rule-order-lifecycle",
+          "policy-approval-requirements"
+        ]
+      },
+      {
+        "query": "订单创建时的幂等机制",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create"
+        ],
+        "retrieved": [
+          "policy-idempotency",
+          "domain-order-model",
+          "case-timeout-retry",
+          "api-order-create"
+        ]
+      },
+      {
+        "query": "订单金额是如何计算的",
+        "relevant": [
+          "api-order-create",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "domain-order-model",
+          "case-order-apples",
+          "process-order-creation",
+          "policy-approval-requirements",
+          "api-order-query",
+          "case-timeout-retry",
+          "rule-stock-validation"
+        ]
+      },
+      {
+        "query": "如何处理重复提交的订单",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create"
+        ],
+        "retrieved": [
+          "case-timeout-retry",
+          "policy-idempotency",
+          "domain-order-model"
+        ]
+      },
+      {
+        "query": "有哪些商品",
+        "relevant": [
+          "domain-product-catalog"
+        ],
+        "retrieved": [
+          "domain-product-catalog",
+          "api-product-stock",
+          "api-product-query",
+          "case-timeout-retry"
+        ]
+      },
+      {
+        "query": "如何查询库存",
+        "relevant": [
+          "api-product-stock",
+          "rule-stock-validation"
+        ],
+        "retrieved": [
+          "api-product-stock",
+          "domain-product-catalog",
+          "api-product-query",
+          "domain-scenario-system",
+          "case-timeout-retry",
+          "case-insufficient-stock"
+        ]
+      },
+      {
+        "query": "库存不足怎么处理",
+        "relevant": [
+          "process-stock-insufficient",
+          "rule-stock-validation"
+        ],
+        "retrieved": [
+          "case-insufficient-stock",
+          "process-stock-insufficient",
+          "rule-stock-validation"
+        ]
+      },
+      {
+        "query": "如何按名称查询商品",
+        "relevant": [
+          "api-product-query",
+          "domain-product-catalog"
+        ],
+        "retrieved": [
+          "api-product-query",
+          "domain-product-catalog",
+          "case-timeout-retry",
+          "api-product-stock"
+        ]
+      },
+      {
+        "query": "商品库存信息包括哪些字段",
+        "relevant": [
+          "domain-product-catalog",
+          "api-product-stock"
+        ],
+        "retrieved": [
+          "api-product-query",
+          "api-product-stock",
+          "domain-product-catalog",
+          "case-insufficient-stock",
+          "rule-stock-validation"
+        ]
+      },
+      {
+        "query": "苹果的库存还有多少",
+        "relevant": [
+          "domain-product-catalog",
+          "case-order-apples",
+          "api-product-stock"
+        ],
+        "retrieved": [
+          "case-insufficient-stock",
+          "case-order-apples",
+          "process-stock-insufficient",
+          "domain-product-catalog"
+        ]
+      },
+      {
+        "query": "商品目录包含哪些信息",
+        "relevant": [
+          "domain-product-catalog",
+          "api-product-query"
+        ],
+        "retrieved": [
+          "domain-product-catalog",
+          "api-product-query",
+          "api-product-stock",
+          "case-timeout-retry"
+        ]
+      },
+      {
+        "query": "哪些商品按重量计价",
+        "relevant": [
+          "domain-product-catalog"
+        ],
+        "retrieved": [
+          "domain-product-catalog",
+          "api-product-query",
+          "case-insufficient-stock",
+          "domain-order-model"
+        ]
+      },
+      {
+        "query": "供应商不可用怎么办",
+        "relevant": [
+          "rule-supplier-selection",
+          "process-supplier-unavailable"
+        ],
+        "retrieved": [
+          "rule-supplier-selection",
+          "process-supplier-unavailable",
+          "domain-supplier-directory",
+          "api-supplier-query"
+        ]
+      },
+      {
+        "query": "如何查询供应商信息",
+        "relevant": [
+          "domain-supplier-directory",
+          "api-supplier-query"
+        ],
+        "retrieved": [
+          "api-order-query",
+          "domain-supplier-directory",
+          "process-supplier-unavailable",
+          "api-supplier-query",
+          "case-timeout-retry"
+        ]
+      },
+      {
+        "query": "供应商有哪些地区限制",
+        "relevant": [
+          "rule-supplier-selection",
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "api-supplier-query",
+          "process-supplier-unavailable",
+          "domain-supplier-directory",
+          "rule-supplier-selection"
+        ]
+      },
+      {
+        "query": "如何选择合适的供应商",
+        "relevant": [
+          "rule-supplier-selection",
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "rule-supplier-selection",
+          "process-supplier-unavailable",
+          "domain-supplier-directory",
+          "api-supplier-query",
+          "case-timeout-retry"
+        ]
+      },
+      {
+        "query": "供应商的状态有哪些",
+        "relevant": [
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "domain-supplier-directory",
+          "api-supplier-query",
+          "rule-supplier-selection",
+          "process-supplier-unavailable",
+          "case-timeout-retry"
+        ]
+      },
+      {
+        "query": "为什么供应商显示为不可用",
+        "relevant": [
+          "process-supplier-unavailable",
+          "domain-supplier-directory",
+          "domain-scenario-system"
+        ],
+        "retrieved": [
+          "rule-supplier-selection",
+          "process-supplier-unavailable",
+          "domain-supplier-directory",
+          "domain-scenario-system",
+          "api-supplier-query"
+        ]
+      },
+      {
+        "query": "供应商的评分体系是怎样的",
+        "relevant": [
+          "rule-supplier-selection",
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "domain-supplier-directory",
+          "process-supplier-unavailable",
+          "rule-supplier-selection",
+          "api-supplier-query",
+          "case-order-apples"
+        ]
+      },
+      {
+        "query": "订单创建需要校验库存吗",
+        "relevant": [
+          "process-order-creation",
+          "rule-stock-validation"
+        ],
+        "retrieved": [
+          "rule-stock-validation",
+          "api-order-create",
+          "case-insufficient-stock",
+          "api-product-stock",
+          "domain-order-model",
+          "process-stock-insufficient"
+        ]
+      },
+      {
+        "query": "下单时如何验证供应商可用性",
+        "relevant": [
+          "process-order-creation",
+          "rule-supplier-selection"
+        ],
+        "retrieved": [
+          "rule-supplier-selection",
+          "api-supplier-query",
+          "case-timeout-retry",
+          "api-order-query",
+          "process-supplier-unavailable",
+          "domain-supplier-directory",
+          "domain-scenario-system"
+        ]
+      },
+      {
+        "query": "订单可以跳过一个状态直接到终态吗",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "domain-order-model",
+          "rule-order-lifecycle",
+          "case-timeout-retry",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "什么样的订单需要审批",
+        "relevant": [
+          "policy-approval-requirements"
+        ],
+        "retrieved": [
+          "api-order-create",
+          "security-data-access",
+          "process-order-cancellation",
+          "api-order-query",
+          "rule-order-lifecycle",
+          "policy-approval-requirements",
+          "rule-stock-validation",
+          "rule-supplier-selection"
+        ]
+      },
+      {
+        "query": "什么时候需要调用审批流程",
+        "relevant": [
+          "policy-approval-requirements",
+          "process-order-cancellation"
+        ],
+        "retrieved": [
+          "api-order-create",
+          "policy-approval-requirements",
+          "rule-order-lifecycle",
+          "api-order-query",
+          "security-data-access",
+          "process-order-cancellation"
+        ]
+      },
+      {
+        "query": "超时了怎么办",
+        "relevant": [
+          "policy-idempotency",
+          "case-timeout-retry"
+        ],
+        "retrieved": [
+          "case-timeout-retry",
+          "domain-scenario-system",
+          "policy-idempotency",
+          "process-stock-insufficient"
+        ]
+      },
+      {
+        "query": "库存不足的案例怎么处理",
+        "relevant": [
+          "process-stock-insufficient",
+          "case-insufficient-stock"
+        ],
+        "retrieved": [
+          "case-insufficient-stock",
+          "process-stock-insufficient",
+          "rule-stock-validation"
+        ]
+      },
+      {
+        "query": "下单超时重试会不会重复创建订单",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create",
+          "case-timeout-retry"
+        ],
+        "retrieved": [
+          "case-timeout-retry",
+          "policy-idempotency",
+          "domain-scenario-system",
+          "rule-stock-validation"
+        ]
+      },
+      {
+        "query": "同一个订单重复提交会怎样",
+        "relevant": [
+          "policy-idempotency",
+          "case-timeout-retry"
+        ],
+        "retrieved": [
+          "case-timeout-retry",
+          "policy-idempotency",
+          "api-order-create"
+        ]
+      },
+      {
+        "query": "所有供应商都不可用时系统怎么处理",
+        "relevant": [
+          "process-supplier-unavailable",
+          "domain-scenario-system"
+        ],
+        "retrieved": [
+          "process-supplier-unavailable",
+          "rule-supplier-selection",
+          "domain-supplier-directory",
+          "domain-scenario-system",
+          "api-supplier-query"
+        ]
+      },
+      {
+        "query": "幂等键是什么",
+        "relevant": [
+          "policy-idempotency",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "policy-idempotency",
+          "case-timeout-retry",
+          "security-data-access",
+          "domain-order-model"
+        ]
+      },
+      {
+        "query": "需要审批的操作有哪些",
+        "relevant": [
+          "policy-approval-requirements",
+          "process-order-cancellation"
+        ],
+        "retrieved": [
+          "policy-approval-requirements",
+          "rule-order-lifecycle",
+          "api-order-create",
+          "security-data-access",
+          "process-order-cancellation",
+          "api-order-query"
+        ]
+      },
+      {
+        "query": "哪些接口需要幂等保护",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create"
+        ],
+        "retrieved": [
+          "policy-idempotency",
+          "case-timeout-retry",
+          "domain-order-model"
+        ]
+      },
+      {
+        "query": "如何避免敏感数据泄露",
+        "relevant": [
+          "security-data-access"
+        ],
+        "retrieved": [
+          "security-data-access",
+          "policy-approval-requirements",
+          "process-order-creation",
+          "process-order-cancellation",
+          "policy-idempotency",
+          "rule-supplier-selection"
+        ]
+      },
+      {
+        "query": "模拟器有哪些测试场景",
+        "relevant": [
+          "api-scenario-control",
+          "domain-scenario-system"
+        ],
+        "retrieved": [
+          "domain-scenario-system",
+          "api-scenario-control",
+          "security-data-access"
+        ]
+      }
+    ],
+    "Hybrid": [
+      {
+        "query": "如何创建订单",
+        "relevant": [
+          "process-order-creation",
+          "api-order-create",
+          "rule-order-lifecycle"
+        ],
+        "retrieved": [
+          "process-order-creation",
+          "process-order-cancellation",
+          "api-order-create",
+          "api-order-query",
+          "rule-stock-validation",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "订单有哪些状态",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "rule-order-lifecycle",
+          "api-order-query",
+          "process-order-cancellation",
+          "domain-order-model",
+          "rule-supplier-selection"
+        ]
+      },
+      {
+        "query": "怎么取消订单",
+        "relevant": [
+          "process-order-cancellation",
+          "rule-order-lifecycle"
+        ],
+        "retrieved": [
+          "process-order-cancellation",
+          "policy-approval-requirements",
+          "api-order-query",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "创建订单需要哪些参数",
+        "relevant": [
+          "process-order-creation",
+          "api-order-create",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "api-order-query",
+          "process-order-creation",
+          "process-order-cancellation",
+          "api-order-create",
+          "api-product-query",
+          "domain-order-model",
+          "api-product-stock",
+          "policy-approval-requirements",
+          "api-scenario-control"
+        ]
+      },
+      {
+        "query": "订单的生命周期是怎样的",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "rule-order-lifecycle",
+          "process-order-cancellation",
+          "domain-order-model",
+          "api-order-query",
+          "security-data-access",
+          "api-order-create"
+        ]
+      },
+      {
+        "query": "如何查询订单信息",
+        "relevant": [
+          "api-order-query",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "api-order-query",
+          "domain-order-model",
+          "process-order-cancellation",
+          "rule-supplier-selection",
+          "api-product-stock",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "订单取消有哪些限制条件",
+        "relevant": [
+          "process-order-cancellation",
+          "rule-order-lifecycle",
+          "policy-approval-requirements"
+        ],
+        "retrieved": [
+          "process-order-cancellation",
+          "security-data-access",
+          "api-order-query",
+          "policy-approval-requirements",
+          "rule-order-lifecycle"
+        ]
+      },
+      {
+        "query": "订单创建后可以修改吗",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "api-order-create",
+          "process-order-cancellation",
+          "api-order-query",
+          "case-timeout-retry",
+          "security-data-access",
+          "domain-order-model"
+        ]
+      },
+      {
+        "query": "什么情况下订单不能取消",
+        "relevant": [
+          "process-order-cancellation",
+          "rule-order-lifecycle"
+        ],
+        "retrieved": [
+          "process-order-cancellation",
+          "security-data-access",
+          "api-order-query",
+          "rule-order-lifecycle"
+        ]
+      },
+      {
+        "query": "订单创建时的幂等机制",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create"
+        ],
+        "retrieved": [
+          "policy-idempotency",
+          "process-order-cancellation",
+          "api-order-query",
+          "domain-order-model",
+          "case-timeout-retry",
+          "security-data-access",
+          "api-order-create"
+        ]
+      },
+      {
+        "query": "订单金额是如何计算的",
+        "relevant": [
+          "api-order-create",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "api-order-query",
+          "case-order-apples",
+          "domain-order-model",
+          "process-order-cancellation",
+          "process-order-creation",
+          "policy-approval-requirements"
+        ]
+      },
+      {
+        "query": "如何处理重复提交的订单",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create"
+        ],
+        "retrieved": [
+          "case-timeout-retry",
+          "process-order-cancellation",
+          "policy-idempotency",
+          "api-order-query",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "有哪些商品",
+        "relevant": [
+          "domain-product-catalog"
+        ],
+        "retrieved": [
+          "api-product-stock",
+          "domain-product-catalog",
+          "api-product-query",
+          "case-order-apples"
+        ]
+      },
+      {
+        "query": "如何查询库存",
+        "relevant": [
+          "api-product-stock",
+          "rule-stock-validation"
+        ],
+        "retrieved": [
+          "api-product-stock",
+          "case-insufficient-stock",
+          "domain-product-catalog",
+          "api-product-query",
+          "rule-supplier-selection",
+          "domain-order-model",
+          "domain-scenario-system",
+          "policy-approval-requirements"
+        ]
+      },
+      {
+        "query": "库存不足怎么处理",
+        "relevant": [
+          "process-stock-insufficient",
+          "rule-stock-validation"
+        ],
+        "retrieved": [
+          "case-insufficient-stock",
+          "process-stock-insufficient",
+          "api-product-query",
+          "process-order-creation",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "如何按名称查询商品",
+        "relevant": [
+          "api-product-query",
+          "domain-product-catalog"
+        ],
+        "retrieved": [
+          "api-product-query",
+          "api-product-stock",
+          "domain-product-catalog",
+          "case-order-apples",
+          "rule-supplier-selection"
+        ]
+      },
+      {
+        "query": "商品库存信息包括哪些字段",
+        "relevant": [
+          "domain-product-catalog",
+          "api-product-stock"
+        ],
+        "retrieved": [
+          "case-insufficient-stock",
+          "api-product-query",
+          "api-product-stock",
+          "domain-product-catalog",
+          "case-order-apples"
+        ]
+      },
+      {
+        "query": "苹果的库存还有多少",
+        "relevant": [
+          "domain-product-catalog",
+          "case-order-apples",
+          "api-product-stock"
+        ],
+        "retrieved": [
+          "case-order-apples",
+          "case-insufficient-stock",
+          "api-product-query"
+        ]
+      },
+      {
+        "query": "商品目录包含哪些信息",
+        "relevant": [
+          "domain-product-catalog",
+          "api-product-query"
+        ],
+        "retrieved": [
+          "domain-product-catalog",
+          "api-product-query",
+          "api-product-stock",
+          "case-timeout-retry"
+        ]
+      },
+      {
+        "query": "哪些商品按重量计价",
+        "relevant": [
+          "domain-product-catalog"
+        ],
+        "retrieved": [
+          "domain-product-catalog",
+          "api-product-stock",
+          "api-product-query",
+          "case-order-apples",
+          "case-insufficient-stock",
+          "domain-order-model"
+        ]
+      },
+      {
+        "query": "供应商不可用怎么办",
+        "relevant": [
+          "rule-supplier-selection",
+          "process-supplier-unavailable"
+        ],
+        "retrieved": [
+          "rule-supplier-selection",
+          "process-supplier-unavailable",
+          "case-order-apples",
+          "domain-order-model",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "如何查询供应商信息",
+        "relevant": [
+          "domain-supplier-directory",
+          "api-supplier-query"
+        ],
+        "retrieved": [
+          "api-order-query",
+          "rule-supplier-selection",
+          "domain-supplier-directory",
+          "domain-order-model",
+          "process-supplier-unavailable",
+          "api-supplier-query",
+          "case-order-apples",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "供应商有哪些地区限制",
+        "relevant": [
+          "rule-supplier-selection",
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "rule-supplier-selection",
+          "api-supplier-query",
+          "process-supplier-unavailable",
+          "case-order-apples",
+          "domain-order-model",
+          "domain-supplier-directory",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "如何选择合适的供应商",
+        "relevant": [
+          "rule-supplier-selection",
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "rule-supplier-selection",
+          "process-supplier-unavailable",
+          "case-order-apples",
+          "domain-supplier-directory",
+          "domain-order-model",
+          "api-supplier-query",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "供应商的状态有哪些",
+        "relevant": [
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "domain-supplier-directory",
+          "rule-supplier-selection",
+          "api-supplier-query",
+          "case-order-apples",
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ]
+      },
+      {
+        "query": "为什么供应商显示为不可用",
+        "relevant": [
+          "process-supplier-unavailable",
+          "domain-supplier-directory",
+          "domain-scenario-system"
+        ],
+        "retrieved": [
+          "rule-supplier-selection",
+          "process-supplier-unavailable",
+          "case-order-apples",
+          "domain-order-model",
+          "domain-supplier-directory",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "供应商的评分体系是怎样的",
+        "relevant": [
+          "rule-supplier-selection",
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "rule-supplier-selection",
+          "domain-supplier-directory",
+          "process-supplier-unavailable",
+          "case-order-apples",
+          "domain-order-model"
+        ]
+      },
+      {
+        "query": "订单创建需要校验库存吗",
+        "relevant": [
+          "process-order-creation",
+          "rule-stock-validation"
+        ],
+        "retrieved": [
+          "rule-stock-validation",
+          "security-data-access",
+          "api-order-create",
+          "case-insufficient-stock",
+          "process-order-cancellation",
+          "api-product-stock",
+          "domain-order-model",
+          "case-order-apples"
+        ]
+      },
+      {
+        "query": "下单时如何验证供应商可用性",
+        "relevant": [
+          "process-order-creation",
+          "rule-supplier-selection"
+        ],
+        "retrieved": [
+          "api-supplier-query",
+          "rule-supplier-selection",
+          "api-product-stock",
+          "case-timeout-retry",
+          "case-order-apples",
+          "api-order-query"
+        ]
+      },
+      {
+        "query": "订单可以跳过一个状态直接到终态吗",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "domain-order-model",
+          "rule-order-lifecycle",
+          "process-order-cancellation",
+          "api-order-query",
+          "rule-supplier-selection",
+          "domain-supplier-directory"
+        ]
+      },
+      {
+        "query": "什么样的订单需要审批",
+        "relevant": [
+          "policy-approval-requirements"
+        ],
+        "retrieved": [
+          "api-order-create",
+          "process-order-cancellation",
+          "security-data-access",
+          "api-order-query",
+          "rule-order-lifecycle"
+        ]
+      },
+      {
+        "query": "什么时候需要调用审批流程",
+        "relevant": [
+          "policy-approval-requirements",
+          "process-order-cancellation"
+        ],
+        "retrieved": [
+          "api-order-create",
+          "process-order-creation",
+          "policy-approval-requirements",
+          "rule-order-lifecycle",
+          "rule-supplier-selection",
+          "api-order-query",
+          "policy-idempotency"
+        ]
+      },
+      {
+        "query": "超时了怎么办",
+        "relevant": [
+          "policy-idempotency",
+          "case-timeout-retry"
+        ],
+        "retrieved": [
+          "case-timeout-retry",
+          "policy-idempotency",
+          "domain-scenario-system",
+          "process-stock-insufficient"
+        ]
+      },
+      {
+        "query": "库存不足的案例怎么处理",
+        "relevant": [
+          "process-stock-insufficient",
+          "case-insufficient-stock"
+        ],
+        "retrieved": [
+          "case-insufficient-stock",
+          "process-stock-insufficient",
+          "api-product-query",
+          "process-order-creation",
+          "security-data-access",
+          "rule-stock-validation"
+        ]
+      },
+      {
+        "query": "下单超时重试会不会重复创建订单",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create",
+          "case-timeout-retry"
+        ],
+        "retrieved": [
+          "policy-idempotency",
+          "case-timeout-retry",
+          "process-order-cancellation",
+          "api-order-query",
+          "api-product-stock"
+        ]
+      },
+      {
+        "query": "同一个订单重复提交会怎样",
+        "relevant": [
+          "policy-idempotency",
+          "case-timeout-retry"
+        ],
+        "retrieved": [
+          "case-timeout-retry",
+          "process-order-cancellation",
+          "policy-idempotency",
+          "api-order-query",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "所有供应商都不可用时系统怎么处理",
+        "relevant": [
+          "process-supplier-unavailable",
+          "domain-scenario-system"
+        ],
+        "retrieved": [
+          "rule-supplier-selection",
+          "process-supplier-unavailable",
+          "case-order-apples",
+          "domain-order-model",
+          "domain-supplier-directory",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "幂等键是什么",
+        "relevant": [
+          "policy-idempotency",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "policy-idempotency",
+          "case-order-apples",
+          "case-timeout-retry",
+          "security-data-access",
+          "domain-order-model"
+        ]
+      },
+      {
+        "query": "需要审批的操作有哪些",
+        "relevant": [
+          "policy-approval-requirements",
+          "process-order-cancellation"
+        ],
+        "retrieved": [
+          "rule-order-lifecycle",
+          "policy-approval-requirements",
+          "process-order-creation",
+          "api-order-create",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "哪些接口需要幂等保护",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create"
+        ],
+        "retrieved": [
+          "policy-idempotency",
+          "case-timeout-retry",
+          "domain-order-model"
+        ]
+      },
+      {
+        "query": "如何避免敏感数据泄露",
+        "relevant": [
+          "security-data-access"
+        ],
+        "retrieved": [
+          "security-data-access",
+          "policy-approval-requirements",
+          "process-order-creation",
+          "process-order-cancellation",
+          "policy-idempotency",
+          "rule-supplier-selection"
+        ]
+      },
+      {
+        "query": "模拟器有哪些测试场景",
+        "relevant": [
+          "api-scenario-control",
+          "domain-scenario-system"
+        ],
+        "retrieved": [
+          "api-scenario-control",
+          "domain-scenario-system",
+          "api-order-create",
+          "api-product-stock",
+          "case-insufficient-stock",
+          "process-order-creation",
+          "security-data-access"
+        ]
+      }
+    ],
+    "Hybrid+Rerank": [
+      {
+        "query": "如何创建订单",
+        "relevant": [
+          "process-order-creation",
+          "api-order-create",
+          "rule-order-lifecycle"
+        ],
+        "retrieved": [
+          "process-order-creation",
+          "api-order-create",
+          "security-data-access",
+          "rule-stock-validation",
+          "policy-approval-requirements",
+          "domain-order-model",
+          "api-order-query"
+        ]
+      },
+      {
+        "query": "订单有哪些状态",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "rule-order-lifecycle",
+          "domain-order-model",
+          "process-order-cancellation",
+          "domain-supplier-directory",
+          "process-order-creation",
+          "policy-approval-requirements",
+          "api-order-query"
+        ]
+      },
+      {
+        "query": "怎么取消订单",
+        "relevant": [
+          "process-order-cancellation",
+          "rule-order-lifecycle"
+        ],
+        "retrieved": [
+          "rule-order-lifecycle",
+          "api-order-query",
+          "policy-approval-requirements",
+          "process-order-cancellation",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "创建订单需要哪些参数",
+        "relevant": [
+          "process-order-creation",
+          "api-order-create",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "policy-approval-requirements",
+          "domain-order-model",
+          "api-order-create",
+          "security-data-access",
+          "api-order-query",
+          "process-order-creation",
+          "api-product-stock"
+        ]
+      },
+      {
+        "query": "订单的生命周期是怎样的",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "rule-order-lifecycle",
+          "domain-order-model",
+          "api-order-create",
+          "security-data-access",
+          "policy-approval-requirements",
+          "process-order-creation"
+        ]
+      },
+      {
+        "query": "如何查询订单信息",
+        "relevant": [
+          "api-order-query",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "api-order-query",
+          "domain-order-model",
+          "process-order-creation",
+          "process-order-cancellation",
+          "security-data-access",
+          "policy-approval-requirements"
+        ]
+      },
+      {
+        "query": "订单取消有哪些限制条件",
+        "relevant": [
+          "process-order-cancellation",
+          "rule-order-lifecycle",
+          "policy-approval-requirements"
+        ],
+        "retrieved": [
+          "rule-order-lifecycle",
+          "process-order-cancellation",
+          "policy-approval-requirements",
+          "security-data-access",
+          "process-stock-insufficient"
+        ]
+      },
+      {
+        "query": "订单创建后可以修改吗",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "security-data-access",
+          "api-order-query",
+          "api-order-create",
+          "process-stock-insufficient",
+          "process-order-creation",
+          "rule-order-lifecycle",
+          "domain-order-model",
+          "process-order-cancellation"
+        ]
+      },
+      {
+        "query": "什么情况下订单不能取消",
+        "relevant": [
+          "process-order-cancellation",
+          "rule-order-lifecycle"
+        ],
+        "retrieved": [
+          "rule-order-lifecycle",
+          "policy-approval-requirements",
+          "process-order-cancellation",
+          "security-data-access",
+          "api-order-query"
+        ]
+      },
+      {
+        "query": "订单创建时的幂等机制",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create"
+        ],
+        "retrieved": [
+          "domain-order-model",
+          "policy-idempotency",
+          "api-order-create",
+          "case-timeout-retry"
+        ]
+      },
+      {
+        "query": "订单金额是如何计算的",
+        "relevant": [
+          "api-order-create",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "domain-order-model",
+          "api-order-create",
+          "process-order-creation",
+          "policy-approval-requirements",
+          "case-order-apples",
+          "api-order-query"
+        ]
+      },
+      {
+        "query": "如何处理重复提交的订单",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create"
+        ],
+        "retrieved": [
+          "domain-order-model",
+          "policy-idempotency",
+          "case-timeout-retry",
+          "api-order-create"
+        ]
+      },
+      {
+        "query": "有哪些商品",
+        "relevant": [
+          "domain-product-catalog"
+        ],
+        "retrieved": [
+          "domain-product-catalog",
+          "api-product-query",
+          "api-product-stock",
+          "case-order-apples"
+        ]
+      },
+      {
+        "query": "如何查询库存",
+        "relevant": [
+          "api-product-stock",
+          "rule-stock-validation"
+        ],
+        "retrieved": [
+          "domain-product-catalog",
+          "api-product-stock",
+          "case-insufficient-stock",
+          "api-product-query",
+          "domain-scenario-system",
+          "rule-stock-validation"
+        ]
+      },
+      {
+        "query": "库存不足怎么处理",
+        "relevant": [
+          "process-stock-insufficient",
+          "rule-stock-validation"
+        ],
+        "retrieved": [
+          "process-stock-insufficient",
+          "case-insufficient-stock",
+          "rule-stock-validation"
+        ]
+      },
+      {
+        "query": "如何按名称查询商品",
+        "relevant": [
+          "api-product-query",
+          "domain-product-catalog"
+        ],
+        "retrieved": [
+          "domain-product-catalog",
+          "api-product-query",
+          "api-product-stock",
+          "case-order-apples"
+        ]
+      },
+      {
+        "query": "商品库存信息包括哪些字段",
+        "relevant": [
+          "domain-product-catalog",
+          "api-product-stock"
+        ],
+        "retrieved": [
+          "domain-product-catalog",
+          "api-product-stock",
+          "policy-approval-requirements",
+          "rule-stock-validation",
+          "api-product-query",
+          "case-insufficient-stock",
+          "domain-scenario-system"
+        ]
+      },
+      {
+        "query": "苹果的库存还有多少",
+        "relevant": [
+          "domain-product-catalog",
+          "case-order-apples",
+          "api-product-stock"
+        ],
+        "retrieved": [
+          "case-insufficient-stock",
+          "case-order-apples",
+          "api-product-stock",
+          "api-product-query",
+          "process-stock-insufficient",
+          "domain-product-catalog"
+        ]
+      },
+      {
+        "query": "商品目录包含哪些信息",
+        "relevant": [
+          "domain-product-catalog",
+          "api-product-query"
+        ],
+        "retrieved": [
+          "domain-product-catalog",
+          "api-product-query",
+          "api-product-stock",
+          "security-data-access",
+          "domain-supplier-directory"
+        ]
+      },
+      {
+        "query": "哪些商品按重量计价",
+        "relevant": [
+          "domain-product-catalog"
+        ],
+        "retrieved": [
+          "domain-product-catalog",
+          "case-order-apples",
+          "case-insufficient-stock",
+          "api-product-query"
+        ]
+      },
+      {
+        "query": "供应商不可用怎么办",
+        "relevant": [
+          "rule-supplier-selection",
+          "process-supplier-unavailable"
+        ],
+        "retrieved": [
+          "process-supplier-unavailable",
+          "api-supplier-query",
+          "rule-supplier-selection",
+          "domain-supplier-directory",
+          "domain-scenario-system"
+        ]
+      },
+      {
+        "query": "如何查询供应商信息",
+        "relevant": [
+          "domain-supplier-directory",
+          "api-supplier-query"
+        ],
+        "retrieved": [
+          "process-supplier-unavailable",
+          "domain-supplier-directory",
+          "api-supplier-query",
+          "api-order-query",
+          "domain-scenario-system",
+          "rule-supplier-selection"
+        ]
+      },
+      {
+        "query": "供应商有哪些地区限制",
+        "relevant": [
+          "rule-supplier-selection",
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "rule-supplier-selection",
+          "api-supplier-query",
+          "process-supplier-unavailable",
+          "domain-supplier-directory"
+        ]
+      },
+      {
+        "query": "如何选择合适的供应商",
+        "relevant": [
+          "rule-supplier-selection",
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "domain-supplier-directory",
+          "api-supplier-query",
+          "rule-supplier-selection",
+          "process-supplier-unavailable",
+          "case-timeout-retry"
+        ]
+      },
+      {
+        "query": "供应商的状态有哪些",
+        "relevant": [
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "api-supplier-query",
+          "domain-supplier-directory",
+          "rule-supplier-selection",
+          "rule-order-lifecycle",
+          "process-supplier-unavailable"
+        ]
+      },
+      {
+        "query": "为什么供应商显示为不可用",
+        "relevant": [
+          "process-supplier-unavailable",
+          "domain-supplier-directory",
+          "domain-scenario-system"
+        ],
+        "retrieved": [
+          "process-supplier-unavailable",
+          "rule-supplier-selection",
+          "domain-scenario-system",
+          "domain-supplier-directory",
+          "api-supplier-query"
+        ]
+      },
+      {
+        "query": "供应商的评分体系是怎样的",
+        "relevant": [
+          "rule-supplier-selection",
+          "domain-supplier-directory"
+        ],
+        "retrieved": [
+          "domain-supplier-directory",
+          "rule-supplier-selection",
+          "process-supplier-unavailable",
+          "api-supplier-query"
+        ]
+      },
+      {
+        "query": "订单创建需要校验库存吗",
+        "relevant": [
+          "process-order-creation",
+          "rule-stock-validation"
+        ],
+        "retrieved": [
+          "rule-stock-validation",
+          "api-order-create",
+          "process-stock-insufficient",
+          "api-product-stock",
+          "domain-order-model",
+          "case-insufficient-stock",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "下单时如何验证供应商可用性",
+        "relevant": [
+          "process-order-creation",
+          "rule-supplier-selection"
+        ],
+        "retrieved": [
+          "api-supplier-query",
+          "domain-supplier-directory",
+          "rule-supplier-selection",
+          "domain-scenario-system",
+          "process-supplier-unavailable"
+        ]
+      },
+      {
+        "query": "订单可以跳过一个状态直接到终态吗",
+        "relevant": [
+          "rule-order-lifecycle",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "domain-order-model",
+          "rule-order-lifecycle",
+          "security-data-access"
+        ]
+      },
+      {
+        "query": "什么样的订单需要审批",
+        "relevant": [
+          "policy-approval-requirements"
+        ],
+        "retrieved": [
+          "api-order-create",
+          "security-data-access",
+          "rule-order-lifecycle",
+          "policy-approval-requirements",
+          "process-order-cancellation",
+          "api-order-query"
+        ]
+      },
+      {
+        "query": "什么时候需要调用审批流程",
+        "relevant": [
+          "policy-approval-requirements",
+          "process-order-cancellation"
+        ],
+        "retrieved": [
+          "api-order-create",
+          "rule-order-lifecycle",
+          "security-data-access",
+          "process-order-cancellation",
+          "policy-approval-requirements",
+          "api-order-query"
+        ]
+      },
+      {
+        "query": "超时了怎么办",
+        "relevant": [
+          "policy-idempotency",
+          "case-timeout-retry"
+        ],
+        "retrieved": [
+          "case-timeout-retry",
+          "policy-idempotency",
+          "domain-scenario-system"
+        ]
+      },
+      {
+        "query": "库存不足的案例怎么处理",
+        "relevant": [
+          "process-stock-insufficient",
+          "case-insufficient-stock"
+        ],
+        "retrieved": [
+          "process-stock-insufficient",
+          "case-insufficient-stock",
+          "rule-stock-validation"
+        ]
+      },
+      {
+        "query": "下单超时重试会不会重复创建订单",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create",
+          "case-timeout-retry"
+        ],
+        "retrieved": [
+          "policy-idempotency",
+          "case-timeout-retry",
+          "api-order-create",
+          "domain-scenario-system"
+        ]
+      },
+      {
+        "query": "同一个订单重复提交会怎样",
+        "relevant": [
+          "policy-idempotency",
+          "case-timeout-retry"
+        ],
+        "retrieved": [
+          "case-timeout-retry",
+          "policy-idempotency",
+          "domain-order-model"
+        ]
+      },
+      {
+        "query": "所有供应商都不可用时系统怎么处理",
+        "relevant": [
+          "process-supplier-unavailable",
+          "domain-scenario-system"
+        ],
+        "retrieved": [
+          "process-supplier-unavailable",
+          "domain-scenario-system",
+          "rule-supplier-selection",
+          "api-supplier-query",
+          "domain-supplier-directory"
+        ]
+      },
+      {
+        "query": "幂等键是什么",
+        "relevant": [
+          "policy-idempotency",
+          "domain-order-model"
+        ],
+        "retrieved": [
+          "domain-order-model",
+          "policy-idempotency",
+          "case-order-apples",
+          "case-timeout-retry"
+        ]
+      },
+      {
+        "query": "需要审批的操作有哪些",
+        "relevant": [
+          "policy-approval-requirements",
+          "process-order-cancellation"
+        ],
+        "retrieved": [
+          "api-order-create",
+          "rule-order-lifecycle",
+          "policy-approval-requirements",
+          "process-order-cancellation",
+          "security-data-access",
+          "api-order-query"
+        ]
+      },
+      {
+        "query": "哪些接口需要幂等保护",
+        "relevant": [
+          "policy-idempotency",
+          "api-order-create"
+        ],
+        "retrieved": [
+          "api-order-create",
+          "policy-idempotency",
+          "case-order-apples",
+          "domain-scenario-system",
+          "security-data-access",
+          "domain-order-model",
+          "case-timeout-retry"
+        ]
+      },
+      {
+        "query": "如何避免敏感数据泄露",
+        "relevant": [
+          "security-data-access"
+        ],
+        "retrieved": [
+          "security-data-access",
+          "policy-approval-requirements",
+          "rule-supplier-selection",
+          "policy-idempotency",
+          "rule-order-lifecycle"
+        ]
+      },
+      {
+        "query": "模拟器有哪些测试场景",
+        "relevant": [
+          "api-scenario-control",
+          "domain-scenario-system"
+        ],
+        "retrieved": [
+          "domain-scenario-system",
+          "api-scenario-control",
+          "api-supplier-query",
+          "process-order-creation",
+          "rule-supplier-selection",
+          "api-product-stock",
+          "api-order-create",
+          "security-data-access",
+          "case-insufficient-stock"
+        ]
+      }
+    ]
+  }
+}
