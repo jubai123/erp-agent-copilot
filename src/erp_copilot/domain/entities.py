@@ -173,7 +173,10 @@ class Tool(Base):
 
     tenant: Mapped[Tenant] = relationship("Tenant", back_populates="tools")
     versions: Mapped[list[ToolVersion]] = relationship(
-        "ToolVersion", back_populates="tool", cascade="all, delete-orphan"
+        "ToolVersion",
+        back_populates="tool",
+        cascade="all, delete-orphan",
+        order_by="ToolVersion.version",
     )
 
 
