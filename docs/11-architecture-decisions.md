@@ -95,15 +95,24 @@ classify_intent → retrieve_context（必走）→ build_plan → ...
 **决策**：`classify_intent` 的 `(domain, action)` → 确定性映射表 → 候选 3-8 个直接进 `build_plan` Prompt。候选数超过阈值（如 5-8 个）时才启用"向量粗筛 + Rerank 精排"。
 
 ```python
-# 第一级：确定性过滤（主引擎，必过）
+# 第一级：确定性过滤（主引擎，必过）——2026-08-07 与 candidate_filter.py 落地实现同步
 DOMAIN_TOOL_MAP = {
-    ("product", "query"): ["getProductByName", "getProduct", ...],
-    ("order", "create"): ["getProductByName", "querySuppliersByDeliveryRegion", "createOrder"],
-    ...
+    ("product", "query"): ["getProductByName", "getProductById", "getProductSubstitutesByName"],
+    ("product", "check_stock"): ["getProductByName", "getProductById", "getProductSubstitutesByName"],
+    ("supplier", "query"): ["querySuppliersByDeliveryRegion", "getSupplierByStatus"],
+    ("order", "create"): ["getProductByName", "querySuppliersByDeliveryRegion", "getSupplierByStatus", "createOrder"],
+    ("order", "query"): ["getOrderByOrderId"],
+    ("order", "cancel"): ["getOrderByOrderId", "cancelOrder", "createOrder"],
+    ("order", "update_status"): ["getOrderByOrderId", "updateOrderStatus"],
+    ("order", "modify"): ["getOrderByOrderId", "cancelOrder", "createOrder"],
+    ("security", "data_access"): [],  # 无工具候选
+    ("system", "scenario"): [],       # 无工具候选
 }
 
-# 第二级：向量检索（按需精排，仅候选 > 阈值时启用）
-def should_use_tool_retrieval(candidates, budget_tokens) -> bool: ...
+# 第二级：向量检索（按需精排，仅候选 > 阈值时启用；"超过阈值"为严格大于）
+TOOL_RETRIEVAL_THRESHOLD = 5
+def should_use_tool_retrieval(candidates, threshold=TOOL_RETRIEVAL_THRESHOLD) -> bool:
+    return len(candidates) > threshold
 ```
 
 **为什么**：V6 当前 9 个工具，意图过滤已足够，`build_plan` 犯错面是 3 选 1 不是 25 选 1。

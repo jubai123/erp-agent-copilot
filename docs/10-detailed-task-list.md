@@ -505,7 +505,7 @@
 
 ---
 
-# 阶段三：知识检索（预计 10-12 个任务）
+# 阶段三：知识检索（预计 14 个任务）
 
 > **阶段教学引言**
 >
@@ -514,6 +514,7 @@
 > 这些知识存储在知识库中，Agent 需要**检索**出最相关的内容。
 >
 > 这个阶段你会学到：
+> - **知识分层**：规则类知识（L1 Skill，确定性注入）与描述类知识（L2 RAG，语义检索）分开
 > - **向量检索（Vector Search）**：把文本转成数字向量，语义相近的向量距离近
 > - **全文检索（Full-Text Search）**：传统搜索引擎用的关键词匹配
 > - **混合检索（Hybrid Search）**：向量 + 全文，取两者之长
@@ -522,7 +523,49 @@
 
 ---
 
-## 任务 3.1：文档导入——Markdown 和文本解析
+## 任务 3.1：建立统一事实表
+
+**目标**：先定义模拟器、知识库和评测集共享的"世界状态"，避免不同文档互相冲突。
+
+**交付物**：
+- `datasets/knowledge/manifest.yaml`（事实表，覆盖产品、供应商、订单字段和枚举、业务约束、审批要求）
+- `tests/unit/retrieval/test_fact_table.py`（校验事实表字段与模拟器数据一致）
+
+**验收标准**：
+- 每个业务实体有字段定义、必填参数、API 依赖、业务约束、权限范围和审批要求
+- 事实表与 ERP Simulator 种子数据一致（产品单位、库存、供应商区域、订单状态机）
+- 评审：状态机和枚举无冲突
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 事实表（Source of Truth） | 一份统一定义，模拟器、知识库、评测集都引用它，避免三处口径不一致 |
+
+---
+
+## 任务 3.2：定义 L1 Skill 和意图→Skill 映射表
+
+**目标**：把能写成"如果 A 则 B"的规则提取为结构化 Skill，由意图精确触发，确定性注入。
+
+**交付物**：
+- `datasets/knowledge/skills/skills.yaml`（10-15 个 Skill：状态机、参数约束、审批策略）
+- `datasets/knowledge/skills/intent_skill_map.yaml`（`(domain, action)` → skill 列表）
+- `src/erp_copilot/retrieval/skill_matcher.py`（确定性匹配，不走向量检索）
+- `tests/unit/retrieval/test_skill_matcher.py`
+
+**验收标准**：
+- 每个意图 `(domain, action)` 精确命中 1-4 个 Skill，无误匹配
+- 订单状态机、region 枚举约束、审批策略都在 L1 中定义
+- 这些知识不进入 L2 检索
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 确定性 vs 概率 | Skill 匹配是精确查找（100% 命中），RAG 是语义召回（概率命中）。安全关键路径用确定性 |
+
+---
+
+## 任务 3.3：文档导入——Markdown 和文本解析
 
 **目标**：上传知识文档，解析并分块。
 
@@ -544,7 +587,7 @@
 
 ---
 
-## 任务 3.2：文档导入——去重和版本管理
+## 任务 3.4：文档导入——去重和版本管理
 
 **目标**：同一文档重复上传不会创建重复数据。
 
@@ -559,7 +602,7 @@
 
 ---
 
-## 任务 3.3：Embedding——文本转向量
+## 任务 3.5：Embedding——文本转向量
 
 **目标**：调用 Embedding 模型将文本块转成向量。
 
@@ -580,7 +623,7 @@
 
 ---
 
-## 任务 3.4：pgvector——向量存储和检索
+## 任务 3.6：pgvector——向量存储和检索
 
 **目标**：将向量存入 pgvector 并实现基础向量搜索。
 
@@ -601,7 +644,7 @@
 
 ---
 
-## 任务 3.5：全文检索——PostgreSQL FTS
+## 任务 3.7：全文检索——PostgreSQL FTS
 
 **目标**：实现基于关键词的全文检索。
 
@@ -622,7 +665,7 @@
 
 ---
 
-## 任务 3.6：混合检索——RRF 融合
+## 任务 3.8：混合检索——RRF 融合
 
 **目标**：将向量检索和全文检索结果合并排序。
 
@@ -642,7 +685,7 @@
 
 ---
 
-## 任务 3.7：Rerank——Cross-Encoder 重排序
+## 任务 3.9：Rerank——Cross-Encoder 重排序
 
 **目标**：对混合检索结果用更强的模型精排。
 
@@ -662,7 +705,7 @@
 
 ---
 
-## 任务 3.8：引用装配和上下文装配
+## 任务 3.10：引用装配和上下文装配
 
 **目标**：检索结果带上引用来源，装配成 Agent 可用的上下文。
 
@@ -676,7 +719,7 @@
 
 ---
 
-## 任务 3.9：知识库 API 路由
+## 任务 3.11：知识库 API 路由
 
 **目标**：暴露知识导入和检索接口。
 
@@ -691,17 +734,23 @@
 
 ---
 
-## 任务 3.10：检索评测——60 条数据集
+## 任务 3.12：检索评测——40 条 RAG + L1 遵循
 
-**目标**：建立检索评测数据集。
+> **状态：✅ 已完成**（2026-08-07，Phase 3 收尾）
 
-**交付物**：
-- `evals/datasets/retrieval_60.json`（60 条查询+标注的相关文档 ID）
-- `evals/scorers/retrieval_scorer.py`
+**目标**：建立 L2 RAG 检索评测数据集，并为 L1 Skill 建立遵循评测。
 
-**验收标准**：
-- 每条数据有 query、relevant_doc_ids、注释
-- 评分器输出 Recall@1、Recall@5、MRR、NDCG
+**交付物**（实际落地）：
+- `datasets/eval/retrieval_queries.yaml`（42 条查询+标注的相关文档 ID，即任务原定的 retrieval_40.json，格式为 YAML、字段为 `relevant_docs`）
+- `evals/datasets/skill_follow_20.json`（20 条 L1 遵循评测：给定意图，检查 LLM 是否遵循注入的约束）
+- `evals/scorers/retrieval_scorer.py`（输出 Recall@1、Recall@5、MRR、NDCG@5、Precision@5、P50/P95 延迟，指标算法与 `evals/scripts/run_ablation.py` 逐位一致）
+- `evals/scorers/skill_scorer.py`（输出约束遵循率、误触发率）
+
+**验收标准**（落地核对）：
+- ✅ 每条数据有 query、relevant_docs（相关文档 ID 为 `source` 字段值，与消融报告的 doc 级评测口径一致）
+- ⚠️ 混淆负向：42 条查询未显式标注 negative 字段；消融逐查询分析中混淆度靠相关文档集覆盖（如"苹果的库存"相关 3 份文档）体现。若需要显式 hard negatives 评测，列为后续增量
+- ✅ L1 遵循评测包含非法状态转换、非法 region 值等必须拒绝的场景（`tests/unit/evals/test_skill_follow_dataset.py::TestDatasetConsistency::test_includes_mandatory_reject_scenarios` 钉死，15 REJECT / 5 FOLLOW）
+- ✅ 评分器输出 Recall@1、Recall@5、MRR、NDCG
 
 **教学要点**：
 | 概念 | 讲解内容 |
@@ -709,23 +758,25 @@
 | Recall@K | Top-K 结果中包含了多少正确答案：答对/应有。越高越好 |
 | MRR | 第一个正确答案的排名的倒数，越靠前分数越高 |
 | NDCG | 考虑排名位置权重的评价指标，排名越靠前权重越大 |
+| L1 遵循率 | 注入的约束被 LLM 遵守的比例，不测召回（确定性注入命中 100%） |
 
 ---
 
-## 任务 3.11：检索消融实验
+## 任务 3.13：检索消融实验
 
-**目标**：对比 Vector-only、Hybrid、Hybrid+Rerank 三组效果。
+**目标**：对比 Vector-only、Hybrid、Hybrid+Rerank 三组效果，并对比 L1 Skill 开关。
 
 **交付物**：
 - `evals/scripts/run_ablation.py`
 
 **验收标准**：
 - 一组命令运行三种配置并输出对比表格
-- 每种配置跑完 60 条检索评测集
+- 每种配置跑完 40 条 RAG 评测集
+- 额外跑 L1 Skill 开/关对比，验证确定性注入的增益
 
 ---
 
-## 任务 3.12：检索优化迭代
+## 任务 3.14：检索优化迭代
 
 **目标**：根据消融实验优化检索参数。
 
@@ -737,7 +788,7 @@
 
 ---
 
-# 阶段四：Agent Runtime（预计 14-16 个任务）
+# 阶段四：Agent Runtime（预计 16 个任务）
 
 > **阶段教学引言**
 >
@@ -807,21 +858,47 @@
 
 ## 任务 4.4：retrieve_context 节点
 
-**目标**：根据意图从知识库检索相关业务规则。
+**目标**：根据意图从知识库检索相关业务规则（L2 RAG）。
 
 **交付物**：
 - `src/erp_copilot/agent/nodes/retrieve_context.py`
 
 **验收标准**：
+- **必走节点**：每个 Run 都执行，LLM 不决策"是否检索"
 - 调用混合检索获取相关文档
 - 结果保存到 AgentState.retrieved_context
 - 记录引用来源
+- 对检索结果执行租户、ACL 和可信度过滤
+- 根据意图构造查询（实体、业务域），不是把用户原话直接扔进向量库
 
 ---
 
-## 任务 4.5：build_plan 节点
+## 任务 4.5：工具候选过滤
 
-**目标**：LLM 生成结构化的执行计划（Plan DAG）。
+> **状态：✅ 已完成**（2026-08-07，Phase 3 收尾落地，早于任务 4.6 build_plan 使用）
+
+**目标**：实现第一级意图→域确定性过滤，预留第二级向量精排接口。
+
+**交付物**：
+- `src/erp_copilot/tools/candidate_filter.py`（DOMAIN_TOOL_MAP + should_use_tool_retrieval 判定）
+- `tests/unit/tools/test_candidate_filter.py`
+
+**验收标准**（落地核对）：
+- ✅ 主写意图 `(order/create, product/query, order/cancel)` 精确映射 3-8 个候选（测试钉死）；`supplier/query` 恰为 V6 注册的 2 个供应商工具；`security/data_access`、`system/scenario` 无工具候选（空列表）
+- ⚠️ V5 25 工具基线：V6 工具集精简为 9 个（见 docs/05 工具表），映射表与 V5 不再一一对应；V5 意图训练数据转 40 条 Tool 检索评测 Case 列为后续增量
+- ✅ 预留向量精排接口（`should_use_tool_retrieval` 严格大于阈值 5 才启用第二级），当前 9 个工具任何意图均不触发（`test_current_v6_intents_never_trigger_rerank` 钉死）
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 候选过滤 vs 工具检索 | 意图过滤是确定性主引擎（3 选 1）；向量检索是概率精排（25 选 5），仅在候选过多时启用 |
+| V5 工具检索的去向 | 两阶段思想保留为增长路径，角色从"唯一引擎"降级为"按需精排层" |
+
+---
+
+## 任务 4.6：build_plan 节点
+
+**目标**：LLM 生成结构化的执行计划（Plan DAG），输入被约束为小候选集 + L1/L2 注入。
 
 **交付物**：
 - `src/erp_copilot/agent/nodes/build_plan.py`
@@ -830,12 +907,15 @@
 - 输入查询和上下文→输出 Plan DAG JSON
 - 每个 Step 有 tool_name、arguments、depends_on
 - Planner 只输出 Plan，不直接调用工具
+- **工具候选约束**：收到的工具是意图过滤后的 3-8 个（来自 DOMAIN_TOOL_MAP），不是全部工具
+- **L1/L2 注入顺序**：System → L1 Active Skills（硬约束）→ L2 Retrieved Knowledge（参考）→ 候选工具 → User Query
+- 检测 L1 约束被违反时（如非法状态转换），直接拒绝生成对应 Step
 
 ---
 
-## 任务 4.6：validate_plan 节点
+## 任务 4.7：validate_plan 节点
 
-**目标**：校验 Plan DAG 的合法性。
+**目标**：校验 Plan DAG 的合法性（四层防御的第 2 层，确定性校验）。
 
 **交付物**：
 - `src/erp_copilot/agent/nodes/validate_plan.py`
@@ -844,7 +924,10 @@
 - 检测循环依赖→拒绝
 - 检测不存在的工具名→拒绝
 - 检测缺少必填参数→拒绝
+- 检测 argument_sources 引用的 Step 是否在 depends_on 中→拒绝
+- 检测写 Step 是否有补偿/回退说明→拒绝
 - 计算拓扑序和可并行步骤集合
+- 放行但语义错选（如选了 getProductById 传 id=苹果）由第 4 层 verify_results 兜底
 
 **教学要点**：
 | 概念 | 讲解内容 |
@@ -852,10 +935,11 @@
 | DAG 是什么 | 有向无环图，边有方向，不能形成循环（A→B→C→A 不行） |
 | 拓扑排序 | 把 DAG 节点排成线性序列，保证依赖项在前面 |
 | 为什么需要 validate | LLM 可能"幻想"出不存在的工具或参数，必须拦截 |
+| 四层防御 | 候选约束（上游）→ validate_plan → Gateway 校验 → verify_results。单层无法防语义错选 |
 
 ---
 
-## 任务 4.7：policy_check 节点
+## 任务 4.8：policy_check 节点
 
 **目标**：检查计划中的每一步是否有权限执行。
 
@@ -870,7 +954,7 @@
 
 ---
 
-## 任务 4.8：execute_ready_steps 节点——基础版
+## 任务 4.9：execute_ready_steps 节点——基础版
 
 **目标**：执行依赖已满足的步骤（先做串行版）。
 
@@ -884,7 +968,7 @@
 
 ---
 
-## 任务 4.9：execute_ready_steps——并行版
+## 任务 4.10：execute_ready_steps——并行版
 
 **目标**：无依赖关系的 READ 步骤并行执行。
 
@@ -898,7 +982,7 @@
 
 ---
 
-## 任务 4.10：verify_results 节点
+## 任务 4.11：verify_results 节点
 
 **目标**：检查执行结果是否满足业务目标。
 
@@ -913,7 +997,7 @@
 
 ---
 
-## 任务 4.11：Checkpoint 和恢复
+## 任务 4.12：Checkpoint 和恢复
 
 **目标**：每个节点完成后保存状态，进程崩溃后能恢复。
 
@@ -927,7 +1011,7 @@
 
 ---
 
-## 任务 4.12：上下文预算管理
+## 任务 4.13：上下文预算管理
 
 **目标**：控制发送给 LLM 的总 token 数。
 
@@ -941,7 +1025,7 @@
 
 ---
 
-## 任务 4.13：SSE 事件流
+## 任务 4.14：SSE 事件流
 
 **目标**：Agent 执行过程通过 SSE 实时推送给客户端。
 
@@ -962,7 +1046,7 @@
 
 ---
 
-## 任务 4.14：取消和超时
+## 任务 4.15：取消和超时
 
 **目标**：支持取消正在执行的 Run 和设置截止时间。
 
@@ -977,7 +1061,7 @@
 
 ---
 
-## 任务 4.15：首个只读场景端到端演示
+## 任务 4.16：首个只读场景端到端演示
 
 **目标**：完成一个完整的只读任务（查库存+选供应商）。
 
@@ -1336,11 +1420,11 @@
 |------|--------|--------------------------|
 | 一：工程骨架 | 12 | D1-D5 |
 | 二：工具与模拟器 | 12 | D6-D10 |
-| 三：知识检索 | 12 | D11-D15 |
-| 四：Agent Runtime | 15 | D16-D22 |
+| 三：知识检索 | 14 | D11-D15 |
+| 四：Agent Runtime | 16 | D16-D22 |
 | 五：安全审批恢复 | 10 | D23-D26 |
 | 六：评测与交付 | 12 | D27-D30 |
-| **合计** | **73** | **30 天** |
+| **合计** | **76** | **30 天** |
 
 ---
 
