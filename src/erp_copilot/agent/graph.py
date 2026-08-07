@@ -13,6 +13,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from erp_copilot.agent.nodes.classify_intent import classify_intent_node
 from erp_copilot.agent.state import AgentState, AgentStatus
 
 # Node names in execution order (docs/03 §4, minus request_approval).
@@ -29,12 +30,7 @@ NODE_NAMES: tuple[str, ...] = (
 )
 
 
-# -- Node stubs (replaced by real modules in tasks 4.3-4.11) -------------------
-
-
-def classify_intent(state: AgentState) -> dict[str, Any]:
-    """TODO(task 4.3): classify (domain, action) and initial risk."""
-    return {"status": AgentStatus.PLANNING}
+# -- Node stubs (replaced by real modules in tasks 4.4-4.11) -------------------
 
 
 def retrieve_context(state: AgentState) -> dict[str, Any]:
@@ -104,7 +100,7 @@ def build_agent_graph() -> CompiledStateGraph:
     builder = StateGraph(AgentState)
     # Registered explicitly — langgraph's _Node protocol does not type-check
     # when node functions are passed through a dict iteration.
-    builder.add_node("classify_intent", classify_intent)
+    builder.add_node("classify_intent", classify_intent_node)
     builder.add_node("retrieve_context", retrieve_context)
     builder.add_node("build_plan", build_plan)
     builder.add_node("validate_plan", validate_plan)
