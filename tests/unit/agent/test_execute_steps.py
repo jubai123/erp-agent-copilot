@@ -449,6 +449,46 @@ class TestBuildExecuteStepsNode:
         assert calls == ["getProductById"]
         assert updates["step_results"]["s2"].status == StepStatus.SKIPPED
 
+    def test_completed_step_is_not_rerun(self) -> None:
+        calls: list[str] = []
+
+        async def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+            calls.append(tool_name)
+            return ToolResult.success(tool_version_id="v1", data={})
+
+        node = build_execute_steps_node(executor=executor)
+        plan = Plan(steps=[_step("s1")])
+        existing = {"s1": _completed("s1", {"price": 10})}
+        state = _node_state(plan=plan, existing=existing)
+        updates = _invoke(node, state)
+        assert calls == []
+        assert updates["step_results"]["s1"] == existing["s1"]
+
+    def test_resume_reruns_only_incomplete_steps(self) -> None:
+        calls: list[str] = []
+
+        async def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+            calls.append(tool_name)
+            return ToolResult.success(tool_version_id="v1", data={})
+
+        node = build_execute_steps_node(executor=executor)
+        plan = Plan(
+            steps=[
+                _step("s1"),
+                _step("s2", tool_name="getOrderByOrderId", depends_on=["s1"]),
+            ]
+        )
+        existing = {"s1": _completed("s1", {"id": 7})}
+        state = _node_state(
+            plan=plan,
+            existing=existing,
+            validation=PlanValidation(is_valid=True, parallel_groups=[["s1"], ["s2"]]),
+        )
+        updates = _invoke(node, state)
+        assert calls == ["getOrderByOrderId"]
+        assert updates["step_results"]["s1"] == existing["s1"]
+        assert updates["step_results"]["s2"].status == StepStatus.COMPLETED
+
     def test_preserves_existing_step_results(self) -> None:
         async def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
             return ToolResult.success(tool_version_id="v1", data={"price": 10})

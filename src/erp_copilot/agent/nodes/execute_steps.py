@@ -155,6 +155,11 @@ def build_execute_steps_node(
             runnable: list[PlanStep] = []
             for step_id in group:
                 step = steps[step_id]
+                prior = results.get(step_id)
+                if prior is not None and prior.status == StepStatus.COMPLETED:
+                    # Resume guard (task 4.12): a step completed in a previous
+                    # graph pass must not be re-executed.
+                    continue
                 if state.policy_decisions.get(step_id) != PolicyDecision.ALLOW:
                     results[step_id] = _skipped(step_id)
                     continue

@@ -1023,6 +1023,10 @@
 - Worker 重启后从最新 checkpoint 恢复
 - 已完成的步骤不会重复执行
 
+> **状态：✅ 已完成**（2026-08-08，两个提交：① `CheckpointSaver` 原语——`agent_checkpoints` 表（迁移 d4e5f6a7b8c9：run_id/tenant_id/node_name/run_status/state_json/created_at），每次 save 立即 commit（崩溃恢复要求写先于下一步持久化），`load_latest(run_id, tenant_id)` 租户隔离恢复，`map_agent_status` 运行时→持久化状态映射（QUEUED/PLANNING→PENDING、EXECUTING/VERIFYING/RETRYING/REPLANNING→RUNNING、SUCCEEDED→COMPLETED、FAILED/EXPIRED→FAILED、CANCELLED→CANCELLED），`checkpointed()` 包装器保留 async 语义；② 图接线 + 幂等执行——`build_agent_graph(checkpoint_saver=...)` 统一包装全部 9 节点（节点注册重构为循环），execute_ready_steps 加恢复守卫：已有 COMPLETED 结果的步骤不重跑（FAILED 照常重试）。不用 LangGraph 自带 checkpointer（需未批准依赖 langgraph-checkpoint-postgres）；恢复 = 用最新状态重 invoke 图，无副作用节点重跑无害、工具调用被步骤级幂等拦截；测试用 SQLite 内存库（仅建 checkpoint 表，整库元数据含 TSVECTOR/pgvector 无法编译）+ 注入时钟保证排序确定性）
+
+---
+
 ---
 
 ## 任务 4.13：上下文预算管理

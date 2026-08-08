@@ -16,6 +16,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from erp_copilot.agent.nodes.classify_intent import classify_intent_node
 from erp_copilot.agent.state import AgentState, AgentStatus
+from erp_copilot.memory.checkpoint import CheckpointSaver, checkpointed
 
 # Node names in execution order (docs/03 §4, minus request_approval).
 NODE_NAMES: tuple[str, ...] = (
@@ -127,6 +128,7 @@ def build_agent_graph(
     policy_node: Callable[[AgentState], dict[str, Any]] | None = None,
     execute_node: Callable[[AgentState], Awaitable[dict[str, Any]]] | None = None,
     verify_node: Callable[[AgentState], dict[str, Any]] | None = None,
+    checkpoint_saver: CheckpointSaver | None = None,
 ) -> CompiledStateGraph:
     """Build and compile the agent state graph.
 
@@ -139,37 +141,35 @@ def build_agent_graph(
     omitted, no-ops keep topology/smoke tests free of database, LLM,
     tool-schema, security-subsystem, executor and success-condition
     dependencies.
+
+    *checkpoint_saver* (task 4.12) wraps every node so its post-node state is
+    persisted before the graph advances; omitted in tests, injected by the
+    worker at startup.
     """
     builder = StateGraph(AgentState)
-    # Registered explicitly — langgraph's _Node protocol does not type-check
-    # when node functions are passed through a dict iteration.
-    builder.add_node("classify_intent", classify_intent_node)
-    builder.add_node(
-        "retrieve_context",
-        retrieve_node if retrieve_node is not None else _retrieve_context_noop,  # type: ignore[arg-type]
-    )
-    builder.add_node(
-        "build_plan",
-        plan_node if plan_node is not None else _build_plan_noop,  # type: ignore[arg-type]
-    )
-    builder.add_node(
-        "validate_plan",
-        validate_node if validate_node is not None else _validate_plan_noop,  # type: ignore[arg-type]
-    )
-    builder.add_node(
-        "policy_check",
-        policy_node if policy_node is not None else _policy_check_noop,  # type: ignore[arg-type]
-    )
-    builder.add_node(
-        "execute_ready_steps",
-        execute_node if execute_node is not None else _execute_steps_noop,  # type: ignore[arg-type]
-    )
-    builder.add_node(
-        "verify_results",
-        verify_node if verify_node is not None else _verify_results_noop,  # type: ignore[arg-type]
-    )
-    builder.add_node("recover_or_replan", recover_or_replan)
-    builder.add_node("finalize", finalize)
+    nodes: list[tuple[str, Callable[..., Any]]] = [
+        ("classify_intent", classify_intent_node),
+        (
+            "retrieve_context",
+            retrieve_node if retrieve_node is not None else _retrieve_context_noop,
+        ),
+        ("build_plan", plan_node if plan_node is not None else _build_plan_noop),
+        ("validate_plan", validate_node if validate_node is not None else _validate_plan_noop),
+        ("policy_check", policy_node if policy_node is not None else _policy_check_noop),
+        (
+            "execute_ready_steps",
+            execute_node if execute_node is not None else _execute_steps_noop,
+        ),
+        ("verify_results", verify_node if verify_node is not None else _verify_results_noop),
+        ("recover_or_replan", recover_or_replan),
+        ("finalize", finalize),
+    ]
+    # Registered in a loop — langgraph's _Node protocol does not type-check
+    # node functions passed through a collection, hence the ignore.
+    for name, node in nodes:
+        if checkpoint_saver is not None:
+            node = checkpointed(name, node, checkpoint_saver)  # type: ignore[assignment]
+        builder.add_node(name, node)  # type: ignore[arg-type]
 
     builder.add_edge(START, "classify_intent")
     builder.add_edge("classify_intent", "retrieve_context")

@@ -17,11 +17,21 @@ from erp_copilot.agent.nodes.policy_check import build_policy_check_node
 from erp_copilot.agent.nodes.retrieve_context import build_retrieve_context_node
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.nodes.verify_results import build_verify_results_node
-from erp_copilot.agent.state import StateError, StepResult
+from erp_copilot.agent.state import AgentState, StateError, StepResult
 from erp_copilot.domain.enums import StepStatus
 from erp_copilot.tools.tool_result import ToolResult
 
 GRAPH = build_agent_graph()
+
+
+class _RecordingSaver:
+    """Duck-typed stand-in for CheckpointSaver — the graph only calls save()."""
+
+    def __init__(self) -> None:
+        self.saved: list[tuple[str, AgentState]] = []
+
+    def save(self, node_name: str, state: AgentState) -> None:
+        self.saved.append((node_name, state))
 
 
 def _node_names() -> set[str]:
@@ -246,6 +256,24 @@ class TestSmoke:
         )
         assert result["status"] == "replanning"
         assert result["errors"][0].code == "SUCCESS_CONDITION_FAILED"
+
+    def test_checkpoint_saver_records_every_node(self) -> None:
+        saver = _RecordingSaver()
+        graph = build_agent_graph(checkpoint_saver=saver)  # type: ignore[arg-type]
+        result = graph.invoke({"run_id": "r10", "tenant_id": "t1", "query": "查苹果库存"})
+        assert result["status"] == "succeeded"
+        names = [name for name, _ in saver.saved]
+        assert names == [
+            "classify_intent",
+            "retrieve_context",
+            "build_plan",
+            "validate_plan",
+            "policy_check",
+            "execute_ready_steps",
+            "verify_results",
+            "finalize",
+        ]
+        assert saver.saved[-1][1].status == "succeeded"
 
     def test_error_path_routes_to_recovery(self) -> None:
         result = GRAPH.invoke(

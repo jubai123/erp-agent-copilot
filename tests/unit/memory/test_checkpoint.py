@@ -28,7 +28,7 @@ from erp_copilot.agent.state import (
 )
 from erp_copilot.domain.entities import AgentCheckpoint
 from erp_copilot.domain.enums import RunStatus, StepStatus
-from erp_copilot.memory.checkpoint import CheckpointSaver, map_agent_status
+from erp_copilot.memory.checkpoint import CheckpointSaver, checkpointed, map_agent_status
 
 
 @pytest.fixture()
@@ -128,6 +128,40 @@ class TestCheckpointSaver:
         CheckpointSaver(session).save("execute_ready_steps", _state(status=AgentStatus.RETRYING))
         row = session.query(AgentCheckpoint).one()
         assert row.run_status == RunStatus.RUNNING
+
+
+class _RecordingSaver:
+    """Duck-typed stand-in for CheckpointSaver — the wrapper only calls save()."""
+
+    def __init__(self) -> None:
+        self.saved: list[tuple[str, AgentState]] = []
+
+    def save(self, node_name: str, state: AgentState) -> None:
+        self.saved.append((node_name, state))
+
+
+class TestCheckpointed:
+    def test_wraps_sync_node_and_saves_merged_state(self) -> None:
+        def node(state: AgentState) -> dict[str, object]:
+            return {"status": AgentStatus.SUCCEEDED}
+
+        saver = _RecordingSaver()
+        wrapped = checkpointed("finalize", node, saver)  # type: ignore[arg-type]
+        updates = wrapped(_state())
+        assert updates["status"] == AgentStatus.SUCCEEDED
+        assert saver.saved == [("finalize", _state(status=AgentStatus.SUCCEEDED))]
+
+    def test_wraps_async_node(self) -> None:
+        import asyncio
+
+        async def node(state: AgentState) -> dict[str, object]:
+            return {"status": AgentStatus.SUCCEEDED}
+
+        saver = _RecordingSaver()
+        wrapped = checkpointed("finalize", node, saver)  # type: ignore[arg-type]
+        updates = asyncio.run(wrapped(_state()))
+        assert updates["status"] == AgentStatus.SUCCEEDED
+        assert saver.saved == [("finalize", _state(status=AgentStatus.SUCCEEDED))]
 
 
 def test_map_agent_status_signature_is_callable() -> None:
