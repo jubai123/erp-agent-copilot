@@ -1121,21 +1121,25 @@
 
 ## 任务 5.2：审批模型——暂停和决策
 
-> **状态：✅ 进行中**（2026-08-08，暂停+决策双半程已完成；待续：HTTP approve/deny API 路由 + audit_log 落库）
+> **状态：✅ 已完成**（2026-08-08，暂停+决策+HTTP 路由+audit_log 全部落地）
 
 **目标**：实现 WRITE 操作的审批暂停与决策。
 
 **交付物**：
-- `src/erp_copilot/security/approval.py`（新增，决策半程）
+- `src/erp_copilot/security/approval.py`（新增，决策半程 + audit_log 落库 + `decide_and_resume` 编排）
 - `src/erp_copilot/agent/nodes/request_approval.py`（新增，暂停半程）
+- `src/erp_copilot/domain/entities.py`（新增 `AuditLog`）
+- `migrations/versions/f7e8d9c0b1a2_add_audit_log_table.py`（新增）
+- `apps/api/routes/runs.py` + `apps/api/schemas/runs.py`（新增 approve 路由与 `ApproveRunRequest`）
+- `tests/integration/test_approval_api.py`（新增，4 用例）
 
 **验收标准**：
 - ✅ 高风险步骤→Run 进入 WAITING_APPROVAL（`request_approval_node`：REQUIRE_APPROVAL 步骤 → PENDING `ApprovalRequest` 记录 + `AgentStatus.WAITING_APPROVAL`，图路由到 END 暂停；`state.py` 新增 `ApprovalStatus`/`ApprovalRequest`/`AgentState.approvals`）
-- ✅ 用户调用 approve API→继续执行（`ApprovalDecisionService.decide` 把 PENDING 翻成 APPROVED/DENIED 并落新 checkpoint；`resume_run` 重放恢复——`request_approval` 把已决记录解析回 policy：APPROVED→ALLOW 使步骤执行、DENIED→DENY 使步骤被跳过）
+- ✅ 用户调用 approve API→继续执行（`POST /v1/runs/{run_id}/approve`：`ApprovalDecisionService.decide` 把 PENDING 翻成 APPROVED/DENIED 并落新 checkpoint；`decide_and_resume` 先决策再审计再 `resume_run` 重放恢复——`request_approval` 把已决记录解析回 policy：APPROVED→ALLOW 使步骤执行、DENIED→DENY 使步骤被跳过）
 - ✅ 用户 deny→步骤被跳过，Run 进入对应状态（DENIED 记录 → policy DENY → execute_ready_steps 跳过；全跳过 → verify 判 SUCCEEDED）
-- ⏳ 审批记录写入 audit_log（待续）
+- ✅ 审批记录写入 audit_log（`record_audit_log` 落 `AuditLog`：actor/resource/action/result/ip/trace_id；`created_at` 只 default 无 onupdate → 不可变时间戳；迁移 f7e8d9c0b1a2）
 
-**落地细节**：节点为纯函数（无注入依赖、幂等追加不重复建记录）；路由基于**当前 plan 步骤**判断（`pending_approval_step_ids` 与节点共用单一来源），不依赖 `state.status`（resume 重放时 classify 会把 status 重置为 PLANNING），并能丢弃 replan 残留的陈旧 PENDING 记录；暂停路由到 END 而非 finalize（finalize 语义是持久化完结，WAITING_APPROVAL 不该被"完结"）。恢复 = checkpoint 重放 + 幂等（4.12 决策）。`ApprovalRequest` 新增 `decided_by`/`decided_at`/`reason` 审计字段。关键交互：resume 时 policy 会对同一 WRITE 步骤重判 REQUIRE_APPROVAL（scope 只判 DENY，不授予写权限），所以 `request_approval` 必须把已决记录解析回 policy，否则 execute 会把已批准步骤当 DENY 跳过。10 节点图拓扑（docs/03 §4），测试：`tests/unit/security/test_approval.py`（14）+ `tests/unit/agent/test_request_approval.py`（14）+ `test_graph.py` 暂停/恢复路由（3）。
+**落地细节**：节点为纯函数（无注入依赖、幂等追加不重复建记录）；路由基于**当前 plan 步骤**判断（`pending_approval_step_ids` 与节点共用单一来源），不依赖 `state.status`（resume 重放时 classify 会把 status 重置为 PLANNING），并能丢弃 replan 残留的陈旧 PENDING 记录；暂停路由到 END 而非 finalize（finalize 语义是持久化完结，WAITING_APPROVAL 不该被"完结"）。恢复 = checkpoint 重放 + 幂等（4.12 决策）。`ApprovalRequest` 新增 `decided_by`/`decided_at`/`reason` 审计字段。关键交互：resume 时 policy 会对同一 WRITE 步骤重判 REQUIRE_APPROVAL（scope 只判 DENY，不授予写权限），所以 `request_approval` 必须把已决记录解析回 policy，否则 execute 会把已批准步骤当 DENY 跳过。10 节点图拓扑（docs/03 §4），测试：`tests/unit/security/test_approval.py`（18，含新增 `TestAuditLog` 3 + `TestDecideAndResume` 2）+ `tests/unit/agent/test_request_approval.py`（14）+ `test_graph.py` 暂停/恢复路由（3）+ `tests/integration/test_approval_api.py`（4）。HTTP 路由：tenant 从 Run 行派生（不信任客户端，租户隔离）；错误映射 `NotFoundError`→404、其余 `CopilotError`→409；`build_agent_graph(checkpoint_saver=saver)` 建图（默认 no-op 注入节点，真实节点接线随 worker 接线任务落地）。
 
 ---
 

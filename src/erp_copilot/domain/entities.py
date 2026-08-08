@@ -327,6 +327,28 @@ class SecurityEvent(Base):
     run: Mapped[Run | None] = relationship("Run")
 
 
+class AuditLog(Base):
+    """Append-only record of a privileged action (docs/07 audit_logs).
+
+    Written by approval/security flows when an operator acts (approve, deny,
+    ...). actor is the identity, resource what it acted on, action the verb,
+    result the outcome; ip/trace_id carry the transport context. created_at is
+    default-only (no onupdate) so the timestamp is immutable — auditing keeps
+    one unalterable time even if the row is later touched.
+    """
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    actor: Mapped[str] = mapped_column(String(100), nullable=False)
+    resource: Mapped[str] = mapped_column(String(255), nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    result: Mapped[str] = mapped_column(String(50), nullable=False)
+    ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class KnowledgeDocument(Base):
     """A knowledge document ingested into the retrieval system."""
 

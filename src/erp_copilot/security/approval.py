@@ -15,8 +15,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.graph.state import CompiledStateGraph
+from sqlalchemy.orm import Session
 
 from erp_copilot.agent.state import AgentStatus, ApprovalRequest, ApprovalStatus
+from erp_copilot.domain.entities import AuditLog
 from erp_copilot.domain.errors import CopilotError, NotFoundError
 from erp_copilot.memory.checkpoint import CheckpointSaver
 
@@ -129,3 +131,73 @@ async def resume_run(
         )
     result: dict[str, Any] = await graph.ainvoke(state.model_dump())
     return result
+
+
+def record_audit_log(
+    session: Session,
+    *,
+    actor: str,
+    resource: str,
+    action: str,
+    result: str,
+    ip: str | None = None,
+    trace_id: str | None = None,
+) -> AuditLog:
+    """Append one immutable audit_logs row (docs/07 §6).
+
+    created_at is default-only (no onupdate) so the timestamp never moves.
+    The row is committed immediately — a decision must be audited even when
+    the resume that follows fails.
+    """
+    entry = AuditLog(
+        actor=actor,
+        resource=resource,
+        action=action,
+        result=result,
+        ip=ip,
+        trace_id=trace_id,
+    )
+    session.add(entry)
+    session.commit()
+    return entry
+
+
+async def decide_and_resume(
+    graph: CompiledStateGraph,
+    saver: CheckpointSaver,
+    session: Session,
+    *,
+    run_id: str,
+    tenant_id: str,
+    step_id: str,
+    decision: ApprovalStatus,
+    decided_by: str,
+    reason: str | None = None,
+    ip: str | None = None,
+    trace_id: str | None = None,
+) -> tuple[ApprovalRequest, dict[str, Any]]:
+    """Decide, audit, then resume — the approve/deny API orchestration.
+
+    Order matters: flip and checkpoint the decision first, write the audit row
+    second, resume the graph last. *session* is the audit session; the route
+    passes the same session the checkpoint saver uses.
+    """
+    decided = ApprovalDecisionService(saver).decide(
+        run_id=run_id,
+        tenant_id=tenant_id,
+        step_id=step_id,
+        decision=decision,
+        decided_by=decided_by,
+        reason=reason,
+    )
+    record_audit_log(
+        session,
+        actor=decided_by,
+        resource=f"run:{run_id}/step:{step_id}",
+        action=f"approval.{decision.value}",
+        result=decision.value,
+        ip=ip,
+        trace_id=trace_id,
+    )
+    result = await resume_run(graph, saver, run_id=run_id, tenant_id=tenant_id)
+    return decided, result

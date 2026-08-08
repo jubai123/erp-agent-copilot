@@ -31,11 +31,16 @@ from erp_copilot.agent.state import (
     PlanStep,
     PolicyDecision,
 )
-from erp_copilot.domain.entities import AgentCheckpoint
+from erp_copilot.domain.entities import AgentCheckpoint, AuditLog
 from erp_copilot.domain.enums import ToolRiskLevel
 from erp_copilot.domain.errors import CopilotError, NotFoundError
 from erp_copilot.memory.checkpoint import CheckpointSaver
-from erp_copilot.security.approval import ApprovalDecisionService, resume_run
+from erp_copilot.security.approval import (
+    ApprovalDecisionService,
+    decide_and_resume,
+    record_audit_log,
+    resume_run,
+)
 from erp_copilot.tools.tool_result import ToolResult
 
 
@@ -43,6 +48,7 @@ from erp_copilot.tools.tool_result import ToolResult
 def session() -> Iterator[Session]:
     engine = create_engine("sqlite:///:memory:")
     AgentCheckpoint.__table__.create(engine)
+    AuditLog.__table__.create(engine)
     with Session(engine) as db:
         yield db
     engine.dispose()
@@ -340,3 +346,96 @@ class TestResumeRun:
         result = asyncio.run(resume_run(_resume_graph(), saver, run_id="r1", tenant_id="t1"))
         assert result["step_results"]["s1"].status == "skipped"
         assert result["status"] == "succeeded"
+
+
+class TestAuditLog:
+    def test_record_audit_log_persists_all_columns(self, session: Session) -> None:
+        entry = record_audit_log(
+            session,
+            actor="manager",
+            resource="run:r1/step:s1",
+            action="approval.approved",
+            result="approved",
+            ip="127.0.0.1",
+            trace_id="tr-123",
+        )
+        row = session.get(AuditLog, entry.id)
+        assert row is not None
+        assert row.actor == "manager"
+        assert row.resource == "run:r1/step:s1"
+        assert row.action == "approval.approved"
+        assert row.result == "approved"
+        assert row.ip == "127.0.0.1"
+        assert row.trace_id == "tr-123"
+        assert row.created_at is not None
+
+    def test_record_audit_log_ip_and_trace_optional(self, session: Session) -> None:
+        entry = record_audit_log(session, actor="a", resource="r", action="x", result="y")
+        row = session.get(AuditLog, entry.id)
+        assert row is not None
+        assert row.ip is None
+        assert row.trace_id is None
+
+    def test_created_at_is_immutable(self, session: Session) -> None:
+        # created_at is default-only (no onupdate): auditing keeps one
+        # immutable timestamp even if the row is later touched.
+        entry = record_audit_log(session, actor="a", resource="r", action="x", result="y")
+        original = session.get(AuditLog, entry.id)
+        original.result = "changed"
+        session.commit()
+        after = session.get(AuditLog, entry.id)
+        assert after.created_at == original.created_at
+
+
+class TestDecideAndResume:
+    def test_approve_decides_audits_and_resumes(self, session: Session) -> None:
+        saver = _save_paused(session)
+        decided, result = asyncio.run(
+            decide_and_resume(
+                _resume_graph(),
+                saver,
+                session,
+                run_id="r1",
+                tenant_id="t1",
+                step_id="s1",
+                decision=ApprovalStatus.APPROVED,
+                decided_by="manager",
+                reason="已核对",
+                ip="127.0.0.1",
+                trace_id="tr-1",
+            )
+        )
+        assert decided.status == ApprovalStatus.APPROVED
+        assert decided.decided_by == "manager"
+        assert result["status"] == "succeeded"
+        logs = session.query(AuditLog).all()
+        assert len(logs) == 1
+        assert logs[0].action == "approval.approved"
+        assert logs[0].result == "approved"
+        assert logs[0].resource == "run:r1/step:s1"
+        assert logs[0].actor == "manager"
+        assert logs[0].ip == "127.0.0.1"
+        assert logs[0].trace_id == "tr-1"
+
+    def test_deny_decides_audits_and_skips(self, session: Session) -> None:
+        saver = _save_paused(session)
+        decided, result = asyncio.run(
+            decide_and_resume(
+                _resume_graph(),
+                saver,
+                session,
+                run_id="r1",
+                tenant_id="t1",
+                step_id="s1",
+                decision=ApprovalStatus.DENIED,
+                decided_by="risk",
+            )
+        )
+        assert decided.status == ApprovalStatus.DENIED
+        assert result["step_results"]["s1"].status == "skipped"
+        assert result["status"] == "succeeded"
+        logs = session.query(AuditLog).all()
+        assert len(logs) == 1
+        assert logs[0].action == "approval.denied"
+        assert logs[0].result == "denied"
+        assert logs[0].ip is None
