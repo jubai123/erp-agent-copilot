@@ -1204,12 +1204,24 @@
 **目标**：输出结果中自动隐藏密钥、密码等敏感信息。
 
 **交付物**：
-- `src/erp_copilot/security/redaction.py`
+- `src/erp_copilot/security/redaction.py`（✅ 已实现）
+- `tests/unit/security/test_redaction.py`（✅ 已实现，17 用例）
 
 **验收标准**：
-- API Key 模式→替换为 `[REDACTED]`
-- 手机号/身份证号→部分隐藏
-- 不影响正常的业务数据
+- ✅ API Key 模式→替换为 `[REDACTED]`（`API_KEY` 规则：`sk-`/`AKIA`/`ghp_` 前缀，`re.IGNORECASE`）
+- ✅ 手机号/身份证号→部分隐藏（`CN_MOBILE` 保前3后4、`CN_ID_CARD` 保前6后4，中间 `*`）
+- ✅ 不影响正常的业务数据（座机、订单号、SKU、17 位编号等误报用例全部原样通过）
+
+**落地细节**：纯确定性输出转换器（`Redactor.redact(text)`，无网络、无 DB），与 SSRF/Injection guard 的关键区别是**它是 transformer 而非拦截器**——每次出站回答都会跑，原地改写文本，结果只带 `RedactionResult(redacted, count, matched_rules)` 交给调用方决定是否记录，因此模块框架无关、单测极简。规则沿用 `RedactionRule(name, pattern, replace)` 可注入模式：`replace` 是 `Callable[[re.Match[str]], str]`，API Key 用常量替换，PII 用 `_mask_keep_edges` 掩码。规则链式处理（每规则在上一规则输出上跑，避免二次掩码）；数字边界断言 `(?<!\d)...(?!\d)` 保证 17 位编号不误判为 18 位身份证、12 位订单号不误判为 11 位手机号。座机 `010-`（非 `1[3-9]` 开头）故意不隐藏，展示精确性。`Redactor(rules=[...])` 替换默认集，`rules=[]` 纯透传。Redaction 事件落库（记录"本次输出命中了哪些敏感类型"）留待安全事件审计任务，本任务不引入 DB 依赖。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| Secret/PII Redaction 是什么 | 输出层把密钥、手机号、身份证号替换为占位或部分掩码，防止数据经 Agent 回答泄露 |
+| transformer vs guard | guard 拦截攻击（返回 verdict + 落 security_event）；redaction 改写所有输出（纯转换，无 DB）——职责不同，落库选择留给调用方 |
+| 部分隐藏 vs 全替换 | 密钥无保留价值→`[REDACTED]`；PII 需保留边缘供审计对账→`138****8000`/`110101********123X` |
+| 数字边界断言 | `(?<!\d)...(?!\d)` 让正则只在完整数字串上匹配，长编号不误伤短格式 |
+| 规则链式处理 | 每规则在上一规则输出上跑，`[REDACTED]` 不会被后续规则再次命中；`count` 累计 |
 
 ---
 
