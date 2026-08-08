@@ -127,6 +127,19 @@ def classify_intent(query: str) -> IntentClassification:
     return IntentClassification(domain=domain, action=action, risk_level=risk, entities=entities)
 
 
+def domain_keywords(intent: IntentClassification) -> tuple[str, ...]:
+    """Chinese search terms for the intent's (domain, action) rule.
+
+    retrieve_context (task 4.4) uses these to build a focused L2 query from
+    the intent instead of re-feeding the user's raw sentence. product/query —
+    the fallback intent — has no rule of its own and yields an empty tuple.
+    """
+    for keywords, domain, action, _risk in _INTENT_RULES:
+        if domain == intent.domain and action == intent.action:
+            return keywords
+    return ()
+
+
 def classify_intent_node(state: AgentState) -> dict[str, Any]:
     """LangGraph node — classify the query and enter PLANNING."""
     return {"intent": classify_intent(state.query), "status": AgentStatus.PLANNING}

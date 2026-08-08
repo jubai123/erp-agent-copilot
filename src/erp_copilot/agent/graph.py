@@ -8,6 +8,7 @@ decision — the acceptance for task 4.2 is a 9-node graph.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -33,8 +34,12 @@ NODE_NAMES: tuple[str, ...] = (
 # -- Node stubs (replaced by real modules in tasks 4.4-4.11) -------------------
 
 
-def retrieve_context(state: AgentState) -> dict[str, Any]:
-    """TODO(task 4.4): L2 retrieval — mandatory node, LLM never skips it."""
+def _retrieve_context_noop(state: AgentState) -> dict[str, Any]:
+    """No-op retrieve_context used when no backend is injected.
+
+    Keeps topology and smoke tests independent of a database; the app always
+    injects the real node (build_retrieve_context_node) at startup.
+    """
     return {}
 
 
@@ -95,13 +100,23 @@ def _route_after_recover(state: AgentState) -> str:
     return "finalize"
 
 
-def build_agent_graph() -> CompiledStateGraph:
-    """Build and compile the agent state graph."""
+def build_agent_graph(
+    retrieve_node: Callable[[AgentState], dict[str, Any]] | None = None,
+) -> CompiledStateGraph:
+    """Build and compile the agent state graph.
+
+    *retrieve_node* injects the real retrieve_context implementation (task
+    4.4). When omitted, a no-op keeps topology/smoke tests free of database
+    dependencies.
+    """
     builder = StateGraph(AgentState)
     # Registered explicitly — langgraph's _Node protocol does not type-check
     # when node functions are passed through a dict iteration.
     builder.add_node("classify_intent", classify_intent_node)
-    builder.add_node("retrieve_context", retrieve_context)
+    builder.add_node(
+        "retrieve_context",
+        retrieve_node if retrieve_node is not None else _retrieve_context_noop,  # type: ignore[arg-type]
+    )
     builder.add_node("build_plan", build_plan)
     builder.add_node("validate_plan", validate_plan)
     builder.add_node("policy_check", policy_check)
