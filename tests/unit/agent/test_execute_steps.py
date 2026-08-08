@@ -1,16 +1,24 @@
-"""Unit tests for the execute_ready_steps node — task 4.9.
+"""Unit tests for the execute_ready_steps node — tasks 4.9-4.10.
 
 Defence layer 3: actually run the plan steps. The node walks
-plan_validation.topological_order serially, resolves each step's arguments at
-runtime (user_query -> the run's query text; step:{id} -> the same-named output
-param of that step's result), calls the injected executor, and records a
-StepResult per step. Only steps whose policy decision is ALLOW run; a step
-whose dependencies did not reach COMPLETED is skipped; a failed step records
-FAILED and appends a StateError so the graph routes to recovery.
+plan_validation.parallel_groups wave by wave; the READ steps in a wave run
+concurrently via asyncio.gather, WRITE steps (singleton waves from
+validate_plan) run serially. Each step's arguments are resolved at runtime
+(user_query -> the run's query text; step:{id} -> the same-named output param
+of that step's result) before the wave is launched. Only steps whose policy
+decision is ALLOW run; a step whose dependencies did not reach COMPLETED is
+skipped; a failed step records FAILED and appends a StateError so the graph
+routes to recovery.
+
+The executor is an async (tool_name, arguments) -> Awaitable[ToolResult]
+callable — the real MCP Gateway is async and is injected directly. When
+parallel_groups is empty (defensive; a valid plan always carries it) the node
+falls back to serial execution over topological_order.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from erp_copilot.agent.nodes.execute_steps import build_execute_steps_node, resolve_arguments
@@ -70,6 +78,10 @@ def _node_state(
         step_results=existing or {},
         errors=errors or [],
     )
+
+
+def _invoke(node: Any, state: AgentState) -> dict[str, Any]:
+    return asyncio.run(node(state))
 
 
 class TestResolveArguments:
@@ -136,10 +148,10 @@ class TestResolveArguments:
 
 
 class TestBuildExecuteStepsNode:
-    def test_executes_steps_in_topological_order(self) -> None:
+    def test_executes_steps_in_wave_order(self) -> None:
         calls: list[str] = []
 
-        def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+        async def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
             calls.append(tool_name)
             return ToolResult.success(tool_version_id="v1", data={})
 
@@ -157,62 +169,217 @@ class TestBuildExecuteStepsNode:
         )
         state = _node_state(
             plan=plan,
-            validation=PlanValidation(is_valid=True, topological_order=["s1", "s2"]),
+            validation=PlanValidation(is_valid=True, parallel_groups=[["s1"], ["s2"]]),
         )
-        node(state)
+        _invoke(node, state)
         assert calls == ["getProductById", "getOrderByOrderId"]
 
-    def test_user_query_source_resolved_before_executor(self) -> None:
-        seen: list[dict[str, Any]] = []
+    def test_empty_parallel_groups_falls_back_to_topological_order(self) -> None:
+        calls: list[str] = []
 
-        def executor(_tool_name: str, arguments: dict[str, Any]) -> ToolResult:
-            seen.append(arguments)
+        async def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+            calls.append(tool_name)
             return ToolResult.success(tool_version_id="v1", data={})
-
-        node = build_execute_steps_node(executor=executor)
-        plan = Plan(steps=[_step(argument_sources={"id": "user_query"})])
-        state = _node_state(plan=plan, query="苹果库存")
-        node(state)
-        assert seen == [{"id": "苹果库存"}]
-
-    def test_step_source_resolved_from_previous_output(self) -> None:
-        seen: list[dict[str, Any]] = []
-
-        def executor(_tool_name: str, arguments: dict[str, Any]) -> ToolResult:
-            seen.append(arguments)
-            return ToolResult.success(tool_version_id="v1", data=dict(arguments))
 
         node = build_execute_steps_node(executor=executor)
         plan = Plan(
             steps=[
-                _step("s1", tool_name="getProductById", arguments={"id": 1}),
+                _step("s1", tool_name="getProductById"),
                 _step(
                     "s2",
-                    tool_name="getProductById",
-                    arguments={},
-                    argument_sources={"id": "step:s1"},
+                    tool_name="getOrderByOrderId",
+                    arguments={"order_id": "abc"},
+                    depends_on=["s1"],
+                ),
+            ]
+        )
+        state = _node_state(plan=plan)
+        _invoke(node, state)
+        assert calls == ["getProductById", "getOrderByOrderId"]
+
+    def test_independent_reads_run_concurrently(self) -> None:
+        active = 0
+        max_active = 0
+
+        async def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.05)
+            active -= 1
+            return ToolResult.success(tool_version_id="v1", data={})
+
+        node = build_execute_steps_node(executor=executor)
+        plan = Plan(steps=[_step("s1"), _step("s2")])
+        state = _node_state(
+            plan=plan,
+            validation=PlanValidation(is_valid=True, parallel_groups=[["s1", "s2"]]),
+        )
+        _invoke(node, state)
+        assert max_active == 2
+
+    def test_dependent_chain_runs_in_sequential_waves(self) -> None:
+        active = 0
+        max_active = 0
+        order: list[str] = []
+
+        async def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            order.append(tool_name)
+            await asyncio.sleep(0.02)
+            active -= 1
+            return ToolResult.success(tool_version_id="v1", data={})
+
+        node = build_execute_steps_node(executor=executor)
+        plan = Plan(
+            steps=[
+                _step("s1", tool_name="getProductById"),
+                _step(
+                    "s2",
+                    tool_name="getOrderByOrderId",
+                    arguments={"order_id": "abc"},
                     depends_on=["s1"],
                 ),
             ]
         )
         state = _node_state(
             plan=plan,
-            validation=PlanValidation(is_valid=True, topological_order=["s1", "s2"]),
+            validation=PlanValidation(is_valid=True, parallel_groups=[["s1"], ["s2"]]),
         )
-        node(state)
-        assert seen == [{"id": 1}, {"id": 1}]
+        _invoke(node, state)
+        assert max_active == 1
+        assert order == ["getProductById", "getOrderByOrderId"]
+
+    def test_write_step_does_not_run_in_parallel(self) -> None:
+        active = 0
+        max_active = 0
+
+        async def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.02)
+            active -= 1
+            return ToolResult.success(tool_version_id="v1", data={})
+
+        node = build_execute_steps_node(executor=executor)
+        plan = Plan(
+            steps=[
+                _step("r", tool_name="getOrderByOrderId", arguments={"order_id": "a"}),
+                _step(
+                    "w",
+                    tool_name="updateOrderStatus",
+                    risk_level=ToolRiskLevel.WRITE,
+                    arguments={"order_id": "a", "status": "SHIPPED"},
+                    fallback="rollback",
+                ),
+            ]
+        )
+        state = _node_state(
+            plan=plan,
+            decisions={"r": PolicyDecision.ALLOW, "w": PolicyDecision.ALLOW},
+            validation=PlanValidation(is_valid=True, parallel_groups=[["w"], ["r"]]),
+        )
+        _invoke(node, state)
+        assert max_active == 1
+
+    def test_parallel_results_merge_independently_of_completion_order(self) -> None:
+        async def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+            if tool_name == "getProductById":
+                await asyncio.sleep(0.05)
+                return ToolResult.success(tool_version_id="v1", data={"kind": "product"})
+            return ToolResult.success(tool_version_id="v1", data={"kind": "order"})
+
+        node = build_execute_steps_node(executor=executor)
+        plan = Plan(
+            steps=[
+                _step("s1", tool_name="getProductById"),
+                _step("s2", tool_name="getOrderByOrderId", arguments={"order_id": "a"}),
+            ]
+        )
+        state = _node_state(
+            plan=plan,
+            validation=PlanValidation(is_valid=True, parallel_groups=[["s1", "s2"]]),
+        )
+        updates = _invoke(node, state)
+        assert updates["step_results"]["s1"].data == {"kind": "product"}
+        assert updates["step_results"]["s2"].data == {"kind": "order"}
+
+    def test_parallel_failure_does_not_block_siblings(self) -> None:
+        calls: list[str] = []
+
+        async def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+            calls.append(tool_name)
+            if tool_name == "getProductById":
+                return ToolResult.failure(
+                    tool_version_id="v1", error_code="TIMEOUT", error_message="timeout"
+                )
+            return ToolResult.success(tool_version_id="v1", data={"order_id": "a"})
+
+        node = build_execute_steps_node(executor=executor)
+        plan = Plan(
+            steps=[
+                _step("s1", tool_name="getProductById"),
+                _step("s2", tool_name="getOrderByOrderId", arguments={"order_id": "a"}),
+            ]
+        )
+        state = _node_state(
+            plan=plan,
+            validation=PlanValidation(is_valid=True, parallel_groups=[["s1", "s2"]]),
+        )
+        updates = _invoke(node, state)
+        assert set(calls) == {"getProductById", "getOrderByOrderId"}
+        assert updates["step_results"]["s1"].status == StepStatus.FAILED
+        assert updates["step_results"]["s2"].status == StepStatus.COMPLETED
+        assert [e.code for e in updates["errors"]] == ["TIMEOUT"]
+
+    def test_later_wave_resolves_step_source_from_prior_wave(self) -> None:
+        seen: list[dict[str, Any]] = []
+
+        async def executor(_tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            seen.append(arguments)
+            return ToolResult.success(tool_version_id="v1", data=dict(arguments))
+
+        node = build_execute_steps_node(executor=executor)
+        plan = Plan(
+            steps=[
+                _step("s1", arguments={"id": 7}),
+                _step("s2", arguments={}, argument_sources={"id": "step:s1"}, depends_on=["s1"]),
+            ]
+        )
+        state = _node_state(
+            plan=plan,
+            validation=PlanValidation(is_valid=True, parallel_groups=[["s1"], ["s2"]]),
+        )
+        _invoke(node, state)
+        assert seen == [{"id": 7}, {"id": 7}]
+
+    def test_user_query_source_resolved_before_executor(self) -> None:
+        seen: list[dict[str, Any]] = []
+
+        async def executor(_tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            seen.append(arguments)
+            return ToolResult.success(tool_version_id="v1", data={})
+
+        node = build_execute_steps_node(executor=executor)
+        plan = Plan(steps=[_step(argument_sources={"id": "user_query"})])
+        state = _node_state(plan=plan, query="苹果库存")
+        _invoke(node, state)
+        assert seen == [{"id": "苹果库存"}]
 
     def test_successful_step_records_completed(self) -> None:
-        def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+        async def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
             return ToolResult.success(tool_version_id="v1", data={"price": 10})
 
         node = build_execute_steps_node(executor=executor)
-        updates = node(_node_state(plan=Plan(steps=[_step()])))
+        updates = _invoke(node, _node_state(plan=Plan(steps=[_step()])))
         assert updates["step_results"]["s1"].status == StepStatus.COMPLETED
         assert updates["step_results"]["s1"].data == {"price": 10}
 
     def test_failed_step_records_failed_and_appends_error(self) -> None:
-        def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+        async def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
             return ToolResult.failure(
                 tool_version_id="v1",
                 error_code="TIMEOUT",
@@ -221,7 +388,7 @@ class TestBuildExecuteStepsNode:
             )
 
         node = build_execute_steps_node(executor=executor)
-        updates = node(_node_state(plan=Plan(steps=[_step()])))
+        updates = _invoke(node, _node_state(plan=Plan(steps=[_step()])))
         result = updates["step_results"]["s1"]
         assert result.status == StepStatus.FAILED
         assert result.error_code == "TIMEOUT"
@@ -230,11 +397,11 @@ class TestBuildExecuteStepsNode:
         assert updates["errors"][0].step_id == "s1"
 
     def test_executor_exception_becomes_failed_step(self) -> None:
-        def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+        async def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
             raise RuntimeError("boom")
 
         node = build_execute_steps_node(executor=executor)
-        updates = node(_node_state(plan=Plan(steps=[_step()])))
+        updates = _invoke(node, _node_state(plan=Plan(steps=[_step()])))
         result = updates["step_results"]["s1"]
         assert result.status == StepStatus.FAILED
         assert result.error_code == "EXECUTION_FAILED"
@@ -244,7 +411,7 @@ class TestBuildExecuteStepsNode:
     def test_dependency_failure_skips_dependent(self) -> None:
         calls: list[str] = []
 
-        def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+        async def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
             calls.append(tool_name)
             return ToolResult.failure(
                 tool_version_id="v1", error_code="TIMEOUT", error_message="timeout"
@@ -254,9 +421,9 @@ class TestBuildExecuteStepsNode:
         plan = Plan(steps=[_step("s1"), _step("s2", depends_on=["s1"])])
         state = _node_state(
             plan=plan,
-            validation=PlanValidation(is_valid=True, topological_order=["s1", "s2"]),
+            validation=PlanValidation(is_valid=True, parallel_groups=[["s1"], ["s2"]]),
         )
-        updates = node(state)
+        updates = _invoke(node, state)
         assert calls == ["getProductById"]
         assert updates["step_results"]["s1"].status == StepStatus.FAILED
         assert updates["step_results"]["s2"].status == StepStatus.SKIPPED
@@ -264,7 +431,7 @@ class TestBuildExecuteStepsNode:
     def test_non_allow_policy_skips_step(self) -> None:
         calls: list[str] = []
 
-        def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+        async def executor(tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
             calls.append(tool_name)
             return ToolResult.success(tool_version_id="v1", data={})
 
@@ -276,26 +443,26 @@ class TestBuildExecuteStepsNode:
                 "s1": PolicyDecision.ALLOW,
                 "s2": PolicyDecision.REQUIRE_APPROVAL,
             },
-            validation=PlanValidation(is_valid=True, topological_order=["s1", "s2"]),
+            validation=PlanValidation(is_valid=True, parallel_groups=[["s1", "s2"]]),
         )
-        updates = node(state)
+        updates = _invoke(node, state)
         assert calls == ["getProductById"]
         assert updates["step_results"]["s2"].status == StepStatus.SKIPPED
 
     def test_preserves_existing_step_results(self) -> None:
-        def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+        async def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
             return ToolResult.success(tool_version_id="v1", data={"price": 10})
 
         node = build_execute_steps_node(executor=executor)
         plan = Plan(steps=[_step("s1")])
         existing = {"prior": _completed("prior", {"whatever": 1})}
         state = _node_state(plan=plan, existing=existing)
-        updates = node(state)
+        updates = _invoke(node, state)
         assert updates["step_results"]["prior"] == existing["prior"]
         assert updates["step_results"]["s1"].status == StepStatus.COMPLETED
 
     def test_preserves_existing_errors(self) -> None:
-        def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+        async def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
             return ToolResult.failure(
                 tool_version_id="v1", error_code="TIMEOUT", error_message="timeout"
             )
@@ -303,16 +470,16 @@ class TestBuildExecuteStepsNode:
         node = build_execute_steps_node(executor=executor)
         existing_error = StateError(code="EXISTING", message="x")
         state = _node_state(plan=Plan(steps=[_step()]), errors=[existing_error])
-        updates = node(state)
+        updates = _invoke(node, state)
         assert [e.code for e in updates["errors"]] == ["EXISTING", "TIMEOUT"]
 
     def test_missing_plan_appends_no_plan_error(self) -> None:
-        def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
+        async def executor(_tool_name: str, _arguments: dict[str, Any]) -> ToolResult:
             raise AssertionError("executor must not run without a plan")
 
         node = build_execute_steps_node(executor=executor)
         state = AgentState(run_id="r1", tenant_id="t1", query="q", plan=None)
-        updates = node(state)
+        updates = _invoke(node, state)
         assert [e.code for e in updates["errors"]] == ["NO_PLAN"]
 
 

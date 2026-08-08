@@ -8,6 +8,8 @@ is produced. A smoke run proves the happy path reaches SUCCEEDED.
 
 from __future__ import annotations
 
+import asyncio
+
 from erp_copilot.agent.graph import NODE_NAMES, build_agent_graph
 from erp_copilot.agent.nodes.build_plan import build_plan_node
 from erp_copilot.agent.nodes.execute_steps import build_execute_steps_node
@@ -157,28 +159,32 @@ class TestSmoke:
             tool_schemas={"getProductById": ToolSpec(name="getProductById", required_params=["id"])}
         )
         policy = build_policy_check_node(get_scopes=lambda _t, _u: set())
-        execute = build_execute_steps_node(
-            executor=lambda _tool_name, arguments: ToolResult.success(
+
+        async def fake_executor(_tool_name: str, arguments: dict[str, object]) -> ToolResult:
+            return ToolResult.success(
                 tool_version_id="v1", data={"name": "苹果", "id": arguments["id"]}
             )
-        )
+
+        execute = build_execute_steps_node(executor=fake_executor)
         graph = build_agent_graph(validate_node=validate, policy_node=policy, execute_node=execute)
-        result = graph.invoke(
-            {
-                "run_id": "r7",
-                "tenant_id": "t1",
-                "user_id": "u1",
-                "query": "查询苹果",
-                "plan": {
-                    "steps": [
-                        {
-                            "step_id": "s1",
-                            "tool_name": "getProductById",
-                            "arguments": {"id": 1},
-                        }
-                    ]
-                },
-            }
+        result = asyncio.run(
+            graph.ainvoke(
+                {
+                    "run_id": "r7",
+                    "tenant_id": "t1",
+                    "user_id": "u1",
+                    "query": "查询苹果",
+                    "plan": {
+                        "steps": [
+                            {
+                                "step_id": "s1",
+                                "tool_name": "getProductById",
+                                "arguments": {"id": 1},
+                            }
+                        ]
+                    },
+                }
+            )
         )
         assert result["step_results"]["s1"].status == "completed"
         assert result["step_results"]["s1"].data["name"] == "苹果"

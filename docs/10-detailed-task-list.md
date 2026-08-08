@@ -974,7 +974,7 @@
 - 调用 MCP Gateway 执行工具
 - 结果写入 AgentState
 
-> **状态：✅ 已完成**（2026-08-08，串行按 `plan_validation.topological_order` 执行 + `user_query`/`step:{id}` 参数运行时解析 + 依赖未 COMPLETED / 策略非 ALLOW 步骤跳过 + 失败→FAILED+StateError + 合并已有 step_results；executor 以 `(tool_name, arguments) -> ToolResult` callable 注入（MCP Gateway 为 async，app 用适配器桥接），`execute_ready_steps` 首次接线进图）
+> **状态：✅ 已完成**（2026-08-08，串行按 `plan_validation.topological_order` 执行 + `user_query`/`step:{id}` 参数运行时解析 + 依赖未 COMPLETED / 策略非 ALLOW 步骤跳过 + 失败→FAILED+StateError + 合并已有 step_results；executor 以 `(tool_name, arguments) -> ToolResult` callable 注入，`execute_ready_steps` 首次接线进图；4.10 起 executor 升级为 async，移除"同步适配器"设想，以本行描述为演进前基线）
 
 ---
 
@@ -989,6 +989,8 @@
 - 不互相依赖的步骤同时执行
 - 并行结果正确合并（不依赖完成顺序）
 - WRITE 步骤不参与并行
+
+> **状态：✅ 已完成**（2026-08-08，executor 契约升级为 async `(tool_name, arguments) -> Awaitable[ToolResult]`（MCP Gateway 直接注入，移除同步适配器设想）；按 `plan_validation.parallel_groups` 逐波执行，波内 READ 步骤经 `asyncio.gather` 并发 await，WRITE 单例波串行不重叠；`parallel_groups` 为空时回退 `topological_order` 串行；失败/解析失败/异常隔离在波内不影响兄弟步骤）
 
 ---
 

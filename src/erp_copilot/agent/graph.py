@@ -8,7 +8,7 @@ decision — the acceptance for task 4.2 is a 9-node graph.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -121,7 +121,7 @@ def build_agent_graph(
     plan_node: Callable[[AgentState], dict[str, Any]] | None = None,
     validate_node: Callable[[AgentState], dict[str, Any]] | None = None,
     policy_node: Callable[[AgentState], dict[str, Any]] | None = None,
-    execute_node: Callable[[AgentState], dict[str, Any]] | None = None,
+    execute_node: Callable[[AgentState], Awaitable[dict[str, Any]]] | None = None,
 ) -> CompiledStateGraph:
     """Build and compile the agent state graph.
 

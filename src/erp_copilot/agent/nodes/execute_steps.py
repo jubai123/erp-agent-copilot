@@ -1,22 +1,26 @@
-"""Deterministic step executor node — task 4.9.
+"""Deterministic step executor node — tasks 4.9-4.10.
 
 Defence layer 3: actually run the plan steps (docs/03 §5). Walks
-plan_validation.topological_order serially, resolves each step's arguments at
-runtime (user_query → the run's query text; step:{id} → the same-named output
-param of that step's result), calls the injected executor, and records a
-StepResult per step. Only steps whose policy decision is ALLOW run; a step
-whose dependencies did not reach COMPLETED is skipped; a failed step records
-FAILED and appends a StateError so the graph routes to recovery.
+plan_validation.parallel_groups wave by wave — the READ steps in a wave run
+concurrently via asyncio.gather, WRITE steps (serial singleton waves from
+validate_plan) never overlap. Each step's arguments are resolved at runtime
+before the wave launches (user_query → the run's query text; step:{id} → the
+same-named output param of that step's result). Only steps whose policy
+decision is ALLOW run; a step whose dependencies did not reach COMPLETED is
+skipped; a failed step records FAILED and appends a StateError so the graph
+routes to recovery. When parallel_groups is empty (defensive — a valid plan
+always carries it) the node falls back to serial execution over
+topological_order.
 
-The executor is a synchronous (tool_name, arguments) → ToolResult callable.
-MCP Gateway is async; the app injects an adapter that bridges the two. The
-node itself stays synchronous so retry/idempotency semantics (Phase 5) can
-compose around the executor.
+The executor is an async (tool_name, arguments) → Awaitable[ToolResult]
+callable — the real MCP Gateway is async and is injected directly, no sync
+adapter. Retry/idempotency semantics (Phase 5) compose around the executor.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from erp_copilot.agent.state import (
@@ -32,6 +36,9 @@ from erp_copilot.tools.tool_result import ToolResult
 
 _USER_SOURCE = "user_query"
 _STEP_SOURCE_PREFIX = "step:"
+
+# The app injects the async MCP Gateway call directly; tests substitute a stub.
+Executor = Callable[[str, dict[str, Any]], Awaitable[ToolResult]]
 
 
 def resolve_arguments(
@@ -105,13 +112,30 @@ def _skipped(step_id: str) -> StepResult:
     return StepResult(step_id=step_id, status=StepStatus.SKIPPED)
 
 
+async def _run_step(
+    step: PlanStep,
+    arguments: dict[str, Any],
+    executor: Executor,
+) -> tuple[PlanStep, ToolResult]:
+    """Await one tool call; a raised executor exception becomes a failed
+    ToolResult so one bad step cannot kill its wave's gather."""
+    try:
+        return step, await executor(step.tool_name, arguments)
+    except Exception as exc:
+        return step, ToolResult.failure(
+            tool_version_id=step.tool_name,
+            error_code="EXECUTION_FAILED",
+            error_message=str(exc),
+        )
+
+
 def build_execute_steps_node(
     *,
-    executor: Callable[[str, dict[str, Any]], ToolResult],
-) -> Callable[[AgentState], dict[str, Any]]:
+    executor: Executor,
+) -> Callable[[AgentState], Awaitable[dict[str, Any]]]:
     """Build the execute_ready_steps LangGraph node with an injected executor."""
 
-    def execute_ready_steps_node(state: AgentState) -> dict[str, Any]:
+    async def execute_ready_steps_node(state: AgentState) -> dict[str, Any]:
         if state.plan is None or state.plan_validation is None:
             error = StateError(
                 code="NO_PLAN",
@@ -119,46 +143,56 @@ def build_execute_steps_node(
             )
             return {"errors": [*state.errors, error], "status": AgentStatus.FAILED}
 
+        validation = state.plan_validation
+        groups = validation.parallel_groups or [
+            [step_id] for step_id in validation.topological_order
+        ]
         steps = {step.step_id: step for step in state.plan.steps}
         results = dict(state.step_results)
         errors: list[StateError] = []
 
-        for step_id in state.plan_validation.topological_order:
-            step = steps[step_id]
-            if state.policy_decisions.get(step_id) != PolicyDecision.ALLOW:
-                results[step_id] = _skipped(step_id)
-                continue
-            if not _dependencies_completed(step, results):
-                results[step_id] = _skipped(step_id)
-                continue
-            arguments, resolve_error = resolve_arguments(step, state.query, results)
-            if resolve_error is not None:
-                results[step_id] = StepResult(
-                    step_id=step_id,
-                    status=StepStatus.FAILED,
-                    error_code=resolve_error.code,
-                    error_message=resolve_error.message,
-                )
-                errors.append(resolve_error)
-                continue
-            try:
-                result = executor(step.tool_name, arguments)
-            except Exception as exc:
-                result = ToolResult.failure(
-                    tool_version_id=step.tool_name,
-                    error_code="EXECUTION_FAILED",
-                    error_message=str(exc),
-                )
-            results[step_id] = _to_step_result(step, result)
-            if result.status != "SUCCEEDED":
-                tool_error = result.error
-                errors.append(
-                    StateError(
-                        code=tool_error.error_code if tool_error else "EXECUTION_FAILED",
-                        message=tool_error.error_message if tool_error else "工具执行失败",
-                        step_id=step_id,
+        for group in groups:
+            runnable: list[PlanStep] = []
+            for step_id in group:
+                step = steps[step_id]
+                if state.policy_decisions.get(step_id) != PolicyDecision.ALLOW:
+                    results[step_id] = _skipped(step_id)
+                    continue
+                if not _dependencies_completed(step, results):
+                    results[step_id] = _skipped(step_id)
+                    continue
+                runnable.append(step)
+
+            prepared: list[tuple[PlanStep, dict[str, Any]]] = []
+            for step in runnable:
+                arguments, resolve_error = resolve_arguments(step, state.query, results)
+                if resolve_error is not None:
+                    results[step.step_id] = StepResult(
+                        step_id=step.step_id,
+                        status=StepStatus.FAILED,
+                        error_code=resolve_error.code,
+                        error_message=resolve_error.message,
                     )
-                )
+                    errors.append(resolve_error)
+                    continue
+                prepared.append((step, arguments))
+            if not prepared:
+                continue
+
+            outcomes = await asyncio.gather(
+                *(_run_step(step, arguments, executor) for step, arguments in prepared)
+            )
+            for step, result in outcomes:
+                results[step.step_id] = _to_step_result(step, result)
+                if result.status != "SUCCEEDED":
+                    tool_error = result.error
+                    errors.append(
+                        StateError(
+                            code=tool_error.error_code if tool_error else "EXECUTION_FAILED",
+                            message=tool_error.error_message if tool_error else "工具执行失败",
+                            step_id=step.step_id,
+                        )
+                    )
 
         updates: dict[str, Any] = {
             "step_results": results,
