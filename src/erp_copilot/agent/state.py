@@ -156,6 +156,35 @@ class PolicyDecision(StrEnum):
     REQUIRE_APPROVAL = "require_approval"
 
 
+class ApprovalStatus(StrEnum):
+    """Lifecycle of one approval request (task 5.2).
+
+    The request_approval node creates PENDING requests and pauses the run.
+    The approval decision API (task 5.2) flips a request to APPROVED or DENIED
+    before the run is resumed; DENIED-step skipping lands with that same task.
+    """
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+
+
+class ApprovalRequest(_StrictModel):
+    """A step awaiting (or granted) human approval, recorded for audit.
+
+    Carried in AgentState.approvals. It mirrors the step's tool/risk context
+    so a human can decide without digging into the plan; the fields that name
+    the decider and the timestamp arrive with the decision API (task 5.2).
+    """
+
+    step_id: str
+    tool_name: str
+    description: str = ""
+    risk_level: ToolRiskLevel = ToolRiskLevel.READ
+    required_scope: str | None = None
+    status: ApprovalStatus = ApprovalStatus.PENDING
+
+
 class PlanValidation(_StrictModel):
     """Outcome of validate_plan: legality plus scheduling hints (task 4.7).
 
@@ -192,6 +221,7 @@ class AgentState(_StrictModel):
     plan: Plan | None = None
     plan_validation: PlanValidation | None = None
     policy_decisions: dict[str, PolicyDecision] = Field(default_factory=dict)
+    approvals: list[ApprovalRequest] = Field(default_factory=list)
     current_step_id: str | None = None
     step_results: dict[str, StepResult] = Field(default_factory=dict)
     artifacts: dict[str, str] = Field(default_factory=dict)

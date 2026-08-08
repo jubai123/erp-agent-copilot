@@ -1,9 +1,8 @@
 """LangGraph state-graph skeleton — task 4.2.
 
-Wires the nine Phase-4 nodes in the design-doc topology (docs/03 §4).
+Wires the ten Phase-4/5 nodes in the design-doc topology (docs/03 §4).
 Nodes are stubs here; each receives a real module in its own task
-(4.3-4.11). request_approval is deferred to Phase 5 (task 5.2) by
-decision — the acceptance for task 4.2 is a 9-node graph.
+(4.3-4.11, 5.2).
 """
 
 from __future__ import annotations
@@ -15,16 +14,21 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from erp_copilot.agent.nodes.classify_intent import classify_intent_node
+from erp_copilot.agent.nodes.request_approval import (
+    pending_approval_step_ids,
+    request_approval_node,
+)
 from erp_copilot.agent.state import AgentState, AgentStatus
 from erp_copilot.memory.checkpoint import CheckpointSaver, checkpointed
 
-# Node names in execution order (docs/03 §4, minus request_approval).
+# Node names in execution order (docs/03 §4).
 NODE_NAMES: tuple[str, ...] = (
     "classify_intent",
     "retrieve_context",
     "build_plan",
     "validate_plan",
     "policy_check",
+    "request_approval",
     "execute_ready_steps",
     "verify_results",
     "recover_or_replan",
@@ -106,9 +110,14 @@ def _route_after_validate(state: AgentState) -> str:
     return "recover_or_replan" if state.errors else "policy_check"
 
 
-def _route_after_policy(state: AgentState) -> str:
-    # Phase 5 (task 5.2) adds a request_approval branch for REQUIRE_APPROVAL.
-    return "execute_ready_steps"
+def _route_after_approval(state: AgentState) -> str:
+    # A step awaiting approval pauses the run here — the graph ends and the
+    # checkpoint keeps the run in WAITING_APPROVAL until a human decides. Once
+    # every REQUIRE_APPROVAL step has a decided record, the run proceeds.
+    # Deciding against the *current* plan (not state.status, which classify
+    # resets to PLANNING on a resumed run) also drops stale PENDING records
+    # left behind by an earlier plan.
+    return "waiting" if pending_approval_step_ids(state) else "proceed"
 
 
 def _route_after_verify(state: AgentState) -> str:
@@ -156,6 +165,7 @@ def build_agent_graph(
         ("build_plan", plan_node if plan_node is not None else _build_plan_noop),
         ("validate_plan", validate_node if validate_node is not None else _validate_plan_noop),
         ("policy_check", policy_node if policy_node is not None else _policy_check_noop),
+        ("request_approval", request_approval_node),
         (
             "execute_ready_steps",
             execute_node if execute_node is not None else _execute_steps_noop,
@@ -180,10 +190,11 @@ def build_agent_graph(
         _route_after_validate,
         {"policy_check": "policy_check", "recover_or_replan": "recover_or_replan"},
     )
+    builder.add_edge("policy_check", "request_approval")
     builder.add_conditional_edges(
-        "policy_check",
-        _route_after_policy,
-        {"execute_ready_steps": "execute_ready_steps", "finalize": "finalize"},
+        "request_approval",
+        _route_after_approval,
+        {"waiting": END, "proceed": "execute_ready_steps"},
     )
     builder.add_edge("execute_ready_steps", "verify_results")
     builder.add_conditional_edges(

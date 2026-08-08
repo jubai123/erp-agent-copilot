@@ -1121,16 +1121,21 @@
 
 ## 任务 5.2：审批模型——暂停和决策
 
+> **状态：✅ 进行中**（2026-08-08，暂停半程已完成——`request_approval` 节点接线进图；决策半程（approve/deny API + 恢复 + DENIED 跳过）待续）
+
 **目标**：实现 WRITE 操作的审批暂停。
 
 **交付物**：
 - `src/erp_copilot/security/approval.py`
+- `src/erp_copilot/agent/nodes/request_approval.py`（新增，暂停半程）
 
 **验收标准**：
-- 高风险步骤→Run 进入 WAITING_APPROVAL
-- 用户调用 approve API→继续执行
-- 用户 deny→步骤被跳过，Run 进入对应状态
-- 审批记录写入 audit_log
+- ✅ 高风险步骤→Run 进入 WAITING_APPROVAL（`request_approval_node`：REQUIRE_APPROVAL 步骤 → PENDING `ApprovalRequest` 记录 + `AgentStatus.WAITING_APPROVAL`，图路由到 END 暂停；`state.py` 新增 `ApprovalStatus`/`ApprovalRequest`/`AgentState.approvals`）
+- ⏳ 用户调用 approve API→继续执行（决策半程待续；恢复路径已就绪——approvals 中 APPROVED 记录使 `_route_after_approval` 放行到 execute）
+- ⏳ 用户 deny→步骤被跳过，Run 进入对应状态（DENIED 跳过逻辑待续）
+- ⏳ 审批记录写入 audit_log（待续）
+
+**落地细节**：节点为纯函数（无注入依赖、幂等追加不重复建记录）；路由基于**当前 plan 步骤**判断（`pending_approval_step_ids` 与节点共用单一来源），不依赖 `state.status`（resume 重放时 classify 会把 status 重置为 PLANNING），并能丢弃 replan 残留的陈旧 PENDING 记录；暂停路由到 END 而非 finalize（finalize 语义是持久化完结，WAITING_APPROVAL 不该被"完结"）。恢复 = checkpoint 重放 + 幂等（4.12 决策）。10 节点图拓扑（docs/03 §4），`tests/unit/agent/test_request_approval.py`（10 测试）+ `test_graph.py` 暂停/恢复路由（3 测试）。
 
 ---
 

@@ -17,8 +17,15 @@ from erp_copilot.agent.nodes.policy_check import build_policy_check_node
 from erp_copilot.agent.nodes.retrieve_context import build_retrieve_context_node
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.nodes.verify_results import build_verify_results_node
-from erp_copilot.agent.state import AgentState, StateError, StepResult
-from erp_copilot.domain.enums import StepStatus
+from erp_copilot.agent.state import (
+    AgentState,
+    AgentStatus,
+    ApprovalRequest,
+    ApprovalStatus,
+    StateError,
+    StepResult,
+)
+from erp_copilot.domain.enums import StepStatus, ToolRiskLevel
 from erp_copilot.tools.tool_result import ToolResult
 
 GRAPH = build_agent_graph()
@@ -43,7 +50,7 @@ def _edge_pairs() -> set[tuple[str, str]]:
 
 
 class TestTopology:
-    def test_has_all_nine_nodes(self) -> None:
+    def test_has_all_ten_nodes(self) -> None:
         assert set(NODE_NAMES) <= _node_names()
 
     def test_happy_path_chain_present(self) -> None:
@@ -52,6 +59,7 @@ class TestTopology:
             ("classify_intent", "retrieve_context"),
             ("retrieve_context", "build_plan"),
             ("build_plan", "validate_plan"),
+            ("policy_check", "request_approval"),
             ("execute_ready_steps", "verify_results"),
         ]:
             assert (source, target) in pairs
@@ -61,10 +69,14 @@ class TestTopology:
         assert ("validate_plan", "policy_check") in pairs
         assert ("validate_plan", "recover_or_replan") in pairs
 
-    def test_policy_can_route_to_execute_or_finalize(self) -> None:
+    def test_policy_routes_through_request_approval(self) -> None:
         pairs = _edge_pairs()
-        assert ("policy_check", "execute_ready_steps") in pairs
-        assert ("policy_check", "finalize") in pairs
+        assert ("policy_check", "request_approval") in pairs
+
+    def test_request_approval_can_route_to_execute_or_end(self) -> None:
+        pairs = _edge_pairs()
+        assert ("request_approval", "execute_ready_steps") in pairs
+        assert ("request_approval", "__end__") in pairs
 
     def test_verify_can_route_to_finalize_or_recovery(self) -> None:
         pairs = _edge_pairs()
@@ -165,6 +177,67 @@ class TestSmoke:
         )
         assert result["policy_decisions"]["s1"] == "allow"
         assert result["status"] == "succeeded"
+
+    def test_require_approval_run_pauses_at_waiting_approval(self) -> None:
+        policy = build_policy_check_node(get_scopes=lambda _t, _u: {"order:write"})
+        graph = build_agent_graph(policy_node=policy)
+        result = graph.invoke(
+            {
+                "run_id": "r11",
+                "tenant_id": "t1",
+                "user_id": "u1",
+                "query": "创建订单",
+                "plan": {
+                    "steps": [
+                        {
+                            "step_id": "s1",
+                            "tool_name": "createOrder",
+                            "risk_level": "WRITE",
+                            "required_scope": "order:write",
+                        }
+                    ]
+                },
+            }
+        )
+        assert result["status"] == AgentStatus.WAITING_APPROVAL
+        assert result["approvals"][0].step_id == "s1"
+        assert result["approvals"][0].status == ApprovalStatus.PENDING
+
+    def test_approved_run_resumes_past_request_approval(self) -> None:
+        # Simulates the checkpoint-resume path after a human approves: the
+        # APPROVED record rides in the state, policy re-decides REQUIRE_APPROVAL
+        # on re-invoke, but request_approval sees the decided record and lets
+        # the run proceed to execution.
+        policy = build_policy_check_node(get_scopes=lambda _t, _u: {"order:write"})
+        graph = build_agent_graph(policy_node=policy)
+        result = graph.invoke(
+            {
+                "run_id": "r12",
+                "tenant_id": "t1",
+                "user_id": "u1",
+                "query": "创建订单",
+                "plan": {
+                    "steps": [
+                        {
+                            "step_id": "s1",
+                            "tool_name": "createOrder",
+                            "risk_level": "WRITE",
+                            "required_scope": "order:write",
+                        }
+                    ]
+                },
+                "approvals": [
+                    ApprovalRequest(
+                        step_id="s1",
+                        tool_name="createOrder",
+                        risk_level=ToolRiskLevel.WRITE,
+                        status=ApprovalStatus.APPROVED,
+                    )
+                ],
+            }
+        )
+        assert result["status"] == AgentStatus.SUCCEEDED
+        assert result["approvals"][0].status == ApprovalStatus.APPROVED
 
     def test_injected_execute_node_populates_state(self) -> None:
         validate = build_validate_plan_node(
@@ -269,6 +342,7 @@ class TestSmoke:
             "build_plan",
             "validate_plan",
             "policy_check",
+            "request_approval",
             "execute_ready_steps",
             "verify_results",
             "finalize",
