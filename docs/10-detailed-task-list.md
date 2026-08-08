@@ -913,6 +913,8 @@
 - **L1/L2 注入顺序**：System → L1 Active Skills（硬约束）→ L2 Retrieved Knowledge（参考）→ 候选工具 → User Query
 - 检测 L1 约束被违反时（如非法状态转换），直接拒绝生成对应 Step
 
+> **状态：✅ 已完成**（2026-08-08，LLM Plan DAG 生成 + System→L1→L2→候选→Query 注入顺序 + 严格 Schema 解析 + L1 非法转换拒绝；LLM 以 callable 注入，candidate_filter/skill_matcher 首次接线进图）
+
 ---
 
 ## 任务 4.7：validate_plan 节点

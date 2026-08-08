@@ -9,6 +9,7 @@ is produced. A smoke run proves the happy path reaches SUCCEEDED.
 from __future__ import annotations
 
 from erp_copilot.agent.graph import NODE_NAMES, build_agent_graph
+from erp_copilot.agent.nodes.build_plan import build_plan_node
 from erp_copilot.agent.nodes.retrieve_context import build_retrieve_context_node
 from erp_copilot.agent.state import StateError
 
@@ -93,6 +94,19 @@ class TestSmoke:
         graph = build_agent_graph(retrieve_node=fake)
         result = graph.invoke({"run_id": "r3", "tenant_id": "t1", "query": "查苹果库存"})
         assert result["retrieved_context"][0].source == "orders.md"
+        assert result["status"] == "succeeded"
+
+    def test_injected_build_plan_node_populates_state(self) -> None:
+        fake = build_plan_node(
+            llm_complete=lambda _: (
+                '{"title": "t", "steps": '
+                '[{"step_id": "s1", "tool_name": "getProductById", "arguments": {"id": 1}}]}'
+            )
+        )
+        graph = build_agent_graph(plan_node=fake)
+        result = graph.invoke({"run_id": "r4", "tenant_id": "t1", "query": "查询苹果"})
+        assert result["plan"].steps[0].tool_name == "getProductById"
+        assert result["candidate_tools"]
         assert result["status"] == "succeeded"
 
     def test_error_path_routes_to_recovery(self) -> None:

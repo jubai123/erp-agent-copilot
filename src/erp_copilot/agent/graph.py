@@ -43,8 +43,12 @@ def _retrieve_context_noop(state: AgentState) -> dict[str, Any]:
     return {}
 
 
-def build_plan(state: AgentState) -> dict[str, Any]:
-    """TODO(task 4.6): LLM emits a Plan DAG from the constrained candidates."""
+def _build_plan_noop(state: AgentState) -> dict[str, Any]:
+    """No-op build_plan used when no LLM is injected.
+
+    Keeps topology and smoke tests free of an LLM dependency; the app always
+    injects the real node (build_plan_node) at startup.
+    """
     return {}
 
 
@@ -102,11 +106,13 @@ def _route_after_recover(state: AgentState) -> str:
 
 def build_agent_graph(
     retrieve_node: Callable[[AgentState], dict[str, Any]] | None = None,
+    plan_node: Callable[[AgentState], dict[str, Any]] | None = None,
 ) -> CompiledStateGraph:
     """Build and compile the agent state graph.
 
     *retrieve_node* injects the real retrieve_context implementation (task
-    4.4). When omitted, a no-op keeps topology/smoke tests free of database
+    4.4) and *plan_node* the real build_plan implementation (task 4.6). When
+    omitted, no-ops keep topology/smoke tests free of database and LLM
     dependencies.
     """
     builder = StateGraph(AgentState)
@@ -117,7 +123,10 @@ def build_agent_graph(
         "retrieve_context",
         retrieve_node if retrieve_node is not None else _retrieve_context_noop,  # type: ignore[arg-type]
     )
-    builder.add_node("build_plan", build_plan)
+    builder.add_node(
+        "build_plan",
+        plan_node if plan_node is not None else _build_plan_noop,  # type: ignore[arg-type]
+    )
     builder.add_node("validate_plan", validate_plan)
     builder.add_node("policy_check", policy_check)
     builder.add_node("execute_ready_steps", execute_ready_steps)
