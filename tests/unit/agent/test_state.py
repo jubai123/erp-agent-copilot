@@ -23,7 +23,7 @@ from erp_copilot.agent.state import (
     StateError,
     StepResult,
 )
-from erp_copilot.domain.enums import ToolRiskLevel
+from erp_copilot.domain.enums import StepStatus, ToolRiskLevel
 
 PLAN_STEP_CONTRACT = {
     "step_id": "check_recent_changes",
@@ -113,17 +113,26 @@ class TestPlanStep:
         assert step.fallback == "ask_for_alternate_delivery_region"
 
     def test_risk_level_accepts_uppercase(self) -> None:
-        assert PlanStep(step_id="s1", tool_name="t", risk_level="WRITE").risk_level == (
-            ToolRiskLevel.WRITE
+        assert (
+            PlanStep(
+                step_id="s1",
+                tool_name="t",
+                risk_level="WRITE",  # type: ignore[arg-type]
+            ).risk_level
+            == ToolRiskLevel.WRITE
         )
 
     def test_risk_level_maps_admin_to_dangerous(self) -> None:
-        step = PlanStep(step_id="s1", tool_name="t", risk_level="ADMIN")
+        step = PlanStep(
+            step_id="s1",
+            tool_name="t",
+            risk_level="ADMIN",  # type: ignore[arg-type]
+        )
         assert step.risk_level == ToolRiskLevel.DANGEROUS
 
     def test_rejects_unknown_risk_level(self) -> None:
         with pytest.raises(ValidationError):
-            PlanStep(step_id="s1", tool_name="t", risk_level="EXPLODE")
+            PlanStep(step_id="s1", tool_name="t", risk_level="EXPLODE")  # type: ignore[arg-type]
 
 
 class TestPlan:
@@ -143,7 +152,7 @@ class TestPlan:
 
 class TestStepResult:
     def test_defaults(self) -> None:
-        result = StepResult(step_id="s1", status="completed")
+        result = StepResult(step_id="s1", status=StepStatus.COMPLETED)
         assert result.data is None
         assert result.error_code is None
         assert result.is_retryable is False
@@ -151,7 +160,7 @@ class TestStepResult:
     def test_constructs_with_error(self) -> None:
         result = StepResult(
             step_id="s1",
-            status="failed",
+            status=StepStatus.FAILED,
             error_code="TIMEOUT",
             error_message="connect reset",
             is_retryable=True,
@@ -164,7 +173,7 @@ class TestAgentState:
         with pytest.raises(ValidationError):
             AgentState()  # type: ignore[call-arg]
         with pytest.raises(ValidationError):
-            AgentState(run_id="r1", tenant_id="t1")
+            AgentState(run_id="r1", tenant_id="t1")  # type: ignore[call-arg]
 
     def test_defaults(self) -> None:
         state = AgentState(run_id="r1", tenant_id="t1", query="查苹果库存")
@@ -207,7 +216,7 @@ class TestAgentState:
             step_results={
                 "s1": StepResult(
                     step_id="s1",
-                    status="completed",
+                    status=StepStatus.COMPLETED,
                     data={"product": "苹果", "stock": 100},
                 )
             },
