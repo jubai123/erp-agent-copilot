@@ -349,6 +349,38 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class IdempotencyRecord(Base):
+    """Write-intent ledger enforcing at-most-once tool execution (docs/06 §7).
+
+    One row per write operation, keyed by (tenant_id, idempotency_key); the
+    unique constraint is what makes replay safe under concurrency — a second
+    attempt at the same key collides at the database, not just in application
+    logic. status moves PENDING -> COMPLETED/FAILED: an intent is recorded
+    before the tool runs, the result lands on success, and recovery can replay
+    a COMPLETED record or resume a FAILED one instead of re-running blind.
+    """
+
+    __tablename__ = "idempotency_records"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_idempotency_tenant_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    step_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False)
+    request_payload: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    result_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    external_operation_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class KnowledgeDocument(Base):
     """A knowledge document ingested into the retrieval system."""
 

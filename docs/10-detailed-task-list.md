@@ -1230,12 +1230,27 @@
 **目标**：保证同一个写操作不会被执行两次。
 
 **交付物**：
-- `src/erp_copilot/tools/idempotency.py`
+- `src/erp_copilot/tools/idempotency.py`（✅ 已实现）
+- `src/erp_copilot/domain/entities.py`（✅ `IdempotencyRecord` 实体）
+- `src/erp_copilot/domain/errors.py`（✅ `IdempotencyConflictError`）
+- `migrations/versions/6b5c4d3e2f10_add_idempotency_record_table.py`（✅ 新增表）
+- `tests/unit/tools/test_idempotency.py`（✅ 已实现，8 用例）
 
 **验收标准**：
-- 相同幂等键→返回缓存结果
-- 不同幂等键→正常执行
-- 幂等记录持久化（PostgreSQL）
+- ✅ 相同幂等键→返回缓存结果（`execute` 短路径：`COMPLETED` 记录直接重放 `result_payload`，`fn` 不再执行）
+- ✅ 不同幂等键→正常执行（各 key 独立走 begin→fn→complete，`count` 累计两条记录）
+- ✅ 幂等记录持久化（PostgreSQL）（`idempotency_records` 表 + 迁移，`(tenant_id, idempotency_key)` 唯一约束）
+
+**落地细节**：`IdempotencyStore(session)` 沿用 `CheckpointSaver(session)` 的注入风格，围绕 tool 执行编排 docs/06 §7 三规则——**执行前先写意图**（`begin` 插 `PENDING` 行）→ 执行 → **成功后记录结果**（`complete` 置 `COMPLETED` + `result_payload` + `external_operation_id`）；失败置 `FAILED` + `error_message`，允许后续重跑（覆盖为 COMPLETED）。`execute` 是编排入口：`begin` 返回 `COMPLETED` 即缓存短路径，否则跑 `fn`。并发安全由唯一约束兜底：store 记录本实例创建的 PENDING id，`begin` 遇到**自己创建的** PENDING 视为幂等重入返回同记录，遇到**他人创建**的 PENDING 抛 `IdempotencyConflictError`（在途冲突）；两个进程竞态绕过查询时，第二次插入撞唯一约束 `IntegrityError`→回滚→重查→同冲突或返回已 COMPLETED 记录。测试用共享 SQLite 文件 + 两个独立 session 验证跨 session 持久化（缓存真正从 DB 读回，而非同 session identity map）。状态语义对齐 docs/06 §8：COMPLETED 直接复用、FAILED 按预算重试、PENDING 对账转人工。request_payload 存执行意图供审计/对账，但**不做重放参数一致性校验**（同 key 不同参 → 后续增强）；executor 接线幂等层随 Worker 恢复任务。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 幂等键是什么 | 每次写操作生成的稳定标识，让"执行两次=执行一次"成为可能（docs/06 §7：Plan 确定后生成） |
+| 执行意图 + 唯一约束 | 先插 `PENDING` 意图行，靠 DB 唯一约束拦截重放——防并发双写靠数据库而不是应用层 if |
+| COMPLETED 缓存 vs FAILED 重跑 | 成功结果永久复用（缓存）；失败记录允许按预算重试（docs/06 §8 恢复语义） |
+| 在途冲突 | `PENDING` 记录还在（进程崩溃/并发）→ `IdempotencyConflictError`，绝不盲目重跑 |
+| 幂等 vs 重试的关系 | 幂等让"重试安全"成为可能——这正是 docs/06 §7"结果未知且无幂等保障的写操作不可自动重试"的前提 |
 
 ---
 
