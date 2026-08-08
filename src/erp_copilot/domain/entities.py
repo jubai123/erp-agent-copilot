@@ -303,6 +303,30 @@ class RunEvent(Base):
     run: Mapped[Run] = relationship("Run", back_populates="events")
 
 
+class SecurityEvent(Base):
+    """A recorded security incident (docs/07 security_events).
+
+    Written by guards (SSRF, injection, redaction) when they intercept an
+    attack; layer names the detector and disposition the outcome. run_id
+    links the incident to the run it happened in, when one is present.
+    """
+
+    __tablename__ = "security_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    attack_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    layer: Mapped[str] = mapped_column(String(50), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), default="HIGH")
+    input_summary: Mapped[str] = mapped_column(Text, default="")
+    disposition: Mapped[str] = mapped_column(String(20), default="blocked")
+    run_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("runs.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    run: Mapped[Run | None] = relationship("Run")
+
+
 class KnowledgeDocument(Base):
     """A knowledge document ingested into the retrieval system."""
 

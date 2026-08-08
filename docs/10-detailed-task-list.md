@@ -1141,15 +1141,22 @@
 
 ## 任务 5.3：SSRF 防护和 Egress 控制
 
+> **状态：✅ 已完成**（2026-08-08，纯函数前置检查 + 注入式解析器 + security_events 落库）
+
 **目标**：防止 Agent 访问内网或危险 URL。
 
 **交付物**：
-- `src/erp_copilot/security/ssrf_guard.py`
+- `src/erp_copilot/security/ssrf_guard.py`（新增）
+- `src/erp_copilot/domain/entities.py`（新增 `SecurityEvent`）
+- `migrations/versions/a1b2c3d4e5f6_add_security_event_table.py`（新增）
+- `tests/unit/security/test_ssrf_guard.py`（新增，33 用例）
 
 **验收标准**：
-- 请求内网 IP（127.0.0.1/10.x/192.168.x）→拦截
-- 请求非白名单域名→拦截
-- 拦截事件写入 security_events
+- ✅ 请求内网 IP（127.0.0.1/10.x/192.168.x）→拦截（`is_internal_ip` 按族拆表：IPv4 的 0/8、RFC1918、回环、链路本地、组播、保留；IPv6 的 ::、::1、ULA、链路本地、组播；`BLOCKED_IP`）
+- ✅ 请求非白名单域名→拦截（预注册 `allowed_hosts` 或 `host:port`；`HOST_NOT_ALLOWED`）
+- ✅ 拦截事件写入 security_events（`record_security_event` 落 `SecurityEvent(attack_type="SSRF", layer="ssrf_guard", severity="HIGH", disposition="blocked")`）
+
+**落地细节**：纯函数前置检查（`SSRFGuard.check`，不发连接）按序：scheme 白名单（仅 https）→ 拒绝 URL 凭证 → 端口白名单（默认 443，显式端口或 scheme 默认）→ host 白名单 → 解析后逐个地址检查（注入的 resolver 可确定性模拟 DNS rebinding；任一地址为内网即拦截；IP 字面量跳过 DNS；空解析 `RESOLUTION_FAILED` 失败关闭）。`trusted_internal_hosts` 显式授权合法内网端点（如 ERP simulator），但仍须在 allowed_hosts（纵深防御）。`check_redirect` 只允许同 host 重定向并逐跳复检。测试：33 用例覆盖 IPv4/IPv6 内外网、scheme、白名单粒度（裸 host vs host:port）、端口、DNS rebinding、重定向、凭证、非法 URL、trusted_internal。已知限制：TOCTOU——检查时解析与后续连接时的解析可能不一致（需 executor 直接连已校验地址才能闭合，超出本任务）；guard 到 executor/MCP gateway 的接线待续。
 
 **教学要点**：
 | 概念 | 讲解内容 |
@@ -1157,6 +1164,8 @@
 | SSRF 是什么 | Server-Side Request Forgery：攻击者让服务器请求内部服务 |
 | Agent 场景的 SSRF 风险 | 恶意 prompt 可能让 Agent 调用 `http://internal-admin/delete-all` |
 | 防护策略 | IP 黑名单 + 域名白名单 + URL scheme 限制（只允许 https） |
+| DNS Rebinding | 解析返回全部地址并逐一校验，任何内网地址即拦截；纯函数 + 注入 resolver 让测试可确定性模拟 |
+| Verdict 模式 | guard 返回 `SSRFVerdict(allowed, reason, detail)` 而非抛异常，处置权交给调用方（拦截 + 记 security_event） |
 
 ---
 
