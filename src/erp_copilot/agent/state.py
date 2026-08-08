@@ -173,8 +173,9 @@ class ApprovalRequest(_StrictModel):
     """A step awaiting (or granted) human approval, recorded for audit.
 
     Carried in AgentState.approvals. It mirrors the step's tool/risk context
-    so a human can decide without digging into the plan; the fields that name
-    the decider and the timestamp arrive with the decision API (task 5.2).
+    so a human can decide without digging into the plan; decided_by /
+    decided_at / reason are filled in by the decision API (task 5.2) when it
+    flips a PENDING request to APPROVED or DENIED.
     """
 
     step_id: str
@@ -183,6 +184,9 @@ class ApprovalRequest(_StrictModel):
     risk_level: ToolRiskLevel = ToolRiskLevel.READ
     required_scope: str | None = None
     status: ApprovalStatus = ApprovalStatus.PENDING
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    reason: str | None = None
 
 
 class PlanValidation(_StrictModel):

@@ -172,4 +172,57 @@ class TestResumeIdempotency:
             policy_decisions={"s1": PolicyDecision.REQUIRE_APPROVAL},
             approvals=[_approval(status=ApprovalStatus.APPROVED)],
         )
-        assert request_approval_node(state) == {}
+        updates = request_approval_node(state)
+        # The decided record maps the step back onto the policy: APPROVED
+        # becomes ALLOW so execute_ready_steps runs the step on resume.
+        assert updates["policy_decisions"] == {"s1": PolicyDecision.ALLOW}
+        assert "status" not in updates  # no longer awaiting
+        assert "approvals" not in updates  # nothing new recorded
+
+
+class TestPolicyResolution:
+    """Resume path: decided records route the re-decided REQUIRE_APPROVAL
+    policy onward — APPROVED steps run, DENIED steps are skipped."""
+
+    def test_approved_record_resolves_policy_to_allow(self) -> None:
+        state = _state(
+            plan=Plan(steps=[_write_step()]),
+            policy_decisions={"s1": PolicyDecision.REQUIRE_APPROVAL},
+            approvals=[_approval(status=ApprovalStatus.APPROVED)],
+        )
+        updates = request_approval_node(state)
+        assert updates["policy_decisions"] == {"s1": PolicyDecision.ALLOW}
+
+    def test_denied_record_resolves_policy_to_deny(self) -> None:
+        state = _state(
+            plan=Plan(steps=[_write_step()]),
+            policy_decisions={"s1": PolicyDecision.REQUIRE_APPROVAL},
+            approvals=[_approval(status=ApprovalStatus.DENIED)],
+        )
+        updates = request_approval_node(state)
+        assert updates["policy_decisions"] == {"s1": PolicyDecision.DENY}
+
+    def test_pending_record_does_not_resolve_policy(self) -> None:
+        state = _state(
+            plan=Plan(steps=[_write_step()]),
+            policy_decisions={"s1": PolicyDecision.REQUIRE_APPROVAL},
+            approvals=[_approval(status=ApprovalStatus.PENDING)],
+        )
+        updates = request_approval_node(state)
+        assert updates.get("policy_decisions") is None
+        assert updates["status"] == AgentStatus.WAITING_APPROVAL
+
+    def test_unrelated_allow_step_keeps_its_policy(self) -> None:
+        state = _state(
+            plan=Plan(steps=[_read_step("s1"), _write_step("s2")]),
+            policy_decisions={
+                "s1": PolicyDecision.ALLOW,
+                "s2": PolicyDecision.REQUIRE_APPROVAL,
+            },
+            approvals=[_approval(step_id="s2", status=ApprovalStatus.APPROVED)],
+        )
+        updates = request_approval_node(state)
+        assert updates["policy_decisions"] == {
+            "s1": PolicyDecision.ALLOW,
+            "s2": PolicyDecision.ALLOW,
+        }

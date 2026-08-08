@@ -45,6 +45,31 @@ def pending_approval_step_ids(state: AgentState) -> list[str]:
     return pending
 
 
+def _resolve_decided_approvals(state: AgentState) -> dict[str, PolicyDecision]:
+    """Map decided approval records back onto policy so the resumed run routes.
+
+    On resume the policy node re-decides REQUIRE_APPROVAL for the same WRITE
+    step; execute_ready_steps only runs ALLOW steps. APPROVED therefore
+    resolves to ALLOW (so the step executes) and DENIED to DENY (so the step
+    is skipped). PENDING records stay untouched and keep the run waiting.
+    """
+    records = {r.step_id: r for r in state.approvals}
+    resolved: dict[str, PolicyDecision] = {}
+    if state.plan is None:
+        return resolved
+    for step in state.plan.steps:
+        if state.policy_decisions.get(step.step_id) is not PolicyDecision.REQUIRE_APPROVAL:
+            continue
+        record = records.get(step.step_id)
+        if record is None:
+            continue
+        if record.status == ApprovalStatus.APPROVED:
+            resolved[step.step_id] = PolicyDecision.ALLOW
+        elif record.status == ApprovalStatus.DENIED:
+            resolved[step.step_id] = PolicyDecision.DENY
+    return resolved
+
+
 def request_approval_node(state: AgentState) -> dict[str, Any]:
     """Pause the run if any plan step is awaiting human approval."""
     if state.plan is None:
@@ -70,6 +95,9 @@ def request_approval_node(state: AgentState) -> dict[str, Any]:
     updates: dict[str, Any] = {}
     if new_requests:
         updates["approvals"] = [*state.approvals, *new_requests]
+    resolved = _resolve_decided_approvals(state)
+    if resolved:
+        updates["policy_decisions"] = {**state.policy_decisions, **resolved}
     if pending_approval_step_ids(state):
         updates["status"] = AgentStatus.WAITING_APPROVAL
     return updates

@@ -1121,21 +1121,21 @@
 
 ## 任务 5.2：审批模型——暂停和决策
 
-> **状态：✅ 进行中**（2026-08-08，暂停半程已完成——`request_approval` 节点接线进图；决策半程（approve/deny API + 恢复 + DENIED 跳过）待续）
+> **状态：✅ 进行中**（2026-08-08，暂停+决策双半程已完成；待续：HTTP approve/deny API 路由 + audit_log 落库）
 
-**目标**：实现 WRITE 操作的审批暂停。
+**目标**：实现 WRITE 操作的审批暂停与决策。
 
 **交付物**：
-- `src/erp_copilot/security/approval.py`
+- `src/erp_copilot/security/approval.py`（新增，决策半程）
 - `src/erp_copilot/agent/nodes/request_approval.py`（新增，暂停半程）
 
 **验收标准**：
 - ✅ 高风险步骤→Run 进入 WAITING_APPROVAL（`request_approval_node`：REQUIRE_APPROVAL 步骤 → PENDING `ApprovalRequest` 记录 + `AgentStatus.WAITING_APPROVAL`，图路由到 END 暂停；`state.py` 新增 `ApprovalStatus`/`ApprovalRequest`/`AgentState.approvals`）
-- ⏳ 用户调用 approve API→继续执行（决策半程待续；恢复路径已就绪——approvals 中 APPROVED 记录使 `_route_after_approval` 放行到 execute）
-- ⏳ 用户 deny→步骤被跳过，Run 进入对应状态（DENIED 跳过逻辑待续）
+- ✅ 用户调用 approve API→继续执行（`ApprovalDecisionService.decide` 把 PENDING 翻成 APPROVED/DENIED 并落新 checkpoint；`resume_run` 重放恢复——`request_approval` 把已决记录解析回 policy：APPROVED→ALLOW 使步骤执行、DENIED→DENY 使步骤被跳过）
+- ✅ 用户 deny→步骤被跳过，Run 进入对应状态（DENIED 记录 → policy DENY → execute_ready_steps 跳过；全跳过 → verify 判 SUCCEEDED）
 - ⏳ 审批记录写入 audit_log（待续）
 
-**落地细节**：节点为纯函数（无注入依赖、幂等追加不重复建记录）；路由基于**当前 plan 步骤**判断（`pending_approval_step_ids` 与节点共用单一来源），不依赖 `state.status`（resume 重放时 classify 会把 status 重置为 PLANNING），并能丢弃 replan 残留的陈旧 PENDING 记录；暂停路由到 END 而非 finalize（finalize 语义是持久化完结，WAITING_APPROVAL 不该被"完结"）。恢复 = checkpoint 重放 + 幂等（4.12 决策）。10 节点图拓扑（docs/03 §4），`tests/unit/agent/test_request_approval.py`（10 测试）+ `test_graph.py` 暂停/恢复路由（3 测试）。
+**落地细节**：节点为纯函数（无注入依赖、幂等追加不重复建记录）；路由基于**当前 plan 步骤**判断（`pending_approval_step_ids` 与节点共用单一来源），不依赖 `state.status`（resume 重放时 classify 会把 status 重置为 PLANNING），并能丢弃 replan 残留的陈旧 PENDING 记录；暂停路由到 END 而非 finalize（finalize 语义是持久化完结，WAITING_APPROVAL 不该被"完结"）。恢复 = checkpoint 重放 + 幂等（4.12 决策）。`ApprovalRequest` 新增 `decided_by`/`decided_at`/`reason` 审计字段。关键交互：resume 时 policy 会对同一 WRITE 步骤重判 REQUIRE_APPROVAL（scope 只判 DENY，不授予写权限），所以 `request_approval` 必须把已决记录解析回 policy，否则 execute 会把已批准步骤当 DENY 跳过。10 节点图拓扑（docs/03 §4），测试：`tests/unit/security/test_approval.py`（14）+ `tests/unit/agent/test_request_approval.py`（14）+ `test_graph.py` 暂停/恢复路由（3）。
 
 ---
 
