@@ -1007,6 +1007,8 @@
 - 有步骤 failed、是永久错误→进入 recover_or_replan
 - 区分"工具调用成功"和"业务目标达成"
 
+> **状态：✅ 已完成**（2026-08-08，`verify_results` 语义门（第 4 层防御）：COMPLETED 步骤按 `success_condition` 确定性求值（AST 白名单安全 eval，仅放行比较/布尔/算术表达式、属性与下标访问、`len/str/int/float` 调用 + 空 `__builtins__`，拒绝 `__import__`/任意调用，零新依赖），`response` 绑定结果数据；条件不满足→`SUCCESS_CONDITION_FAILED`、条件非法→`SUCCESS_CONDITION_INVALID`、步骤无结果→`MISSING_STEP_RESULT`（均永久）；FAILED 步骤按 `is_retryable` 归类（execute 已记 error 不重复追加）；SKIPPED 不判失败。分类写入 AgentStatus：无失败→SUCCEEDED（finalize）、全部可重试→RETRYING、任一永久→REPLANNING——9 节点拓扑只有 recover_or_replan 一个恢复汇点，retry/replan/give-up 三路拆分留给 5.8，路由仍由 errors 驱动；graph 增加 `verify_node` 注入参数，stub 改名 `_verify_results_noop`）
+
 ---
 
 ## 任务 4.12：Checkpoint 和恢复

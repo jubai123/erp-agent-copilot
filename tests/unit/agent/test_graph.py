@@ -16,7 +16,9 @@ from erp_copilot.agent.nodes.execute_steps import build_execute_steps_node
 from erp_copilot.agent.nodes.policy_check import build_policy_check_node
 from erp_copilot.agent.nodes.retrieve_context import build_retrieve_context_node
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
-from erp_copilot.agent.state import StateError
+from erp_copilot.agent.nodes.verify_results import build_verify_results_node
+from erp_copilot.agent.state import StateError, StepResult
+from erp_copilot.domain.enums import StepStatus
 from erp_copilot.tools.tool_result import ToolResult
 
 GRAPH = build_agent_graph()
@@ -189,6 +191,61 @@ class TestSmoke:
         assert result["step_results"]["s1"].status == "completed"
         assert result["step_results"]["s1"].data["name"] == "苹果"
         assert result["status"] == "succeeded"
+
+    def test_injected_verify_node_populates_state(self) -> None:
+        verify = build_verify_results_node()
+        graph = build_agent_graph(verify_node=verify)
+        result = graph.invoke(
+            {
+                "run_id": "r8",
+                "tenant_id": "t1",
+                "user_id": "u1",
+                "query": "查苹果",
+                "plan": {
+                    "steps": [
+                        {
+                            "step_id": "s1",
+                            "tool_name": "getProductById",
+                            "success_condition": "response.name == '苹果'",
+                        }
+                    ]
+                },
+                "step_results": {
+                    "s1": StepResult(
+                        step_id="s1", status=StepStatus.COMPLETED, data={"name": "苹果"}
+                    )
+                },
+            }
+        )
+        assert result["status"] == "succeeded"
+
+    def test_verify_semantic_failure_routes_to_recovery(self) -> None:
+        verify = build_verify_results_node()
+        graph = build_agent_graph(verify_node=verify)
+        result = graph.invoke(
+            {
+                "run_id": "r9",
+                "tenant_id": "t1",
+                "user_id": "u1",
+                "query": "查苹果",
+                "plan": {
+                    "steps": [
+                        {
+                            "step_id": "s1",
+                            "tool_name": "getProductById",
+                            "success_condition": "response.name == '苹果'",
+                        }
+                    ]
+                },
+                "step_results": {
+                    "s1": StepResult(
+                        step_id="s1", status=StepStatus.COMPLETED, data={"name": "橙子"}
+                    )
+                },
+            }
+        )
+        assert result["status"] == "replanning"
+        assert result["errors"][0].code == "SUCCESS_CONDITION_FAILED"
 
     def test_error_path_routes_to_recovery(self) -> None:
         result = GRAPH.invoke(

@@ -79,8 +79,12 @@ def _execute_steps_noop(state: AgentState) -> dict[str, Any]:
     return {}
 
 
-def verify_results(state: AgentState) -> dict[str, Any]:
-    """TODO(task 4.11): match success_condition against the business goal."""
+def _verify_results_noop(state: AgentState) -> dict[str, Any]:
+    """No-op verify_results used when no verification logic is injected.
+
+    Keeps topology and smoke tests free of success-condition evaluation; the
+    app always injects the real node (build_verify_results_node) at startup.
+    """
     return {"status": AgentStatus.SUCCEEDED}
 
 
@@ -122,16 +126,19 @@ def build_agent_graph(
     validate_node: Callable[[AgentState], dict[str, Any]] | None = None,
     policy_node: Callable[[AgentState], dict[str, Any]] | None = None,
     execute_node: Callable[[AgentState], Awaitable[dict[str, Any]]] | None = None,
+    verify_node: Callable[[AgentState], dict[str, Any]] | None = None,
 ) -> CompiledStateGraph:
     """Build and compile the agent state graph.
 
     *retrieve_node* injects the real retrieve_context implementation (task
     4.4), *plan_node* the real build_plan implementation (task 4.6),
     *validate_node* the real validate_plan implementation (task 4.7),
-    *policy_node* the real policy_check implementation (task 4.8) and
-    *execute_node* the real execute_ready_steps implementation (task 4.9).
-    When omitted, no-ops keep topology/smoke tests free of database, LLM,
-    tool-schema, security-subsystem and executor dependencies.
+    *policy_node* the real policy_check implementation (task 4.8),
+    *execute_node* the real execute_ready_steps implementation (task 4.9) and
+    *verify_node* the real verify_results implementation (task 4.11). When
+    omitted, no-ops keep topology/smoke tests free of database, LLM,
+    tool-schema, security-subsystem, executor and success-condition
+    dependencies.
     """
     builder = StateGraph(AgentState)
     # Registered explicitly — langgraph's _Node protocol does not type-check
@@ -157,7 +164,10 @@ def build_agent_graph(
         "execute_ready_steps",
         execute_node if execute_node is not None else _execute_steps_noop,  # type: ignore[arg-type]
     )
-    builder.add_node("verify_results", verify_results)
+    builder.add_node(
+        "verify_results",
+        verify_node if verify_node is not None else _verify_results_noop,  # type: ignore[arg-type]
+    )
     builder.add_node("recover_or_replan", recover_or_replan)
     builder.add_node("finalize", finalize)
 
