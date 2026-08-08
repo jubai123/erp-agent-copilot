@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from erp_copilot.agent.graph import NODE_NAMES, build_agent_graph
 from erp_copilot.agent.nodes.build_plan import build_plan_node
+from erp_copilot.agent.nodes.policy_check import build_policy_check_node
 from erp_copilot.agent.nodes.retrieve_context import build_retrieve_context_node
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.state import StateError
@@ -125,6 +126,29 @@ class TestSmoke:
         )
         assert result["plan_validation"].is_valid is False
         assert result["errors"][0].code == "UNKNOWN_TOOL"
+
+    def test_injected_policy_node_populates_state(self) -> None:
+        policy = build_policy_check_node(get_scopes=lambda _t, _u: {"product:read"})
+        graph = build_agent_graph(policy_node=policy)
+        result = graph.invoke(
+            {
+                "run_id": "r6",
+                "tenant_id": "t1",
+                "user_id": "u1",
+                "query": "查询苹果",
+                "plan": {
+                    "steps": [
+                        {
+                            "step_id": "s1",
+                            "tool_name": "getProductById",
+                            "required_scope": "product:read",
+                        }
+                    ]
+                },
+            }
+        )
+        assert result["policy_decisions"]["s1"] == "allow"
+        assert result["status"] == "succeeded"
 
     def test_error_path_routes_to_recovery(self) -> None:
         result = GRAPH.invoke(

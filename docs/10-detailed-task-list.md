@@ -958,6 +958,8 @@
 - WRITE 步骤、用户有 Scope→REQUIRE_APPROVAL
 - ADMIN 步骤→REQUIRE_APPROVAL
 
+> **状态：✅ 已完成**（2026-08-08，Scope 门禁先行（无 Scope 一律 DENY，审批不能授予权限）→ READ 放行 / WRITE·DANGEROUS·显式 requires_approval 需审批；`PolicyDecision` 写入 state，被拒步骤追加 `POLICY_DENIED` 错误；scope 解析以 callable 注入，`policy_check` 首次接线进图）
+
 ---
 
 ## 任务 4.9：execute_ready_steps 节点——基础版

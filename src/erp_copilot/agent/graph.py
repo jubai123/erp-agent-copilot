@@ -61,8 +61,12 @@ def _validate_plan_noop(state: AgentState) -> dict[str, Any]:
     return {}
 
 
-def policy_check(state: AgentState) -> dict[str, Any]:
-    """TODO(task 4.8): ALLOW/DENY from scope; approval branch lands in Phase 5."""
+def _policy_check_noop(state: AgentState) -> dict[str, Any]:
+    """No-op policy_check used when no scope resolver is injected.
+
+    Keeps topology and smoke tests free of a security-subsystem dependency;
+    the app always injects the real node (build_policy_check_node) at startup.
+    """
     return {}
 
 
@@ -112,14 +116,16 @@ def build_agent_graph(
     retrieve_node: Callable[[AgentState], dict[str, Any]] | None = None,
     plan_node: Callable[[AgentState], dict[str, Any]] | None = None,
     validate_node: Callable[[AgentState], dict[str, Any]] | None = None,
+    policy_node: Callable[[AgentState], dict[str, Any]] | None = None,
 ) -> CompiledStateGraph:
     """Build and compile the agent state graph.
 
     *retrieve_node* injects the real retrieve_context implementation (task
-    4.4), *plan_node* the real build_plan implementation (task 4.6) and
-    *validate_node* the real validate_plan implementation (task 4.7). When
-    omitted, no-ops keep topology/smoke tests free of database, LLM and
-    tool-schema dependencies.
+    4.4), *plan_node* the real build_plan implementation (task 4.6),
+    *validate_node* the real validate_plan implementation (task 4.7) and
+    *policy_node* the real policy_check implementation (task 4.8). When
+    omitted, no-ops keep topology/smoke tests free of database, LLM,
+    tool-schema and security-subsystem dependencies.
     """
     builder = StateGraph(AgentState)
     # Registered explicitly — langgraph's _Node protocol does not type-check
@@ -137,7 +143,10 @@ def build_agent_graph(
         "validate_plan",
         validate_node if validate_node is not None else _validate_plan_noop,  # type: ignore[arg-type]
     )
-    builder.add_node("policy_check", policy_check)
+    builder.add_node(
+        "policy_check",
+        policy_node if policy_node is not None else _policy_check_noop,  # type: ignore[arg-type]
+    )
     builder.add_node("execute_ready_steps", execute_ready_steps)
     builder.add_node("verify_results", verify_results)
     builder.add_node("recover_or_replan", recover_or_replan)

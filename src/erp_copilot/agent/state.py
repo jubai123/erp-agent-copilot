@@ -143,6 +143,19 @@ class StateError(_StrictModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class PolicyDecision(StrEnum):
+    """Outcome of the policy_check gate for one plan step (task 4.8).
+
+    ALLOW proceeds to execution; REQUIRE_APPROVAL blocks until a human
+    approves (Phase 5 / task 5.2); DENY is final — the user's scopes do not
+    cover the step, and approval cannot grant scope.
+    """
+
+    ALLOW = "allow"
+    DENY = "deny"
+    REQUIRE_APPROVAL = "require_approval"
+
+
 class PlanValidation(_StrictModel):
     """Outcome of validate_plan: legality plus scheduling hints (task 4.7).
 
@@ -178,6 +191,7 @@ class AgentState(_StrictModel):
 
     plan: Plan | None = None
     plan_validation: PlanValidation | None = None
+    policy_decisions: dict[str, PolicyDecision] = Field(default_factory=dict)
     current_step_id: str | None = None
     step_results: dict[str, StepResult] = Field(default_factory=dict)
     artifacts: dict[str, str] = Field(default_factory=dict)
