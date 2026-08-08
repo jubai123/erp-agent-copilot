@@ -143,6 +143,20 @@ class StateError(_StrictModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class PlanValidation(_StrictModel):
+    """Outcome of validate_plan: legality plus scheduling hints (task 4.7).
+
+    is_valid is the deterministic gate the graph routes on; topological_order
+    and parallel_groups tell execute_ready_steps (tasks 4.9-4.10) which steps
+    are ready and which READ steps may run concurrently.
+    """
+
+    is_valid: bool
+    errors: list[StateError] = Field(default_factory=list)
+    topological_order: list[str] = Field(default_factory=list)
+    parallel_groups: list[list[str]] = Field(default_factory=list)
+
+
 class AgentState(_StrictModel):
     """Strong-typed runtime state shared across LangGraph nodes.
 
@@ -163,6 +177,7 @@ class AgentState(_StrictModel):
     candidate_tools: list[str] = Field(default_factory=list)
 
     plan: Plan | None = None
+    plan_validation: PlanValidation | None = None
     current_step_id: str | None = None
     step_results: dict[str, StepResult] = Field(default_factory=dict)
     artifacts: dict[str, str] = Field(default_factory=dict)

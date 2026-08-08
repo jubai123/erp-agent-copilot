@@ -52,8 +52,12 @@ def _build_plan_noop(state: AgentState) -> dict[str, Any]:
     return {}
 
 
-def validate_plan(state: AgentState) -> dict[str, Any]:
-    """TODO(task 4.7): reject invalid DAGs, compute topological order."""
+def _validate_plan_noop(state: AgentState) -> dict[str, Any]:
+    """No-op validate_plan used when no tool schemas are injected.
+
+    Keeps topology and smoke tests free of tool-schema wiring; the app always
+    injects the real node (build_validate_plan_node) at startup.
+    """
     return {}
 
 
@@ -107,13 +111,15 @@ def _route_after_recover(state: AgentState) -> str:
 def build_agent_graph(
     retrieve_node: Callable[[AgentState], dict[str, Any]] | None = None,
     plan_node: Callable[[AgentState], dict[str, Any]] | None = None,
+    validate_node: Callable[[AgentState], dict[str, Any]] | None = None,
 ) -> CompiledStateGraph:
     """Build and compile the agent state graph.
 
     *retrieve_node* injects the real retrieve_context implementation (task
-    4.4) and *plan_node* the real build_plan implementation (task 4.6). When
-    omitted, no-ops keep topology/smoke tests free of database and LLM
-    dependencies.
+    4.4), *plan_node* the real build_plan implementation (task 4.6) and
+    *validate_node* the real validate_plan implementation (task 4.7). When
+    omitted, no-ops keep topology/smoke tests free of database, LLM and
+    tool-schema dependencies.
     """
     builder = StateGraph(AgentState)
     # Registered explicitly — langgraph's _Node protocol does not type-check
@@ -127,7 +133,10 @@ def build_agent_graph(
         "build_plan",
         plan_node if plan_node is not None else _build_plan_noop,  # type: ignore[arg-type]
     )
-    builder.add_node("validate_plan", validate_plan)
+    builder.add_node(
+        "validate_plan",
+        validate_node if validate_node is not None else _validate_plan_noop,  # type: ignore[arg-type]
+    )
     builder.add_node("policy_check", policy_check)
     builder.add_node("execute_ready_steps", execute_ready_steps)
     builder.add_node("verify_results", verify_results)

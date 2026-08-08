@@ -11,6 +11,7 @@ from __future__ import annotations
 from erp_copilot.agent.graph import NODE_NAMES, build_agent_graph
 from erp_copilot.agent.nodes.build_plan import build_plan_node
 from erp_copilot.agent.nodes.retrieve_context import build_retrieve_context_node
+from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.state import StateError
 
 GRAPH = build_agent_graph()
@@ -108,6 +109,22 @@ class TestSmoke:
         assert result["plan"].steps[0].tool_name == "getProductById"
         assert result["candidate_tools"]
         assert result["status"] == "succeeded"
+
+    def test_injected_validate_node_rejects_invalid_plan(self) -> None:
+        validate = build_validate_plan_node(
+            tool_schemas={"getProductById": ToolSpec(name="getProductById", required_params=["id"])}
+        )
+        graph = build_agent_graph(validate_node=validate)
+        result = graph.invoke(
+            {
+                "run_id": "r5",
+                "tenant_id": "t1",
+                "query": "查询苹果",
+                "plan": {"steps": [{"step_id": "s1", "tool_name": "ghostTool"}]},
+            }
+        )
+        assert result["plan_validation"].is_valid is False
+        assert result["errors"][0].code == "UNKNOWN_TOOL"
 
     def test_error_path_routes_to_recovery(self) -> None:
         result = GRAPH.invoke(
