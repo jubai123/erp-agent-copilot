@@ -10,10 +10,12 @@ from __future__ import annotations
 
 from erp_copilot.agent.graph import NODE_NAMES, build_agent_graph
 from erp_copilot.agent.nodes.build_plan import build_plan_node
+from erp_copilot.agent.nodes.execute_steps import build_execute_steps_node
 from erp_copilot.agent.nodes.policy_check import build_policy_check_node
 from erp_copilot.agent.nodes.retrieve_context import build_retrieve_context_node
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.state import StateError
+from erp_copilot.tools.tool_result import ToolResult
 
 GRAPH = build_agent_graph()
 
@@ -148,6 +150,38 @@ class TestSmoke:
             }
         )
         assert result["policy_decisions"]["s1"] == "allow"
+        assert result["status"] == "succeeded"
+
+    def test_injected_execute_node_populates_state(self) -> None:
+        validate = build_validate_plan_node(
+            tool_schemas={"getProductById": ToolSpec(name="getProductById", required_params=["id"])}
+        )
+        policy = build_policy_check_node(get_scopes=lambda _t, _u: set())
+        execute = build_execute_steps_node(
+            executor=lambda _tool_name, arguments: ToolResult.success(
+                tool_version_id="v1", data={"name": "苹果", "id": arguments["id"]}
+            )
+        )
+        graph = build_agent_graph(validate_node=validate, policy_node=policy, execute_node=execute)
+        result = graph.invoke(
+            {
+                "run_id": "r7",
+                "tenant_id": "t1",
+                "user_id": "u1",
+                "query": "查询苹果",
+                "plan": {
+                    "steps": [
+                        {
+                            "step_id": "s1",
+                            "tool_name": "getProductById",
+                            "arguments": {"id": 1},
+                        }
+                    ]
+                },
+            }
+        )
+        assert result["step_results"]["s1"].status == "completed"
+        assert result["step_results"]["s1"].data["name"] == "苹果"
         assert result["status"] == "succeeded"
 
     def test_error_path_routes_to_recovery(self) -> None:

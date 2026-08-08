@@ -70,8 +70,12 @@ def _policy_check_noop(state: AgentState) -> dict[str, Any]:
     return {}
 
 
-def execute_ready_steps(state: AgentState) -> dict[str, Any]:
-    """TODO(tasks 4.9-4.10): run ready steps — READ parallel, WRITE serial."""
+def _execute_steps_noop(state: AgentState) -> dict[str, Any]:
+    """No-op execute_ready_steps used when no executor is injected.
+
+    Keeps topology and smoke tests free of a tool-executor dependency; the app
+    always injects the real node (build_execute_steps_node) at startup.
+    """
     return {}
 
 
@@ -117,15 +121,17 @@ def build_agent_graph(
     plan_node: Callable[[AgentState], dict[str, Any]] | None = None,
     validate_node: Callable[[AgentState], dict[str, Any]] | None = None,
     policy_node: Callable[[AgentState], dict[str, Any]] | None = None,
+    execute_node: Callable[[AgentState], dict[str, Any]] | None = None,
 ) -> CompiledStateGraph:
     """Build and compile the agent state graph.
 
     *retrieve_node* injects the real retrieve_context implementation (task
     4.4), *plan_node* the real build_plan implementation (task 4.6),
-    *validate_node* the real validate_plan implementation (task 4.7) and
-    *policy_node* the real policy_check implementation (task 4.8). When
-    omitted, no-ops keep topology/smoke tests free of database, LLM,
-    tool-schema and security-subsystem dependencies.
+    *validate_node* the real validate_plan implementation (task 4.7),
+    *policy_node* the real policy_check implementation (task 4.8) and
+    *execute_node* the real execute_ready_steps implementation (task 4.9).
+    When omitted, no-ops keep topology/smoke tests free of database, LLM,
+    tool-schema, security-subsystem and executor dependencies.
     """
     builder = StateGraph(AgentState)
     # Registered explicitly — langgraph's _Node protocol does not type-check
@@ -147,7 +153,10 @@ def build_agent_graph(
         "policy_check",
         policy_node if policy_node is not None else _policy_check_noop,  # type: ignore[arg-type]
     )
-    builder.add_node("execute_ready_steps", execute_ready_steps)
+    builder.add_node(
+        "execute_ready_steps",
+        execute_node if execute_node is not None else _execute_steps_noop,  # type: ignore[arg-type]
+    )
     builder.add_node("verify_results", verify_results)
     builder.add_node("recover_or_replan", recover_or_replan)
     builder.add_node("finalize", finalize)

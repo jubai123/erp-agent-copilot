@@ -974,6 +974,8 @@
 - 调用 MCP Gateway 执行工具
 - 结果写入 AgentState
 
+> **状态：✅ 已完成**（2026-08-08，串行按 `plan_validation.topological_order` 执行 + `user_query`/`step:{id}` 参数运行时解析 + 依赖未 COMPLETED / 策略非 ALLOW 步骤跳过 + 失败→FAILED+StateError + 合并已有 step_results；executor 以 `(tool_name, arguments) -> ToolResult` callable 注入（MCP Gateway 为 async，app 用适配器桥接），`execute_ready_steps` 首次接线进图）
+
 ---
 
 ## 任务 4.10：execute_ready_steps——并行版
