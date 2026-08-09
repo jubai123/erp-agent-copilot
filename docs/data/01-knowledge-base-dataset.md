@@ -1,5 +1,18 @@
 # ERP业务知识库构建指南
 
+> 架构决策摘要见 [11-architecture-decisions.md](../11-architecture-decisions.md) 决策二（L1/L2 分层）。
+
+## 0. 数据集分层
+
+知识库分两层构建：
+
+| 层 | 内容 | 格式 | 数量目标 | 评测 |
+|---|---|---|---|---|
+| L1 Skill | 状态机规则、参数约束、审批策略、安全策略 | 结构化定义 + 意图→Skill 映射表 | 10-15 个 Skill | 只测"是否遵循"，不测召回 |
+| L2 RAG | API 文档、SOP 流程、业务案例、字段语义 | Markdown 文档 + manifest | 15-25 份 / 100-250 Chunk | Recall@5、MRR、NDCG、引用 |
+
+**先建统一事实表，再写任何文档**。事实表是 L1 Skill 与 L2 文档共享的"世界状态"，保证模拟器、知识库、评测集三处一致。
+
 ## 1. 目标
 
 构建一套规模适中、事实一致、能够支持引用和评测的虚拟企业ERP业务知识库。知识库不是网上文档的简单集合，而是围绕库存、供应商和订单流程组织的领域数据。
@@ -41,13 +54,40 @@ ERP Agent Copilot
 ```text
 datasets/knowledge/
 ├── manifest.yaml
-├── domain-model/
-├── api-guides/
-├── business-rules/
-├── processes/
-├── business-cases/
-├── operation-policies/
-└── security-policies/
+├── skills/                    # L1：结构化 Skill 定义 + 意图→Skill 映射表
+│   ├── skills.yaml            #   Skill 本体（id、内容、触发条件）
+│   └── intent_skill_map.yaml  #   (domain, action) → [skill_ids]
+├── domain-model/              # L2：3-5 份领域对象和字段说明
+├── api-guides/                # L2：5-8 份 API 使用说明
+├── business-rules/            # L2：3-5 份业务规则
+├── processes/                 # L2：3-5 份跨系统流程文档
+├── business-cases/            # L2：3-5 份正常、缺参和异常业务案例
+├── operation-policies/        # L2：2 份订单写操作和审批政策
+└── security-policies/         # L2：1-2 份安全策略及合成攻击样本
+```
+
+### L1 Skill 定义示例
+
+```yaml
+# datasets/knowledge/skills/skills.yaml
+- skill_id: order-state-machine
+  content: |
+    订单状态机合法转换：
+    pending → in_transit → delivered
+    pending → cancelled
+    非法：cancelled → in_transit，delivered → pending
+- skill_id: region-enum-constraint
+  content: |
+    region 参数必须是枚举值之一：上海、北京、广州、深圳、成都。
+    不接受"上海市"等模糊输入。
+```
+
+```yaml
+# datasets/knowledge/skills/intent_skill_map.yaml
+- intent: {domain: order, action: update_status}
+  skills: [order-state-machine, approval-policy, idempotency-rule]
+- intent: {domain: order, action: create}
+  skills: [stock-check-rule, order-param-constraints]
 ```
 
 第一版建议15至25份文档：
@@ -105,7 +145,7 @@ source_reference: null
 
 ### 步骤一：建立事实表
 
-先创建统一事实表，避免不同文档互相冲突：
+先创建统一事实表，避免不同文档互相冲突。事实表同时驱动 L1 Skill 和 L2 文档：
 
 ```text
 entity_or_process_id
@@ -117,6 +157,17 @@ permission_scope
 approval_requirement
 verification_rule
 ```
+
+### 步骤一点五：定义 L1 Skill
+
+从事实表提取可写成"如果 A 则 B"的规则，定义为结构化 Skill，并配置意图→Skill 映射表。典型候选：
+
+- 订单状态机和合法状态转换。
+- region、状态等参数的枚举约束和格式约束。
+- 写操作审批策略。
+- 幂等和重试约束。
+
+这些知识不进入 L2 检索，直接由 `classify_intent` 注入，确保安全关键路径 100% 命中。
 
 ### 步骤二：编写领域与API文档
 
@@ -169,10 +220,10 @@ verification_rule
 
 ## 8. 规模目标
 
-| 阶段 | 文档 | Chunk | 检索问题 |
-|---|---:|---:|---:|
-| 最小可用 | 15至25 | 100至250 | 40 |
-| 完整就绪 | 30至50 | 300至600 | 80至120 |
+| 阶段 | L1 Skill | L2 文档 | L2 Chunk | 检索问题 |
+|---|---:|---:|---:|---:|
+| 最小可用 | 10至15 | 15至25 | 100至250 | 40 |
+| 完整就绪 | 15至25 | 30至50 | 300至600 | 80至120 |
 
 增加数据前先检查失败原因。若主要问题来自Planner或Tool执行，继续扩充知识文档不会解决问题。
 

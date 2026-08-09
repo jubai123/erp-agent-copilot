@@ -21,16 +21,18 @@ V6 不在 V5 的 Flask、MongoDB 和进程内任务模型上继续堆功能，�
 - [01-product-and-scenarios.md](01-product-and-scenarios.md)：产品范围、演示故事和验收标准。
 - [02-system-architecture.md](02-system-architecture.md)：系统边界、组件、部署和依赖方向。
 - [03-agent-runtime.md](03-agent-runtime.md)：AgentState、Plan DAG、状态机、Checkpoint和恢复。
-- [04-knowledge-and-retrieval.md](04-knowledge-and-retrieval.md)：知识导入、混合检索、Rerank和引用。
-- [05-tools-mcp-and-simulator.md](05-tools-mcp-and-simulator.md)：Tool Registry、MCP Gateway、ERP Simulator和接口限额处理。
+- [04-knowledge-and-retrieval.md](04-knowledge-and-retrieval.md)：知识分层（L1 Skill + L2 RAG）、混合检索、Rerank和引用。
+- [05-tools-mcp-and-simulator.md](05-tools-mcp-and-simulator.md)：Tool Registry、工具候选过滤、MCP Gateway、ERP Simulator和接口限额处理。
 - [06-security-approval-and-recovery.md](06-security-approval-and-recovery.md)：RBAC、审批、SSRF、幂等、安全和故障恢复。
 - [07-data-model-and-api-contracts.md](07-data-model-and-api-contracts.md)：核心数据表、API、事件和错误契约。
 - [08-evaluation-observability.md](08-evaluation-observability.md)：离线评测、Trace、指标、性能和发布Gate。
 - [09-implementation-roadmap.md](09-implementation-roadmap.md)：实施顺序、迁移策略和阶段交付物。
+- [10-detailed-task-list.md](10-detailed-task-list.md)：精细化开发计划与任务列表（含教学要点）。
+- [11-architecture-decisions.md](11-architecture-decisions.md)：架构决策记录（ADR），每个决策含原因、取舍、评测和保留选项。
 
 ### 数据集构建
 
-- [data/01-knowledge-base-dataset.md](data/01-knowledge-base-dataset.md)：ERP业务知识库的数据来源与构建方法。
+- [data/01-knowledge-base-dataset.md](data/01-knowledge-base-dataset.md)：ERP业务知识库的数据来源与构建方法（L1 Skill + L2 文档）。
 - [data/02-simulator-dataset.md](data/02-simulator-dataset.md)：商品、库存、供应商、订单和异常场景数据构建。
 - [data/03-evaluation-dataset.md](data/03-evaluation-dataset.md)：200条评测数据的Schema、标注、切分和质量控制。
 
@@ -55,6 +57,8 @@ erp-agent-copilot-v6/
 │   └── infrastructure/
 ├── datasets/
 │   ├── knowledge/
+│   │   ├── skills/           # L1：结构化 Skill + 意图→Skill 映射表
+│   │   └── domain-model/...  # L2：知识文档
 │   ├── simulator/
 │   └── evaluation/
 ├── tests/

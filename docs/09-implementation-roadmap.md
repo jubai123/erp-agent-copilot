@@ -1,5 +1,7 @@
 # 实施路线与迁移策略
 
+> 架构决策摘要见 [11-architecture-decisions.md](11-architecture-decisions.md)。阶段三/四任务细节见 [10-detailed-task-list.md](10-detailed-task-list.md)。
+
 ## 1. 总体策略
 
 V5冻结为参考和基线，不直接在原有Flask项目中大规模重构。V6使用新目录或新仓库实现，通过Adapter复用经过验证的数据和算法思想。
@@ -44,13 +46,16 @@ V5冻结为参考和基线，不直接在原有Flask项目中大规模重构。V
 
 交付物：
 
+- 统一事实表（先于文档，对齐模拟器世界状态）。
 - Markdown和文本导入任务。
 - 文档版本、元数据、Chunk和去重。
+- L1 Skill 定义（10-15 个：状态机、参数约束、审批策略）和意图→Skill 映射表。
+- L2 RAG 数据集（15-25 份文档，8 类目录）。
 - PostgreSQL全文检索、pgvector和Rerank。
 - 来源引用和上下文装配。
-- 60条Tool/RAG检索评测Case。
+- 40条Tool/RAG检索评测Case + L1遵循评测。
 
-验收：能够输出Top-K、各阶段分数和引用；完成Vector、Hybrid和Rerank消融。
+验收：能够输出Top-K、各阶段分数和引用；完成Vector、Hybrid和Rerank消融及L1开关对比。
 
 ## 5. 阶段四：Agent Runtime
 
@@ -58,6 +63,8 @@ V5冻结为参考和基线，不直接在原有Flask项目中大规模重构。V
 
 - Typed AgentState和LangGraph节点。
 - 结构化Planner和DAG校验器。
+- **工具候选过滤**：意图→域确定性过滤（主引擎）+ 向量精排接口（按需，预留在工具数增长时启用）。
+- **L1/L2 注入**：build_plan Prompt 按 System → L1 Skill → L2 检索 → 候选工具 → Query 顺序注入。
 - 并行READ、串行WRITE的Executor。
 - 参数来源、缺参确认和上下文预算。
 - Verifier、replan上限和Checkpoint。

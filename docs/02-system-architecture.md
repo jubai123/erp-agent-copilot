@@ -1,5 +1,7 @@
 # ERP Agent Copilot系统架构
 
+> 架构决策摘要见 [11-architecture-decisions.md](11-architecture-decisions.md)。
+
 ## 1. 架构原则
 
 - API请求线程不直接执行长时间Agent任务。
@@ -18,9 +20,11 @@ flowchart LR
     API --> REDIS[(Redis)]
     API --> WORKER[Celery Worker]
     WORKER --> GRAPH[LangGraph Runtime]
-    GRAPH --> RETRIEVAL[Hybrid Retrieval + Rerank]
+    GRAPH --> L1[L1 Skill 确定性注入]
+    GRAPH --> RETRIEVAL[L2 Hybrid Retrieval + Rerank]
     GRAPH --> POLICY[Policy and Approval]
     GRAPH --> MCP[MCP Gateway]
+    L1 --> PG
     RETRIEVAL --> PG
     MCP --> SIM[ERP Simulator]
     MCP --> ERP[ERP API Adapter]
@@ -103,6 +107,15 @@ apps
 | 队列和短期缓存 | Redis | Celery Broker、结果通知和限流 |
 | 大Tool结果 | 本地或MinIO Artifact Store | 避免数据库行和Prompt过大 |
 | Trace | OpenTelemetry后端、Langfuse | 分析跨组件调用和LLM行为 |
+
+## 5.5 知识分层
+
+知识库分两层，注入同一 Prompt，L1 优先：
+
+- **L1 Skill**：状态机规则、参数约束、审批策略、安全策略。由 `classify_intent` 输出 → 意图→Skill 映射表 → 确定性注入，目标 100% 命中。
+- **L2 RAG**：API 文档、SOP 流程、业务案例、字段语义。意图 → 构造查询 → PostgreSQL FTS + pgvector 混合检索 + Rerank，目标 Recall@5 ≥ 85%。
+
+`retrieve_context` 节点固定执行 L2 检索（LLM 不决策是否检索）；L1 由 `classify_intent` 直接注入。检索技术不使用 GraphRAG（事实查询、逐句引用、延迟与规模均不匹配）。
 
 ## 6. 请求链路
 

@@ -1,0 +1,78 @@
+# Intent → Skill mapping table.
+#
+# Maps (domain, action) pairs to a deterministic list of L1 skill IDs.
+# The skill_matcher uses this table for O(1) lookups — no vector search.
+#
+# When adding a new intent, ensure:
+#  1. The intent key is unique.
+#  2. All referenced skill_ids exist in skills.yaml.
+#  3. Skills that are safety-critical (approval, idempotency, stock-check)
+#     are included for every relevant write intent.
+
+intents:
+  - domain: product
+    action: query
+    skills:
+      - product-unit-constraint
+      - product-fields
+
+  - domain: product
+    action: check_stock
+    skills:
+      - product-fields
+      - scenario-awareness
+
+  - domain: supplier
+    action: query
+    skills:
+      - region-enum-constraint
+      - supplier-status-constraint
+      - supplier-fields
+
+  - domain: order
+    action: create
+    skills:
+      - order-param-constraints
+      - stock-check-rule
+      - supplier-availability-rule
+      - idempotency-rule
+      - approval-policy
+      - scenario-awareness
+      - price-calculation-rule
+
+  - domain: order
+    action: query
+    skills:
+      - order-state-machine
+      - order-param-constraints
+
+  - domain: order
+    action: cancel
+    skills:
+      - order-state-machine
+      - order-cancel-constraint
+      - approval-policy
+      - idempotency-rule
+
+  - domain: order
+    action: update_status
+    skills:
+      - order-state-machine
+      - approval-policy
+
+  - domain: order
+    action: modify
+    skills:
+      - order-modify-constraint
+      - order-state-machine
+      - approval-policy
+
+  - domain: security
+    action: data_access
+    skills:
+      - data-security-policy
+
+  - domain: system
+    action: scenario
+    skills:
+      - scenario-awareness

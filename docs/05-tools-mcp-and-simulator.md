@@ -1,5 +1,36 @@
 # Tool、MCP与ERP Simulator设计
 
+> 架构决策摘要见 [11-architecture-decisions.md](11-architecture-decisions.md)。本文件对应其中决策五（工具候选过滤）。
+
+## 0. 工具候选过滤
+
+`build_plan` 使用两层工具候选过滤，缩小 LLM 的工具选择范围：
+
+```text
+第一级：意图→域确定性过滤（主引擎，必过）
+  classify_intent 输出 (domain, action)
+    → DOMAIN_TOOL_MAP 精确映射（不需要 Embedding/Rerank）
+    → 候选 3-8 个，直接进 build_plan Prompt
+
+第二级：向量检索精排（按需，仅当候选 > 阈值时启用）
+  候选数 > 5-8 或描述 Token 超预算时
+    → 在候选集合内做向量粗筛 + Rerank 精排
+    → Top-N 进 Prompt
+```
+
+**第一级是主引擎**：V6 当前 9 个工具，`(domain, action)` 过滤后候选 3-5 个，`build_plan` 的犯错面从 25 选 1 缩小到 3 选 1。
+
+**第二级是增长路径**：当单个域的工具数超过 5-8 个时启用。架构上预留接口，评测中保留基线，但不为当前不需要的复杂度提前实现。
+
+**这是 V5 两阶段检索的重定义，不是放弃**：
+
+| | V5 | V6 |
+|---|---|---|
+| 主引擎 | Milvus 向量检索（每次必走） | 意图→域确定性过滤 |
+| 向量检索角色 | 唯一入口 | 第二级按需精排 |
+| 存储 | Milvus + MongoDB | pgvector + PostgreSQL |
+| 工具意图训练数据 | 微调 Embedding | 转为 40 条 Tool 检索评测 Case |
+
 ## 1. Tool Registry
 
 每个Tool采用不可变版本管理。一次Run绑定具体`tool_version_id`，避免执行过程中Schema变化。

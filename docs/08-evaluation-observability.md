@@ -1,5 +1,7 @@
 # 评测、可观测性与性能
 
+> 架构决策摘要见 [11-architecture-decisions.md](11-architecture-decisions.md)。
+
 ## 1. 评测原则
 
 - 固定数据集、代码版本、模型、Prompt和检索配置。
@@ -24,6 +26,7 @@
 
 - Tool Recall@1、Recall@5、MRR、NDCG。
 - RAG Context Recall、引用正确率和无答案拒答率。
+- L1 Skill 约束遵循率：注入的状态机/参数/审批约束被 LLM 遵循的比例；误触发率：不该触发却注入的比例（L1 不测召回，确定性注入命中率为 100%）。
 - Plan Valid Rate和参数来源完整率。
 - Step Success Rate和Task Success Rate。
 - Replan Rate、平均Tool次数和平均Token。
@@ -91,6 +94,7 @@ Span属性至少包含租户匿名标识、Run、Step、Tool版本、模型、To
 至少执行：
 
 - Vector-only、Hybrid、Hybrid+Rerank。
+- L1 Skill 开/关对比（验证确定性注入相对纯检索的增益）。
 - 无Verifier与有Verifier。
 - 顺序执行与并行只读Step。
 - 无上下文压缩与有上下文预算。

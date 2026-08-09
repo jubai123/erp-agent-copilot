@@ -1,5 +1,7 @@
 # Agent Runtime设计
 
+> 架构决策摘要见 [11-architecture-decisions.md](11-architecture-decisions.md)。本文件对应其中决策一（固定管道检索）、决策四（Plan-then-Execute）、决策五（工具候选过滤）与决策六（四层防御）。
+
 ## 1. 设计目标
 
 Agent Runtime必须把模型的不确定输出限制在可校验的结构中。Planner只能生成Plan，Executor只能执行已校验和授权的Step，Verifier只能依据证据与成功条件判断结果。
@@ -66,15 +68,19 @@ classify_intent
 
 ### retrieve_context
 
-- 检索ERP业务规则、API说明、字段语义、订单流程和异常处理文档。
+- **必走节点**：每个 Run 都会执行，LLM 不决策"是否检索"。原因：LLM 不知道自己不知道什么，自主决定会纵容幻觉编造流程。
+- 检索L2知识（ERP业务规则、API说明、字段语义、订单流程和异常处理文档）。
 - 对检索结果执行租户、ACL和可信度过滤。
 - 保存引用位置和检索分数。
+- 仅在 Phase 4 评测证明"验证时知识不足需要再查一轮"时，才从 `verify_results` 加条件边回退到本节点。默认不启用。
 
 ### build_plan
 
 - 只输出符合Schema的Plan DAG。
 - 不能调用Tool，也不能绕过Policy。
 - 每个参数必须记录来源或待确认状态。
+- **输入被约束**：收到的工具候选是意图过滤后的 3-8 个（见 决策五），不是全部工具；收到的知识是 L1 Skill（硬约束）加 L2 检索结果，L1 优先。
+- **L1/L2 注入顺序**：System → L1 Active Skills（硬约束）→ L2 Retrieved Knowledge（参考）→ Available Tools（候选）→ User Query。
 
 ### validate_plan
 
@@ -126,6 +132,36 @@ classify_intent
 ```
 
 禁止Planner直接生成任意URL、Shell命令或未注册Tool名称。
+
+## 5.5 工具候选过滤
+
+`build_plan` 不面向全部工具做"大海捞针"，而是两层过滤后的小候选集：
+
+```text
+第一级：意图→域确定性过滤（主引擎，必过）
+  classify_intent 输出 (domain, action)
+    → DOMAIN_TOOL_MAP 精确映射
+    → 候选 3-8 个，直接进 build_plan Prompt
+
+第二级：向量检索精排（按需，仅当候选 > 阈值时启用）
+  候选数超过阈值（如 5-8 个）或描述超过 Token 预算
+    → 向量粗筛 + Rerank 精排 → Top-N
+```
+
+V6 当前 9 个工具，第一级过滤后候选 3-5 个，直接进 Prompt，第二级不启用。架构上预留第二级接口，工具数量增长到每域超过 5-8 个时激活。这是 V5 两阶段（Milvus 向量 + Rerank）在 V6 中的重定义：从"每次必走的唯一引擎"降级为"意图过滤后的按需精排层"。详见 [11-architecture-decisions.md](11-architecture-decisions.md) 决策五。
+
+## 5.6 Plan 正确性的四层防御
+
+Plan DAG 的正确性由四层叠加保证，单层无法防语义错选：
+
+| 层 | 拦截什么 | 是否确定性 |
+|---|---|---|
+| 1. 约束候选空间（上游） | 缩小 LLM 犯错面：从 25 选 1 变成 3 选 1 | 是 |
+| 2. `validate_plan` | 未知Tool、Schema不匹配、缺失依赖、DAG环、写Step无补偿 | 是 |
+| 3. MCP Gateway | Scope、租户隔离、SSRF、参数类型转换 | 是 |
+| 4. `verify_results` | `success_condition` 匹配返回，防"工具调用成功但业务错" | 是 |
+
+例如"查苹果却选了 getProductById 传 id=苹果"：第2层放行（Schema 都接受一个参数），但第4层 `success_condition` 检查返回产品名是否为"苹果"，验证失败。因此既要靠第4层兜底，也要靠第1层把语义错选概率压到评测可接受范围。
 
 ## 6. 并行与依赖规则
 

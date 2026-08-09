@@ -1,0 +1,244 @@
+# Retrieval evaluation dataset — hand-annotated queries with relevant document IDs.
+#
+# Each entry maps a natural-language query to the knowledge documents that
+# should be retrieved for it.  document_id values match those in
+# datasets/knowledge/**/*.md frontmatter.
+#
+# v2 — expanded to 40 queries for statistical significance.
+#   Categories: order(12), product(8), supplier(7), rules(5), errors(5), policies(5)
+
+queries:
+  # =========================================================================
+  # Order operations (12 queries)
+  # =========================================================================
+
+  - query: "如何创建订单"
+    relevant_docs:
+      - process-order-creation
+      - api-order-create
+      - rule-order-lifecycle
+
+  - query: "订单有哪些状态"
+    relevant_docs:
+      - rule-order-lifecycle
+      - domain-order-model
+
+  - query: "怎么取消订单"
+    relevant_docs:
+      - process-order-cancellation
+      - rule-order-lifecycle
+
+  - query: "创建订单需要哪些参数"
+    relevant_docs:
+      - api-order-create
+      - domain-order-model
+      - process-order-creation
+
+  - query: "订单的生命周期是怎样的"
+    relevant_docs:
+      - rule-order-lifecycle
+      - domain-order-model
+
+  - query: "如何查询订单信息"
+    relevant_docs:
+      - api-order-query
+      - domain-order-model
+
+  - query: "订单取消有哪些限制条件"
+    relevant_docs:
+      - process-order-cancellation
+      - rule-order-lifecycle
+      - policy-approval-requirements
+
+  - query: "订单创建后可以修改吗"
+    relevant_docs:
+      - rule-order-lifecycle
+      - domain-order-model
+
+  - query: "什么情况下订单不能取消"
+    relevant_docs:
+      - process-order-cancellation
+      - rule-order-lifecycle
+
+  - query: "订单创建时的幂等机制"
+    relevant_docs:
+      - api-order-create
+      - policy-idempotency
+
+  - query: "订单金额是如何计算的"
+    relevant_docs:
+      - api-order-create
+      - domain-order-model
+
+  - query: "如何处理重复提交的订单"
+    relevant_docs:
+      - policy-idempotency
+      - api-order-create
+
+  # =========================================================================
+  # Product operations (8 queries)
+  # =========================================================================
+
+  - query: "有哪些商品"
+    relevant_docs:
+      - domain-product-catalog
+
+  - query: "如何查询库存"
+    relevant_docs:
+      - api-product-stock
+      - rule-stock-validation
+
+  - query: "库存不足怎么处理"
+    relevant_docs:
+      - process-stock-insufficient
+      - rule-stock-validation
+
+  - query: "如何按名称查询商品"
+    relevant_docs:
+      - api-product-query
+      - domain-product-catalog
+
+  - query: "商品库存信息包括哪些字段"
+    relevant_docs:
+      - api-product-stock
+      - domain-product-catalog
+
+  - query: "苹果的库存还有多少"
+    relevant_docs:
+      - api-product-stock
+      - case-order-apples
+      - domain-product-catalog
+
+  - query: "商品目录包含哪些信息"
+    relevant_docs:
+      - domain-product-catalog
+      - api-product-query
+
+  - query: "哪些商品按重量计价"
+    relevant_docs:
+      - domain-product-catalog
+
+  # =========================================================================
+  # Supplier operations (7 queries)
+  # =========================================================================
+
+  - query: "供应商不可用怎么办"
+    relevant_docs:
+      - process-supplier-unavailable
+      - rule-supplier-selection
+
+  - query: "如何查询供应商信息"
+    relevant_docs:
+      - api-supplier-query
+      - domain-supplier-directory
+
+  - query: "供应商有哪些地区限制"
+    relevant_docs:
+      - domain-supplier-directory
+      - rule-supplier-selection
+
+  - query: "如何选择合适的供应商"
+    relevant_docs:
+      - rule-supplier-selection
+      - domain-supplier-directory
+
+  - query: "供应商的状态有哪些"
+    relevant_docs:
+      - domain-supplier-directory
+
+  - query: "为什么供应商显示为不可用"
+    relevant_docs:
+      - process-supplier-unavailable
+      - domain-supplier-directory
+      - domain-scenario-system
+
+  - query: "供应商的评分体系是怎样的"
+    relevant_docs:
+      - domain-supplier-directory
+      - rule-supplier-selection
+
+  # =========================================================================
+  # Business rules & validation (5 queries)
+  # =========================================================================
+
+  - query: "订单创建需要校验库存吗"
+    relevant_docs:
+      - rule-stock-validation
+      - process-order-creation
+
+  - query: "下单时如何验证供应商可用性"
+    relevant_docs:
+      - rule-supplier-selection
+      - process-order-creation
+
+  - query: "订单可以跳过一个状态直接到终态吗"
+    relevant_docs:
+      - rule-order-lifecycle
+      - domain-order-model
+
+  - query: "什么样的订单需要审批"
+    relevant_docs:
+      - policy-approval-requirements
+
+  - query: "什么时候需要调用审批流程"
+    relevant_docs:
+      - policy-approval-requirements
+      - process-order-cancellation
+
+  # =========================================================================
+  # Error & edge cases (5 queries)
+  # =========================================================================
+
+  - query: "超时了怎么办"
+    relevant_docs:
+      - case-timeout-retry
+      - policy-idempotency
+
+  - query: "库存不足的案例怎么处理"
+    relevant_docs:
+      - case-insufficient-stock
+      - process-stock-insufficient
+
+  - query: "下单超时重试会不会重复创建订单"
+    relevant_docs:
+      - case-timeout-retry
+      - policy-idempotency
+      - api-order-create
+
+  - query: "同一个订单重复提交会怎样"
+    relevant_docs:
+      - policy-idempotency
+      - case-timeout-retry
+
+  - query: "所有供应商都不可用时系统怎么处理"
+    relevant_docs:
+      - process-supplier-unavailable
+      - domain-scenario-system
+
+  # =========================================================================
+  # Policies & security (5 queries)
+  # =========================================================================
+
+  - query: "幂等键是什么"
+    relevant_docs:
+      - policy-idempotency
+      - domain-order-model
+
+  - query: "需要审批的操作有哪些"
+    relevant_docs:
+      - policy-approval-requirements
+      - process-order-cancellation
+
+  - query: "哪些接口需要幂等保护"
+    relevant_docs:
+      - policy-idempotency
+      - api-order-create
+
+  - query: "如何避免敏感数据泄露"
+    relevant_docs:
+      - security-data-access
+
+  - query: "模拟器有哪些测试场景"
+    relevant_docs:
+      - domain-scenario-system
+      - api-scenario-control
