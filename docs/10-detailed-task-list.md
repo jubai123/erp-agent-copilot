@@ -1652,13 +1652,21 @@
 
 ---
 
-## 任务 6.11：清理和 Release v1.0
+## 任务 6.11：清理和 Release v1.0 ✅
 
 **目标**：清理敏感信息，打 Tag。
 
 **交付物**：
 - 无密钥、无日志、无大文件
 - Git tag v1.0.0
+
+**完成情况**：
+- [x] 移除冻结的 V5 遗留目录 `agent-copilot-v5-20260317/`（51 个跟踪文件 + 294MB 磁盘，含 17MB/18MB 日志），提交 `9d9ff87`。
+- [x] 加固 `.gitignore`（`.env.*.local`、`logs/`、`*.log`、mypy/pytest/ruff/code-review-graph 缓存），杜绝日志与缓存入库。
+- [x] 补交全部缺失核心源码（apps / src / migrations / infra / datasets / tests / session-history，127 个文件 + 8 个修改文档），提交 `6f534de`，保证 v1.0.0 标签可用。
+- [x] 门禁全绿：`ruff check`/`format` 通过、`mypy src` 55 文件干净、`pytest tests/unit` 874 通过（提交 `0954377` 修复引导文件的 10 处 ruff 问题并把 V5 数据集迁移到 `tests/unit/tools/fixtures/`）。
+- [x] 提交树无密钥/无日志/无大文件（最大文件 `uv.lock` 901KB）。
+- [x] 创建注解标签 `v1.0.0`，指向 `0954377`。
 
 ---
 
