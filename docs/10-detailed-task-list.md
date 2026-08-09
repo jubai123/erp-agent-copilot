@@ -1381,12 +1381,25 @@
 **目标**：所有日志为 JSON 格式，包含 run_id。
 
 **交付物**：
-- `src/erp_copilot/observability/logging.py`
+- `src/erp_copilot/observability/logging.py`（✅ 已实现）
+- `src/erp_copilot/observability/__init__.py`（✅ 已实现，包导出）
+- `tests/unit/observability/test_logging.py`（✅ 已实现，16 用例）
 
 **验收标准**：
-- 每行日志是合法 JSON
-- 包含 timestamp、level、run_id、message、extra
-- run_id 自动从上下文获取
+- ✅ 每行日志是合法 JSON（`JsonFormatter.format` 产出一条 `json.dumps` 单行对象）
+- ✅ 包含 timestamp、level、run_id、message、extra（另有 `service`/`logger`/`step_id`/`request_id`）
+- ✅ run_id 自动从上下文获取（`ContextVar[TraceContext]` + `trace_context()` 上下文管理器）
+
+**落地细节**：`TraceContext`（frozen dataclass：`run_id`/`step_id`/`request_id`）存在 `ContextVar` 中，`trace_context(run_id=..., step_id=..., request_id=...)` 上下文管理器用**合并语义**（内层只覆盖传入字段、保留外层——6.2 里「API 层绑 run_id → Step 执行器绑 step_id」可逐层叠加），block 结束 `reset` 恢复。`JsonFormatter` 是 stdlib `logging.Formatter` 子类（无第三方依赖，遵守"不添加未批准的依赖"），字段顺序稳定；`extra` = `record.__dict__` 减去 `_STDLIB_ATTRS` 白名单（即 `logger.info(..., extra={...})` 注入的非标准键，标准属性不重复）；`timestamp` 用 `record.created` 转 ISO8601+UTC（确定、带时区）；`json.dumps(default=str)` 兜底非可序列化值。`setup_logging(level, service)` 幂等配置 root logger（清旧 handler 换 JSON StreamHandler），`Settings.log_level`/`app_name` 的对接留到入口（apps/api）接线任务。调用：任意组件 `logging.getLogger(...)` 即可，run_id 自动带上——满足 docs/08 §6"禁止无法关联 Run 的自由文本日志"。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 结构化日志 vs 自由文本 | 一行日志是一个 JSON 对象，聚合器（Loki/CloudWatch/ELK）按字段索引，无需正则解析文本；docs/08 §6 规定字段契约（timestamp/level/service/run_id/step_id/...），这是可观测性的地基 |
+| ContextVar = 隐式调用上下文 | `ContextVar` 是每个线程/协程独立的一份"全局变量"。run_id 在 API 入口绑一次，整个调用树里的 logger 都能读到——避免了把 run_id 当参数层层传的样板代码 |
+| 合并语义的上下文管理器 | `trace_context` 只覆盖传入字段、保留外层（run→step 逐层叠加），用 `token = var.set(...)` / `var.reset(token)` 保证异常时也恢复 |
+| 为什么自己写 Formatter | 项目规则"不添加未批准的依赖"，而 python-json-logger/structlog 只是把 stdlib 的 `Formatter` 包了一层——`logging.Formatter` 子类 + `json.dumps` 就能实现同样的效果，零新增依赖 |
+| setup_logging 幂等 | 清掉旧 root handler 再装 JSON handler，避免热重载/重复初始化时日志叠加成两行 |
 
 ---
 
