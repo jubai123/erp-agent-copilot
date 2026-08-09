@@ -1408,19 +1408,25 @@
 **目标**：分布式追踪：一个 run_id 串起所有服务。
 
 **交付物**：
-- `src/erp_copilot/observability/tracing.py`
+- `src/erp_copilot/observability/tracing.py`（✅ 已实现）
+- `src/erp_copilot/observability/__init__.py`（✅ 追加导出）
+- `tests/unit/observability/test_tracing.py`（✅ 已实现，9 用例）
 
 **验收标准**：
-- API→Worker→MCP Gateway→Simulator 在同一 Trace 中
-- 每个 Span 有 run_id 属性
-- LangGraph 每个节点是一个 Span
+- ✅ API→Worker→MCP Gateway→Simulator 在同一 Trace 中（W3C `traceparent` 传播助手 `inject_trace_headers` / `extract_trace_context`，下游 `span(context=...)` 续接同一 trace；实际跨服务接线在 apps 层后续任务）
+- ✅ 每个 Span 有 run_id 属性（`span()` 自动从 6.1 TraceContext 读取 `run_id`/`step_id` 设为 Span 属性）
+- ✅ LangGraph 每个节点是一个 Span（`node_span(name)` 装饰器，graph.py 接线时逐节点套用）
+
+**落地细节**：`setup_tracing(service_name, exporter)` 建**模块级** `TracerProvider`（`Resource(service.name)` + `SimpleSpanProcessor` 同步导出、无后台线程；默认 ConsoleSpanExporter，测试注入 `InMemorySpanExporter`）。关键取舍：不调全局 `trace.set_tracer_provider`——OTel SDK 拒绝重复覆盖全局 provider（"Overriding of current TracerProvider is not allowed"），模块级让各进程 instrumentation 独立、测试免跨测试状态。`span(name, attributes, context)` 是 `start_as_current_span` 包装：自动取 run_id/step_id（未绑定时省略——OTel 拒绝 None 属性）、异常时 `record_exception` + `Status.ERROR` 再抛出；`get_tracer()` 懒初始化（未配置时自动装默认 provider）。`node_span` 用 `@wraps` 保留签名，Span 名与 `erp.node` 属性都带节点名。传播测试验证：upstream Span 内 inject 出 `traceparent`，下游 extract 后开 Span，与 upstream 同 `trace_id` 且 parent=upstream（跨进程边界续接同一 Trace）。Span 不携带密钥（docs/08 §5"不得记录完整密钥"）。
 
 **教学要点**：
 | 概念 | 讲解内容 |
 |------|---------|
-| Trace 是什么 | 一次完整请求的全链路记录：API→Agent→MCP→ERP，所有步骤一条 Trace |
-| Span 是什么 | Trace 中的一段：一次 LLM 调用、一次工具调用都是一个 Span |
-| run_id 传递 | 所有 Span tag 上加 run_id，Grafana 中可以按 Run 过滤 |
+| Trace 是什么 | 一次完整请求的全链路记录：API→Agent→MCP→ERP，所有步骤一条 Trace；用 W3C traceparent 跨进程传播（上游 inject 请求头、下游 extract 续接），跑题"一个 run_id 串起所有服务" |
+| Span 是什么 | Trace 中的一段：一次 LLM 调用、一次工具调用都是一个 Span，父子关系组成树——`span()` 嵌套即父子 |
+| run_id 传递 | 6.1 的 TraceContext（ContextVar）与 Span 属性打通：`span()` 自动把 run_id 挂到每个 Span，Grafana 中按 Run 过滤 |
+| 模块级 vs 全局 provider | OTel SDK 全局 provider 只准设一次；模块级 provider 让本模块显式 span 可控、可注入 exporter，测试用 `InMemorySpanExporter` 完全离线断言 |
+| 懒初始化 | `get_tracer()` 未配置时自动装默认 provider，业务代码无需先调 setup 就能打 span；生产在入口用 OTLP exporter 替换 |
 
 ---
 
