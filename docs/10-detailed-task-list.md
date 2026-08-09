@@ -1580,12 +1580,26 @@
 **目标**：压测系统并发能力。
 
 **交付物**：
-- `tests/performance/locustfile.py`
+- `tests/performance/locustfile.py`（✅ Locust 入口，50 并发用户提交 Run）
+- `tests/performance/load_scenario.py`（✅ 纯场景逻辑：路径/载荷/请求处理，可离线单测）
+- `tests/unit/performance/test_locustfile.py`（✅ 已实现，11 用例，假 client 无网络）
 
 **验收标准**：
-- 模拟 50 并发用户提交 Run
-- 记录 P50/P95 延迟、吞吐量、错误率
-- 输出 HTML 报告
+- ✅ 模拟 50 并发用户提交 Run（`uv run locust -f tests/performance/locustfile.py --headless -u 50 -r 5 -t 60s --html ...`，`-u` 可切 1/10/25 并发）
+- ✅ 记录 P50/P95 延迟、吞吐量、错误率（Locust 统计页/`--html` 报告自带；非 202 记失败入错误率）
+- ✅ 输出 HTML 报告（`--html tests/performance/reports/locust_report.html`）
+
+**落地细节**：压测目标 = `POST /v1/runs`（系统入口：DB INSERT + Celery 入队，正对 docs/08 §4 "API enqueue P50/P95"）。`load_scenario.py` 把可测核心与 Locust 解耦——**Locust 2.46 的 `__init__.py` 在 import 时调用 `gevent.monkey.patch_all()`，在 pytest 进程里（ssl 已被 urllib3/anyio 加载）重打补丁会 `RecursionError`，所以单测绝不 import locust**；场景逻辑（`RUN_PATH`、`build_run_payload`、`submit_run(client)`，client 用 `Protocol` 鸭子类型化）放在无 Locust 依赖的模块里，`locustfile.py` 只是薄包装 `submit_run(self.client)`。`runs.tenant_id` 是外键，压测前需种租户行（确定性 id `loadtest-tenant`，幂等 SQL，见 load_scenario docstring）；提交路径不调 LLM，天然满足 docs/08 §9 "固定 Mock LLM" 要求。租户 id 可用 `LOAD_TEST_TENANT_ID` 环境变量覆盖。真实压测需本地栈（Postgres+Redis+uvicorn），单测用假 client 确定性验证载荷/路径/非 202 记失败；locustfile 的 task 接线用独立解释器冒烟验证（pytest 内无法 import）。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| Locust 原理 | 每个虚拟用户是一个 gevent 协程，循环执行 `@task`，`wait_time` 控制思考间隔；`-u` 并发数、`-r` 起步速率、`-t` 时长；`--html` 出报告，P50/P95/吞吐/错误率都来自每个请求的计时与成败 |
+| 为什么测 enqueue 而非全流程 | `POST /v1/runs` 一个请求 = DB 写 + Redis 入队，是系统吞吐的咽喉；全流程（agent 执行）归任务 6.9 故障注入与端到端测，职责分开 |
+| catch_response 的错误率语义 | `catch_response=True` 下非 202 调 `resp.failure()`，请求仍完成但计入错误率——比抛异常让任务中断更真实（用户收到了响应只是业务失败） |
+| 为什么场景逻辑不能放 locustfile | Locust 在 import 时全局 monkey-patch（gevent patch ssl），pytest 进程里再打补丁直接 RecursionError——重依赖入口与可测核心分离，入口只留"薄胶水"，测试打纯逻辑 |
+| 外键是压测的先决条件 | `runs.tenant_id → tenants.id`，不存在租户直接 500 刷爆错误率；用确定性 id + `ON CONFLICT DO NOTHING` 幂等种入，压测可重复 |
+| Protocol 鸭子类型代替真实 HttpSession | 测试不需要真实 Locust client，用带 `post` 方法的假对象满足 `Protocol` 即过——只测"我们要的那部分接口" |
 
 ---
 

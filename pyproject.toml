@@ -94,3 +94,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["agent-copilot-v5-20260317"]
+
+[dependency-groups]
+dev = [
+    "locust>=2.46.3",
+]
