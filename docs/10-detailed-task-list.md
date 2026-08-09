@@ -1462,12 +1462,28 @@
 **目标**：暴露系统指标供 Grafana 展示。
 
 **交付物**：
-- `src/erp_copilot/observability/metrics.py`
+- `src/erp_copilot/observability/metrics.py`（✅ 已实现）
+- `apps/api/routes/metrics.py`（✅ 已实现，`GET /metrics` 端点）
+- `apps/api/main.py`（✅ include metrics 路由）
+- `tests/unit/observability/test_metrics.py`（✅ 已实现，9 用例）
+- `tests/unit/api/test_metrics_routes.py`（✅ 已实现，4 用例）
 
 **验收标准**：
-- `GET /metrics` 返回 Prometheus 格式指标
-- 包含：Run 创建数、完成数、失败数、各阶段延迟 P50/P95
-- Worker 队列长度
+- ✅ `GET /metrics` 返回 Prometheus 格式指标（`Response(content=generate_latest(), headers={"Content-Type": "text/plain; version=0.0.4; charset=utf-8"})`，body 为 `# HELP`/`# TYPE`/sample 三部分组成的文本直方图格式）
+- ✅ 包含：Run 创建数、完成数、失败数（三个 Counter：`erp_runs_created_total` / `_completed_total` / `_failed_total`）、各阶段延迟 P50/P95（Histogram `erp_phase_latency_seconds` 带 `phase` 标签，桶 0.1s~300s，P50/P95 由 Grafana PromQL `histogram_quantile(0.5/0.95, rate(...))` 服务端计算）
+- ✅ Worker 队列长度（Gauge `erp_worker_queue_length`，`set_worker_queue_length(n)` 供 worker 层接线）
+
+**落地细节**：依赖经用户批准新增 `prometheus-client==0.26.0`（uv.lock 锁定）。`metrics.py` 用工厂 `create_metrics()` 返回 frozen dataclass `Metrics`（`registry` + 3 Counter + 1 Histogram + 1 Gauge），每次调用建独立 `CollectorRegistry`——prometheus_client 拒绝同注册表重复注册同名指标，工厂模式让测试完全隔离（测试各自建新实例，绝无跨测试状态，呼应 6.1/6.2 的测试纪律）。生产走模块级单例 `METRICS`，`generate_latest(metrics=METRICS)` 序列化为文本。P50/P95 不在进程内算：直方图只输出 `_bucket/_sum/_count`，Grafana 用 `histogram_quantile` 计算——这是 Prometheus 标准做法，避免客户端与服务器两端维护分位数状态。桶值从默认 0.005s~10s 调到 0.1s~300s，覆盖 agent 阶段（LLM 调用链可达数分钟），否则 P95 在 >10s 段失真。计数器/Gauge 是进程内状态：多 worker 进程各自独立，Grafana 按 `sum()` 聚合（指标名已带 `_total` 便于 rate）。本任务只做采集与暴露；run 生命周期在各层接线（API/worker 的 inc、observe）留给后续任务，避免一次性改动过大。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| Prometheus 拉取模型 | Prometheus 主动 `GET /metrics` 拉取文本指标，而非应用主动推送——所以端点必须返回纯文本格式，且内容类型固定 `text/plain; version=0.0.4` |
+| Counter / Gauge / Histogram | Counter 只增不减（适合"创建数"），Gauge 可增可减反映当前值（适合"队列长度"），Histogram 记录观测分布（延迟），三种语义对应三种监控问题 |
+| 为什么 P50/P95 用 PromQL 算 | 直方图桶是增量的、跨进程可合并；分位数若在客户端算，多进程无法聚合且浪费内存。`histogram_quantile(0.5, rate(m_seconds_bucket[5m]))` 是标准公式 |
+| 文本格式三件套 | `# HELP`（指标含义，Grafana 展示用）+ `# TYPE`（指标类型，Prometheus 校验）+ sample（值）；格式错误会让 Prometheus 抓取失败 |
+| 桶设计 | 桶覆盖预期值域且在 P50/P95 附近加密；`+Inf` 桶必须存在（总计）。默认桶到 10s 对 agent 场景不够，故扩展至 300s |
+| 进程内状态 | Counter/Gauge 存在进程内存里，多 worker 需 `sum()` 聚合；这也是监控要考虑多实例时的标准坑 |
 
 ---
 

@@ -26,6 +26,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "sentence-transformers>=3.0",
     "jieba>=0.42",
+    "prometheus-client>=0.26.0",
 ]
 
 [project.optional-dependencies]
