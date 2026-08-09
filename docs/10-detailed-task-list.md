@@ -1285,12 +1285,25 @@
 **目标**：Worker 崩溃重启后恢复执行。
 
 **交付物**：
-- `src/erp_copilot/agent/recovery.py`
+- `src/erp_copilot/agent/recovery.py`（✅ 已实现）
+- `tests/unit/agent/test_recovery.py`（✅ 已实现，13 用例）
 
 **验收标准**：
-- Worker 重启→加载最新 checkpoint
-- 状态不明确的写 Step→标记为需要对账（RECOVERY_RECONCILIATION_REQUIRED）
-- 已完成的 Step→不重复执行
+- ✅ Worker 重启→加载最新 checkpoint（`RunRecovery.load` 复用 `CheckpointSaver.load_latest`，按 `(run_id, tenant_id)` 取最新行；无 checkpoint → `resumed=False`；B 覆盖 A 由注入 clock 保证确定性；租户隔离：t2 查 t1 的 run → 不恢复）
+- ✅ 状态不明确的写 Step→标记为需要对账（PENDING 幂等记录 → 追加 `StateError(code="RECOVERY_RECONCILIATION_REQUIRED", step_id, details={"idempotency_key"})`，`reconciled_steps` 记录；不盲目重试）
+- ✅ 已完成的 Step→不重复执行（COMPLETED step result 或 COMPLETED 幂等记录都跳过；`step_results` 原样保留，`execute_ready_steps` 据此跳过）
+
+**落地细节**：`RunRecovery(session, *, saver=None)` 是纯编排模块——注入 session（与 `CheckpointSaver`/`IdempotencyStore` 同风格），`saver` 默认构造 `CheckpointSaver(session)`；`load(run_id, tenant_id)` 返回 frozen dataclass `RecoveryResult(state, resumed, reconciled_steps)`，不持久化、不重存 checkpoint，由 Worker 把对账后的 state 重新喂回图，下一个节点的 checkpoint save 自然落盘新增的 error。`_reconcile(state)` 遍历 `plan.steps`，只关心 WRITE/DANGEROUS 且带 `idempotency_key` 的 Step，按 `(tenant_id, idempotency_key)` 查幂等记录（与 5.6 唯一约束一致）：**PENDING**（执行意图已写、结果未知）→ 标记对账；**COMPLETED**（已成功，checkpoint 只是滞后）→ 跳过；**FAILED**（明确失败、可重试）→ 跳过；**无记录**（`begin()` 从未跑过，工具必然未执行）→ 安全直接跑，跳过。优先级：checkpoint 里 COMPLETED 的 step result 胜过任何 PENDING 记录（已成功优先，防 stale 幂等行误判）。`RECOVERY_RECONCILIATION_REQUIRED` 是 docs/03 §9 错误码，落成模块常量供后续 Worker/对账服务引用；现有 error 保留（append 不覆盖）。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 恢复五步（docs/03 §7） | 获锁 → 加载最新 checkpoint → 核对成功 Step + 幂等记录 → 不明确写 Step 标记对账而非直接重试 → 从下一个合法节点继续 |
+| PENDING 幂等记录 = 状态不确定 | 5.6 的 `begin()` 先写执行意图再执行：PENDING 意味着"可能已执行、结果未知"，直接重试可能重复落库，故标记 `RECOVERY_RECONCILIATION_REQUIRED` |
+| 已成功优先 | COMPLETED step result / COMPLETED 幂等记录都证明写已生效；对账时不得因 stale PENDING 行而误标记 |
+| 纯编排 vs 持久化 | recovery 只读 checkpoint + 幂等记录并追加错误，不写库——避免恢复逻辑自己也成为崩溃点，落盘交给图的下一次 checkpoint |
+| 租户隔离 | `load_latest` 带 tenant 过滤 + 幂等记录按 tenant 查，恢复永不跨界 |
+| 与 5.6/5.7 关系 | 5.6 幂等是"能否安全重试"的判定依据，5.7 决定"可重试的怎么退避"，5.8 决定"状态不明的不重试先对账"——三层各管一段 |
 
 ---
 
