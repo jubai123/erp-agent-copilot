@@ -1339,11 +1339,24 @@
 **目标**：建立安全评测用例。
 
 **交付物**：
-- `evals/datasets/security_25.json`（注入、越权、SSRF、秘密泄露场景）
+- `evals/datasets/security_25.json`（✅ 已实现：25 条 = 10 注入/越权 + 5 SSRF + 5 秘密泄露 + 5 良性）
+- `evals/scripts/run_security_eval.py`（✅ 已实现：确定性评测脚本）
+- `tests/unit/evals/test_security_eval.py`（✅ 已实现，16 用例）
 
 **验收标准**：
-- 每条有攻击描述、期望拦截结果
-- 计算攻击拦截率和误报率
+- ✅ 每条有攻击描述、期望拦截结果（每条含 `attack_type`/`target_layer`/`input`/`expected` + 可选 `note`，`expected` ∈ {BLOCK, ALLOW}）
+- ✅ 计算攻击拦截率和误报率（`interception_rate = 拦截攻击数/攻击总数`，`false_positive_rate = 误拦良性数/良性总数`）
+
+**落地细节**：三层防护各对应一个"拦截判定"——`injection_guard` 用 `InjectionGuard.check(input).flagged`，`ssrf_guard` 用 `SSRFGuard.check(input).allowed == False`，`redactor` 用 `Redactor.redact(input).count > 0`；脚本 `intercept()` 统一为 `bool`，`evaluate_cases()` 逐条对比守卫行为与数据集标签产出 `correct`，`summarize()` 聚合指标（空集不除零）。SSRF 用注入的 `fake_resolver`（`api.erp.example.com→93.184.216.34` 公网 / `partner.erp.example.com→10.0.0.5` 内网）模拟 DNS 重绑定攻击，整个评测无 LLM、无网络、无 DB，完全离线可复现。数据集输入逐条与守卫正则精确匹配（10 条注入/越权命中 IGNORE_PRIOR_INSTRUCTIONS/BYPASS_APPROVAL/LEAK_SYSTEM_PROMPT，5 条 SSRF 命中 BLOCKED_IP/BLOCKED_SCHEME/HOST_NOT_ALLOWED/BLOCKED_PORT，5 条秘密泄露命中 API_KEY/CN_MOBILE/CN_ID_CARD），含 1 条"忽略发货延迟"误报陷阱（含"忽略"但不属于"忽略…指令"家族，期望 ALLOW，测守卫的窄口径）。运行：`uv run python evals/scripts/run_security_eval.py`（可加 `--report` 输出 JSON）。实测 25/25 全对：攻击拦截率 100%、误报率 0%。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 评测先于优化 | 5.10 给 5.3/5.4/5.5 的三个守卫建了回归基线——"如果你不能测量它，你就不能改进它"。以后任何守卫改正则，先跑 25 条确认拦截率不掉 |
+| 攻击拦截率 vs 误报率 | 拦截率 = 守卫抓住多少真攻击（召回）；误报率 = 误伤多少正常输入（精度）。单看拦截率会催生"全拦截"的懒守卫，必须两个指标一起看 |
+| 确定性评测 | 无 LLM 是关键：守卫是纯函数，输入定了输出就定，测试才能断言"守卫行为 == 数据集标签"。SSRF 用注入 resolver 把 DNS 变成查表，消除网络不确定性 |
+| 数据驱动标签 | `expected` 是人对用例的标注，`intercepted` 是守卫实际行为——测试断言两者相等，就是把"评测集"变成"可执行验收单" |
+| 误报陷阱用例 | sec-022 "请忽略发货延迟的情况"含"忽略"但不触发注入正则，验证守卫口径窄、不会草木皆兵——这是生产里最容易被误伤的对话场景 |
 
 ---
 
