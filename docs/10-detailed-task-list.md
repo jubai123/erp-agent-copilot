@@ -1608,12 +1608,25 @@
 **目标**：验证系统在异常情况下的行为。
 
 **交付物**：
-- `tests/performance/fault_injection.py`
+- `tests/performance/fault_injection.py`（✅ 故障注入与恢复场景：worker_recovery / erp_timeout_retry / order_idempotency）
+- `tests/unit/performance/test_fault_injection.py`（✅ 已实现，8 用例，含 3 个"故障未注入必须报 FAIL"的负例）
 
 **验收标准**：
-- Worker 被 kill→任务恢复
-- ERP 超时→正确重试或失败
-- 订单创建不重复
+- ✅ Worker 被 kill→任务恢复（`inject_worker_crash` 落 checkpoint + 幂等记录，恢复仅对 PENDING 写步骤标 `RECOVERY_RECONCILIATION_REQUIRED`，COMPLETED 永不重跑）
+- ✅ ERP 超时→正确重试或失败（504 标可重试 → 恢复后 RetryExecutor 重试到 201，超时对库存零影响）
+- ✅ 订单创建不重复（同幂等键 POST 两次 → 同一 order_id，库存只扣一次）
+
+**落地细节**：worker 任务（apps/worker/tasks.py）从不真正调用 agent 图，所以"kill worker 再恢复"无法端到端演示——故障在组件边界建模（新 SQLite 引擎 = 新进程，复刻 test_recovery.py 的跨会话可见性模型）：`inject_worker_crash` 写入 EXECUTING 的 AgentState checkpoint（s1 PENDING / s2 COMPLETED 两个写步骤），`RunRecovery.load` 后 s1 必须被标对账、s2 必须被跳过。ERP 超时场景：caller 先 `PUT /scenario/timeout` 注入故障 → 探测 POST 得 504 且库存不变（超时在落库前抛错）→ 恢复 happy_path → `RetryExecutor(sleep=noop)` 重试到 201 → 同键再 POST 得 200 同 order_id。订单幂等场景：同键两次 → 201/200 同 order_id + 库存只扣一次。三个负例证明 harness 非"真空绿"：无 checkpoint 的引擎、无 timeout 的 client 都会让对应场景报 passed=False。模拟器场景/库存是进程级全局，故每个场景用 uuid 唯一键 + 相对库存差断言；无新增依赖，零 src 改动，可独立运行 `uv run python tests/performance/fault_injection.py`（3/3 PASS）。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 组件边界建模代替真实进程 kill | 真实 worker 不重放 agent 图，端到端杀进程无法演示恢复；用"新 Session = 新进程"共享同一 SQLite 文件，恢复逻辑对 checkpoint+幂等记录的判读完全一致——测的是恢复算法本身，不是进程编排 |
+| 对账判定 PENDING vs COMPLETED | PENDING 幂等记录 = 意图已写、结果未知（可能已生效）→ 必须标 RECOVERY_RECONCILIATION_REQUIRED 让人工确认；COMPLETED 记录/步骤 = 已证明确凿 → 永不重跑，防重复副作用 |
+| 可重试的判定 | 504 是"已证明未执行"的瞬时失败（超时在落库前抛错，探测后库存不变佐证），标 is_retryable=True；非幂等的业务 4xx 不可重试——`RetryPolicy.is_retryable_http` 只放 429 和 5xx |
+| RetryExecutor 的可注入 sleep | `sleep=lambda _: None` 使退避零等待，单测/harness 确定性驱动重试序列，无需真等 1s/2s/4s |
+| 幂等键的唯一性保证 | 客户端每次用 uuid 新键，模拟器按 (tenant_id, idempotency_key) 去重——重试与重复提交都收敛到同一 order_id，库存只扣一次 |
+| 负例防"真空绿" | 每个场景都配"故障未注入"的负例：harness 必须能检测到故障缺失并报 FAIL，否则断言永远过，测了等于没测 |
 
 ---
 
