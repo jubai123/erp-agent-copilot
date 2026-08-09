@@ -1553,12 +1553,25 @@
 **目标**：录制真实 LLM 响应，CI 中重放（不调付费模型）。
 
 **交付物**：
-- `evals/record_replay.py`
+- `evals/record_replay.py`（✅ RecordReplay 三模式 + JSONL 录制文件格式）
+- `tests/unit/evals/test_record_replay.py`（✅ 已实现，13 用例，假 LLM 无网络）
 
 **验收标准**：
-- 录制模式保存 LLM 响应
-- 重放模式用录制结果替代真实调用
-- CI 中不调用付费模型也能跑评测
+- ✅ 录制模式保存 LLM 响应（`record` 模式包装真实 callable，`save()` 写 JSONL）
+- ✅ 重放模式用录制结果替代真实调用（`replay` 模式按 prompt 精确匹配，绝不触碰 provider）
+- ✅ CI 中不调用付费模型也能跑评测（`wrap()` 即 LLM 注入 seam，可直接传给 `build_plan_node(llm_complete=...)`）
+
+**落地细节**：无任何 src 改动——包装点就是 agent 节点注入的 `llm_complete: Callable[[str], str]` seam。`load_recording` 读 JSONL（每行 `{"prompt","completion"}`，`setdefault` 保证重复 prompt 先到先得）；`RecordReplay.__init__` 校验 mode（非法即 ValueError），replay 模式构造期就加载录制文件（文件缺失抛 FileNotFoundError，CI 里 stale 录制立即暴露）。`wrap()` 三态：off 原样返回原 callable（`is` 恒等）；record 包一层先调真 provider 再入内存 buffer，`save()` 将 buffer 与已有文件合并（已有条目优先=先到先得）后整体重写，幂等可重复调；replay 服务已录完成，未命中抛 `ReplayMissError(KeyError)`（严格重放，陈旧录制在 CI 中大声失败而非静默降级）。测试覆盖 record→replay 端到端（用调用计数器证明重放时 provider 零调用）、重复 prompt 先到先得、以及 wrapped callable 真实插入 `build_plan_node` 的 seam 冒烟（录制了含中文 query 的完整 planner prompt）。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 录制重放（Record/Replay） | 把"昂贵的真实调用"与"可复现的测试"解耦：首次在真环境录一次，之后离线重放完全一致的结果；比 mock 强在"录的是真实分布"，比每次都调真模型强在"免费、快、确定" |
+| 接缝（seam）注入而非改造 | 不改 src：agent 节点本来就接受 `llm_complete: Callable[[str], str]`，包装这个 seam 就同时覆盖了所有 agent 节点，测试里 `build_plan_node(llm_complete=recorder.wrap(...))` 证明它真能插进去 |
+| JSONL 追加友好格式 | 每行一个 JSON 对象、无顶层包裹，可增量追加、可 tail/awk 检查；相比单一大 JSON 文件更适合"录一次、跨 CI 重放"的场景 |
+| 先到先得 vs 覆盖 | 重复 prompt 取第一条：重放确定性优先——先录的才是"真"，后录的可能是抖动，`setdefault` 一行实现 |
+| 严格重放（fail loud） | 未命中 prompt 抛 `ReplayMissError` 而非回退真调用：CI 里录制陈旧/数据漂移立即红，绝不静默降级成"这次没测到" |
+| 与 mock/免费回退的区别 | `off` 模式即原样透传（不付任何代价）；这是三档开关——录（真调用+记账）、放（纯查表）、关（裸用），一个 seam 三个环境（本地/CI/生产）复用 |
 
 ---
 
