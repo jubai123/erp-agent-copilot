@@ -17,17 +17,19 @@ and should_use_tool_retrieval flags that a rerank pass is warranted.
 from __future__ import annotations
 
 # V6 registered tool set (docs/05 section 5 — ERP Simulator tools).
-V6_TOOL_NAMES: frozenset[str] = frozenset({
-    "getProductByName",
-    "getProductById",
-    "getProductSubstitutesByName",
-    "querySuppliersByDeliveryRegion",
-    "getSupplierByStatus",
-    "getOrderByOrderId",
-    "createOrder",
-    "updateOrderStatus",
-    "cancelOrder",
-})
+V6_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "getProductByName",
+        "getProductById",
+        "getProductSubstitutesByName",
+        "querySuppliersByDeliveryRegion",
+        "getSupplierByStatus",
+        "getOrderByOrderId",
+        "createOrder",
+        "updateOrderStatus",
+        "cancelOrder",
+    }
+)
 
 # Intent keys mirror datasets/knowledge/skills/intent_skill_map.yaml.
 DOMAIN_TOOL_MAP: dict[tuple[str, str], list[str]] = {

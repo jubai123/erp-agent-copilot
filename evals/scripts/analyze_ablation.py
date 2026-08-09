@@ -30,7 +30,8 @@ def _dedup(retrieved: list[str]) -> list[str]:
 
 
 def main(path: str) -> None:
-    data = json.load(open(path, encoding="utf-8"))
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
     pq = data["per_query"]
     idx = {q["query"]: i for i, q in enumerate(pq["Vector-only"])}
 
@@ -39,8 +40,10 @@ def main(path: str) -> None:
     for q in pq["Vector-only"]:
         qtext = q["query"]
         v = recall_at_5(pq["Vector-only"][idx[qtext]]["retrieved"], set(q["relevant"]))
-        h = recall_at_5(pq["Hybrid"][idx[qtext]]["retrieved"], set(pq["Hybrid"][idx[qtext]]["relevant"]))
-        hr = recall_at_5(pq["Hybrid+Rerank"][idx[qtext]]["retrieved"], set(pq["Hybrid+Rerank"][idx[qtext]]["relevant"]))
+        hq = pq["Hybrid"][idx[qtext]]
+        hrq = pq["Hybrid+Rerank"][idx[qtext]]
+        h = recall_at_5(hq["retrieved"], set(hq["relevant"]))
+        hr = recall_at_5(hrq["retrieved"], set(hrq["relevant"]))
 
         if h < v and hr >= v:
             pat = "keyword hurt, rerank rescued"
@@ -71,7 +74,7 @@ def main(path: str) -> None:
     # --- Vector+Rerank vs Hybrid+Rerank: isolate keyword marginal value ---
     if "Vector+Rerank" not in pq:
         return
-    from erp_copilot.retrieval.metrics import mean_reciprocal_rank, ndcg_at_k
+    from erp_copilot.retrieval.metrics import ndcg_at_k
 
     stats2: collections.Counter = collections.Counter()
     ndcg_deltas = []
@@ -91,9 +94,12 @@ def main(path: str) -> None:
             print(f"  {qtext:<26} {v_n:>5.2f} {h_n:>5.2f} {d:>+6.2f}  {pat}")
 
     tied = 42 - stats2.get("HR better", 0) - stats2.get("VR better", 0)
-    print(f"\nNDCG@5 keyword marginal value: HR better={stats2.get('HR better', 0)}, "
-          f"VR better={stats2.get('VR better', 0)}, tied={tied}")
-    print(f"  mean NDCG@5 delta (Hybrid+Rerank − Vector+Rerank): {sum(ndcg_deltas) / len(ndcg_deltas):+.4f}")
+    print(
+        f"\nNDCG@5 keyword marginal value: HR better={stats2.get('HR better', 0)}, "
+        f"VR better={stats2.get('VR better', 0)}, tied={tied}"
+    )
+    mean_delta = sum(ndcg_deltas) / len(ndcg_deltas)
+    print(f"  mean NDCG@5 delta (Hybrid+Rerank − Vector+Rerank): {mean_delta:+.4f}")
 
 
 if __name__ == "__main__":

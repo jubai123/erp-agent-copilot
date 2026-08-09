@@ -82,9 +82,7 @@ OPENAPI_WITH_REQUEST_BODY = {
                     "required": True,
                     "content": {
                         "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/CreateOrderRequest"
-                            }
+                            "schema": {"$ref": "#/components/schemas/CreateOrderRequest"}
                         }
                     },
                 },
@@ -131,9 +129,7 @@ OPENAPI_WITH_NESTED_REF = {
                     "required": True,
                     "content": {
                         "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/CreateOrderRequest"
-                            }
+                            "schema": {"$ref": "#/components/schemas/CreateOrderRequest"}
                         }
                     },
                 },
@@ -146,9 +142,7 @@ OPENAPI_WITH_NESTED_REF = {
             "CreateOrderRequest": {
                 "type": "object",
                 "properties": {
-                    "customer": {
-                        "$ref": "#/components/schemas/CustomerInfo"
-                    },
+                    "customer": {"$ref": "#/components/schemas/CustomerInfo"},
                     "quantity": {"type": "integer"},
                 },
             },
@@ -326,9 +320,7 @@ class TestParseErrors:
                         "requestBody": {
                             "content": {
                                 "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/DoesNotExist"
-                                    }
+                                    "schema": {"$ref": "#/components/schemas/DoesNotExist"}
                                 }
                             }
                         },
@@ -343,17 +335,12 @@ class TestParseErrors:
 
 
 class TestParseV5Dataset:
-    """Acceptance: Correctly parses the real V5 dataset_apis_aliyun.json."""
+    """Acceptance: Correctly parses the real 25-tool OpenAPI spec (ex-V5 dataset)."""
 
     @classmethod
     @pytest.fixture(scope="class")
     def v5_tools(cls) -> list[ParsedTool]:
-        dataset_path = (
-            Path(__file__).parent.parent.parent.parent
-            / "agent-copilot-v5-20260317"
-            / "api_data"
-            / "dataset_apis_aliyun.json"
-        )
+        dataset_path = Path(__file__).parent / "fixtures" / "dataset_apis_aliyun.json"
         spec = json.loads(dataset_path.read_text(encoding="utf-8"))
         importer = OpenAPIImporter()
         return importer.parse(spec)
@@ -370,18 +357,14 @@ class TestParseV5Dataset:
         assert methods <= {"GET", "POST", "PUT", "DELETE"}
 
     def test_path_params_extracted(self, v5_tools: list[ParsedTool]) -> None:
-        supplier_by_id = next(
-            t for t in v5_tools if t.name == "getSupplier_1"
-        )
+        supplier_by_id = next(t for t in v5_tools if t.name == "getSupplier_1")
         path_params = [p for p in supplier_by_id.parameters if p.location == "path"]
         assert len(path_params) == 1
         assert path_params[0].name == "supplierId"
         assert path_params[0].param_type == "integer"
 
     def test_query_params_extracted(self, v5_tools: list[ParsedTool]) -> None:
-        by_status = next(
-            t for t in v5_tools if t.name == "getSupplierByName"
-        )
+        by_status = next(t for t in v5_tools if t.name == "getSupplierByName")
         query_params = [p for p in by_status.parameters if p.location == "query"]
         assert len(query_params) == 1
         assert query_params[0].name == "status"

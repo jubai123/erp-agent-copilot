@@ -147,11 +147,13 @@ def load_knowledge_base() -> list[dict]:
         content = md_file.read_text(encoding="utf-8")
         fm = _parse_frontmatter(content)
         doc_id = fm.get("document_id", md_file.stem)
-        docs.append({
-            "document_id": doc_id,
-            "source_path": str(md_file.relative_to(KB_ROOT)),
-            "content": content,
-        })
+        docs.append(
+            {
+                "document_id": doc_id,
+                "source_path": str(md_file.relative_to(KB_ROOT)),
+                "content": content,
+            }
+        )
     return docs
 
 
@@ -293,7 +295,7 @@ def search_vector_rerank(
 def _load_l1_intent_map() -> dict[tuple[str, str], list[str]]:
     path = KB_ROOT / "skills" / "intent_skill_map.yaml"
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return { (e["domain"], e["action"]): e["skills"] for e in raw["intents"] }
+    return {(e["domain"], e["action"]): e["skills"] for e in raw["intents"]}
 
 
 # Manual mapping of eval queries to (domain, action) pairs for L1 coverage analysis.
@@ -362,19 +364,23 @@ def analyze_l1_coverage(queries: list[dict]) -> dict:
             has_coverage = len(skills) > 0
             if has_coverage:
                 covered += 1
-            details.append({
-                "query": q["query"],
-                "intent": f"{intent[0]}/{intent[1]}",
-                "l1_skills": skills,
-                "l1_covered": has_coverage,
-            })
+            details.append(
+                {
+                    "query": q["query"],
+                    "intent": f"{intent[0]}/{intent[1]}",
+                    "l1_skills": skills,
+                    "l1_covered": has_coverage,
+                }
+            )
         else:
-            details.append({
-                "query": q["query"],
-                "intent": "unknown",
-                "l1_skills": [],
-                "l1_covered": False,
-            })
+            details.append(
+                {
+                    "query": q["query"],
+                    "intent": "unknown",
+                    "l1_skills": [],
+                    "l1_covered": False,
+                }
+            )
 
     return {
         "coverage_rate": covered / len(queries) if queries else 0.0,
@@ -440,11 +446,13 @@ def evaluate_config(
                 "latency_ms": round(elapsed_ms, 2),
             }
             metrics_list.append(m)
-            per_query.append({
-                "query": query_text,
-                "relevant": list(relevant),
-                "retrieved": retrieved_ids,
-            })
+            per_query.append(
+                {
+                    "query": query_text,
+                    "relevant": list(relevant),
+                    "retrieved": retrieved_ids,
+                }
+            )
 
         # Aggregate
         n = len(metrics_list)
@@ -479,9 +487,7 @@ def _print_table(results: list[dict]) -> None:
     col_widths = [20, 8, 8, 8, 8, 8, 10, 10]
 
     sep = "+" + "+".join("-" * w for w in col_widths) + "+"
-    header_line = "|" + "|".join(
-        h.ljust(w) for h, w in zip(headers, col_widths, strict=True)
-    ) + "|"
+    header_line = "|" + "|".join(h.ljust(w) for h, w in zip(headers, col_widths, strict=True)) + "|"
 
     print("\n" + "=" * len(sep))
     print("  Retrieval Ablation Study")
@@ -513,9 +519,11 @@ def _print_l1_report(l1_result: dict) -> None:
     print("=" * 60)
     print("  L1 Skill Coverage Analysis")
     print("=" * 60)
-    print(f"  Coverage rate: {l1_result['coverage_rate']:.0%} "
-          f"({sum(1 for d in l1_result['details'] if d['l1_covered'])}/"
-          f"{len(l1_result['details'])} queries)\n")
+    print(
+        f"  Coverage rate: {l1_result['coverage_rate']:.0%} "
+        f"({sum(1 for d in l1_result['details'] if d['l1_covered'])}/"
+        f"{len(l1_result['details'])} queries)\n"
+    )
 
     for d in l1_result["details"]:
         status = "COVERED" if d["l1_covered"] else "UNCOVERED"
@@ -530,13 +538,16 @@ def _print_l1_report(l1_result: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run retrieval ablation study")
     parser.add_argument("--top-k", type=int, default=10, help="Top-K for retrieval (default: 10)")
-    parser.add_argument("--skip-ingest", action="store_true",
-                        help="Skip KB ingestion (use existing data)")
-    parser.add_argument("--embedding-provider", choices=["dummy", "openai"],
-                        default="dummy",
-                        help="Embedding provider: dummy (default) or openai")
-    parser.add_argument("--json", type=str, default=None,
-                        help="Save detailed results to JSON file")
+    parser.add_argument(
+        "--skip-ingest", action="store_true", help="Skip KB ingestion (use existing data)"
+    )
+    parser.add_argument(
+        "--embedding-provider",
+        choices=["dummy", "openai"],
+        default="dummy",
+        help="Embedding provider: dummy (default) or openai",
+    )
+    parser.add_argument("--json", type=str, default=None, help="Save detailed results to JSON file")
     args = parser.parse_args()
 
     # 1. Initialize database
@@ -577,20 +588,33 @@ def main() -> None:
     # 5. Run ablation — three configurations
     print("\nRunning ablation ...")
     print(f"  Config 1/3: Vector-only (top_k={args.top_k})")
-    vec_result = evaluate_config("Vector-only", queries, embedding_provider,
-                                 lambda s, q, e: search_vector_only(s, e, args.top_k))
+    vec_result = evaluate_config(
+        "Vector-only",
+        queries,
+        embedding_provider,
+        lambda s, q, e: search_vector_only(s, e, args.top_k),
+    )
 
     print(f"  Config 2/3: Hybrid (top_k={args.top_k})")
-    hybrid_result = evaluate_config("Hybrid", queries, embedding_provider,
-                                    lambda s, q, e: search_hybrid(s, q, e, args.top_k))
+    hybrid_result = evaluate_config(
+        "Hybrid", queries, embedding_provider, lambda s, q, e: search_hybrid(s, q, e, args.top_k)
+    )
 
     print(f"  Config 3/3: Hybrid+Rerank (top_k={args.top_k})")
-    hr_result = evaluate_config("Hybrid+Rerank", queries, embedding_provider,
-                                lambda s, q, e: search_hybrid_rerank(s, q, e, reranker, args.top_k))
+    hr_result = evaluate_config(
+        "Hybrid+Rerank",
+        queries,
+        embedding_provider,
+        lambda s, q, e: search_hybrid_rerank(s, q, e, reranker, args.top_k),
+    )
 
     print(f"  Config 4/4: Vector+Rerank (top_k={args.top_k})")
-    vr_result = evaluate_config("Vector+Rerank", queries, embedding_provider,
-                                lambda s, q, e: search_vector_rerank(s, q, e, reranker, args.top_k))
+    vr_result = evaluate_config(
+        "Vector+Rerank",
+        queries,
+        embedding_provider,
+        lambda s, q, e: search_vector_rerank(s, q, e, reranker, args.top_k),
+    )
 
     # 5. L1 coverage analysis
     l1_result = analyze_l1_coverage(queries)
@@ -603,10 +627,7 @@ def main() -> None:
     # 7. Optional JSON output
     if args.json:
         output = {
-            "configs": [
-                {k: v for k, v in r.items() if k != "per_query"}
-                for r in all_results
-            ],
+            "configs": [{k: v for k, v in r.items() if k != "per_query"} for r in all_results],
             "l1_coverage": {
                 "coverage_rate": l1_result["coverage_rate"],
                 "details": l1_result["details"],

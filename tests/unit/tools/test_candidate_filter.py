@@ -55,17 +55,22 @@ class TestDomainToolMap:
             assert len(tools) == len(set(tools)), f"{intent} has duplicate tools"
 
     def test_v6_tool_set_matches_design_doc(self) -> None:
-        assert frozenset({
-            "getProductByName",
-            "getProductById",
-            "getProductSubstitutesByName",
-            "querySuppliersByDeliveryRegion",
-            "getSupplierByStatus",
-            "getOrderByOrderId",
-            "createOrder",
-            "updateOrderStatus",
-            "cancelOrder",
-        }) == V6_TOOL_NAMES
+        assert (
+            frozenset(
+                {
+                    "getProductByName",
+                    "getProductById",
+                    "getProductSubstitutesByName",
+                    "querySuppliersByDeliveryRegion",
+                    "getSupplierByStatus",
+                    "getOrderByOrderId",
+                    "createOrder",
+                    "updateOrderStatus",
+                    "cancelOrder",
+                }
+            )
+            == V6_TOOL_NAMES
+        )
 
 
 class TestFilterCandidates:

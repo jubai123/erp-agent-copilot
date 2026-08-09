@@ -25,9 +25,7 @@ class EmbeddingProvider(Protocol):
 class OpenAIEmbeddingProvider:
     """OpenAI-compatible embedding API provider."""
 
-    def __init__(
-        self, base_url: str, api_key: str, model: str, dimensions: int = 1536
-    ) -> None:
+    def __init__(self, base_url: str, api_key: str, model: str, dimensions: int = 1536) -> None:
         base = base_url.rstrip("/")
         self._url = f"{base}/embeddings"
         self._api_key = api_key
@@ -58,9 +56,7 @@ class OpenAIEmbeddingProvider:
                     detail = response.json()
                 except Exception:
                     detail = response.text
-                raise RuntimeError(
-                    f"Embedding API error {response.status_code}: {detail}"
-                )
+                raise RuntimeError(f"Embedding API error {response.status_code}: {detail}")
 
             data = response.json()["data"]
             data.sort(key=lambda d: d["index"])

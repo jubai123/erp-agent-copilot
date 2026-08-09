@@ -21,7 +21,7 @@ from evals.scripts.run_ablation import (
 
 class TestParseFrontmatter:
     def test_parses_valid_frontmatter(self) -> None:
-        content = "---\ndocument_id: test-doc\nversion: \"1.0\"\n---\n# Heading\n\nBody."
+        content = '---\ndocument_id: test-doc\nversion: "1.0"\n---\n# Heading\n\nBody.'
         fm = _parse_frontmatter(content)
         assert fm == {"document_id": "test-doc", "version": "1.0"}
 
@@ -243,12 +243,18 @@ class TestPipelineDispatch:
             "evals.scripts.run_ablation.search_hybrid",
             return_value=[
                 {
-                    "chunk_id": "c1", "content": "short", "source": "doc-a",
-                    "section_path": [], "char_count": 5,
+                    "chunk_id": "c1",
+                    "content": "short",
+                    "source": "doc-a",
+                    "section_path": [],
+                    "char_count": 5,
                 },
                 {
-                    "chunk_id": "c2", "content": "longer text here", "source": "doc-b",
-                    "section_path": [], "char_count": 17,
+                    "chunk_id": "c2",
+                    "content": "longer text here",
+                    "source": "doc-b",
+                    "section_path": [],
+                    "char_count": 17,
                 },
             ],
         ) as mock_hybrid:

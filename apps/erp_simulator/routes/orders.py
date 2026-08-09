@@ -41,8 +41,7 @@ async def post_order(body: CreateOrderRequest, response: Response) -> dict:
 
     if body.quantity > effective_stock:
         detail = (
-            f"Insufficient stock: requested {body.quantity} "
-            f"but only {effective_stock} available"
+            f"Insufficient stock: requested {body.quantity} but only {effective_stock} available"
         )
         raise HTTPException(status_code=422, detail=detail)
 

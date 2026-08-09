@@ -101,8 +101,9 @@ def search_similar(
 
     embedding_str = json.dumps(query_embedding)
 
-    rows = session.execute(
-        text(r"""
+    rows = (
+        session.execute(
+            text(r"""
             SELECT
                 dc.id          AS chunk_id,
                 dc.content     AS content,
@@ -117,12 +118,15 @@ def search_similar(
             ORDER BY dc.embedding <=> :embedding\:\:vector
             LIMIT :top_k
         """),
-        {
-            "embedding": embedding_str,
-            "tenant_id": tenant_id,
-            "top_k": top_k,
-        },
-    ).mappings().all()
+            {
+                "embedding": embedding_str,
+                "tenant_id": tenant_id,
+                "top_k": top_k,
+            },
+        )
+        .mappings()
+        .all()
+    )
 
     return [
         {

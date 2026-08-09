@@ -206,9 +206,7 @@ class TestOrderFactTable:
             "created_at",
         }
         actual_names = {f["name"] for f in fields}
-        assert actual_names == expected, (
-            f"order_fields mismatch: {actual_names} vs {expected}"
-        )
+        assert actual_names == expected, f"order_fields mismatch: {actual_names} vs {expected}"
 
     def test_order_status_lifecycle_declared(self) -> None:
         manifest = _load_manifest()

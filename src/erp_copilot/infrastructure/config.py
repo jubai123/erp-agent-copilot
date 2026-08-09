@@ -16,12 +16,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # V5-compatible: discovers keys from system env vars by checking
 # multiple well-known names in order.
 _LLM_KEY_ENV_VARS: list[tuple[str, str, str, str]] = [
-    ("LLM_API_KEY", "LLM_BASE_URL",
-     "https://api.openai.com/v1", "text-embedding-3-small"),
-    ("DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
-     "https://dashscope.aliyuncs.com/compatible-mode/v1", "text-embedding-v4"),
-    ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL",
-     "https://api.deepseek.com/v1", "text-embedding-3-small"),
+    ("LLM_API_KEY", "LLM_BASE_URL", "https://api.openai.com/v1", "text-embedding-3-small"),
+    (
+        "DASHSCOPE_API_KEY",
+        "DASHSCOPE_BASE_URL",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "text-embedding-v4",
+    ),
+    (
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "https://api.deepseek.com/v1",
+        "text-embedding-3-small",
+    ),
 ]
 
 

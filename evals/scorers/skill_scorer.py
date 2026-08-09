@@ -64,15 +64,17 @@ def evaluate(
             if followed:
                 reject_followed += 1
 
-        per_case.append({
-            "case_id": case["case_id"],
-            "decision": decision,
-            "expected_decision": case["expected_decision"],
-            "followed": followed,
-            "injected_skill_ids": injected_ids,
-            "expected_skill_ids": list(case["expected_skills"]),
-            "false_triggers": false_triggers,
-        })
+        per_case.append(
+            {
+                "case_id": case["case_id"],
+                "decision": decision,
+                "expected_decision": case["expected_decision"],
+                "followed": followed,
+                "injected_skill_ids": injected_ids,
+                "expected_skill_ids": list(case["expected_skills"]),
+                "false_triggers": false_triggers,
+            }
+        )
 
     num_cases = len(cases)
     follow_rate = sum(1 for pc in per_case if pc["followed"]) / num_cases if num_cases else 0.0

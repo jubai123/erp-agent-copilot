@@ -29,15 +29,70 @@ def jieba_segment(text: str) -> str:
 # Chinese function words / question particles that never carry retrieval
 # signal. Dropped before building the tsquery so an OR-match doesn't fire
 # on "如何/怎么/哪些" and inflate ts_rank with spurious hits.
-_STOPWORDS = frozenset({
-    "如何", "怎么", "怎样", "哪些", "什么", "什么样", "为什么",
-    "什么时候", "怎么办", "为何", "是否", "谁", "吗", "呢", "啊", "吧",
-    "的", "了", "在", "有", "是", "会", "不会", "都", "所有", "这个",
-    "那个", "一个", "同一个", "可以", "需要", "能够", "按", "到", "为",
-    "用", "包括", "及", "和", "与", "或", "等", "时", "后", "中", "下",
-    "于", "对", "从", "就", "很", "再", "也", "还", "才", "又", "多少",
-    "还有", "只有", "没有",
-})
+_STOPWORDS = frozenset(
+    {
+        "如何",
+        "怎么",
+        "怎样",
+        "哪些",
+        "什么",
+        "什么样",
+        "为什么",
+        "什么时候",
+        "怎么办",
+        "为何",
+        "是否",
+        "谁",
+        "吗",
+        "呢",
+        "啊",
+        "吧",
+        "的",
+        "了",
+        "在",
+        "有",
+        "是",
+        "会",
+        "不会",
+        "都",
+        "所有",
+        "这个",
+        "那个",
+        "一个",
+        "同一个",
+        "可以",
+        "需要",
+        "能够",
+        "按",
+        "到",
+        "为",
+        "用",
+        "包括",
+        "及",
+        "和",
+        "与",
+        "或",
+        "等",
+        "时",
+        "后",
+        "中",
+        "下",
+        "于",
+        "对",
+        "从",
+        "就",
+        "很",
+        "再",
+        "也",
+        "还",
+        "才",
+        "又",
+        "多少",
+        "还有",
+        "只有",
+        "没有",
+    }
+)
 
 
 def _is_retrieval_stop(token: str) -> bool:
@@ -47,11 +102,7 @@ def _is_retrieval_stop(token: str) -> bool:
     characters (e.g. 幂/字/段) that jieba fragments but that never
     appear as standalone terms in the knowledge base.
     """
-    if token in _STOPWORDS:
-        return True
-    if len(token) == 1 and "一" <= token <= "鿿":
-        return True
-    return False
+    return token in _STOPWORDS or (len(token) == 1 and "一" <= token <= "鿿")
 
 
 def keyword_search(
@@ -85,8 +136,9 @@ def keyword_search(
     # chunks matching more terms higher.
     tsquery = " | ".join(tokens)
 
-    rows = session.execute(
-        text("""
+    rows = (
+        session.execute(
+            text("""
             SELECT
                 dc.id          AS chunk_id,
                 dc.content     AS content,
@@ -101,12 +153,15 @@ def keyword_search(
             ORDER BY rank DESC
             LIMIT :top_k
         """),
-        {
-            "query": tsquery,
-            "tenant_id": tenant_id,
-            "top_k": top_k,
-        },
-    ).mappings().all()
+            {
+                "query": tsquery,
+                "tenant_id": tenant_id,
+                "top_k": top_k,
+            },
+        )
+        .mappings()
+        .all()
+    )
 
     return [
         {

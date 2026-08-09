@@ -80,11 +80,8 @@ def ndcg_at_k(
         [rel_map.get(r, 1) for r in relevant_ids],
         reverse=True,
     )
-    ideal_gains = ideal_gains[:len(considered)]
-    idcg = sum(
-        gain / math.log2(i + 1)
-        for i, gain in enumerate(ideal_gains, start=1)
-    )
+    ideal_gains = ideal_gains[: len(considered)]
+    idcg = sum(gain / math.log2(i + 1) for i, gain in enumerate(ideal_gains, start=1))
     if idcg == 0.0:
         return 0.0
 

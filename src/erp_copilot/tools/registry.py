@@ -28,11 +28,7 @@ class ToolRegistry:
         """Register a tool, creating a new version if it already exists."""
         session = get_session()
         try:
-            tool = (
-                session.query(Tool)
-                .filter_by(name=name, tenant_id=tenant_id)
-                .first()
-            )
+            tool = session.query(Tool).filter_by(name=name, tenant_id=tenant_id).first()
 
             if tool is None:
                 tool = Tool(
@@ -43,12 +39,7 @@ class ToolRegistry:
                 session.add(tool)
                 session.flush()
 
-            next_version = (
-                session.query(ToolVersion)
-                .filter_by(tool_id=tool.id)
-                .count()
-                + 1
-            )
+            next_version = session.query(ToolVersion).filter_by(tool_id=tool.id).count() + 1
 
             version = ToolVersion(
                 tool_id=tool.id,
@@ -67,9 +58,7 @@ class ToolRegistry:
                             name=str(param["name"]),
                             param_type=str(param["type"]),
                             required=bool(param.get("required", False)),
-                            default_value=str(param["default"])
-                            if "default" in param
-                            else None,
+                            default_value=str(param["default"]) if "default" in param else None,
                         )
                     )
                 session.flush()
@@ -79,10 +68,7 @@ class ToolRegistry:
             # Eager-load versions + parameters for the caller
             return (
                 session.query(Tool)
-                .options(
-                    joinedload(Tool.versions)
-                    .joinedload(ToolVersion.parameters)
-                )
+                .options(joinedload(Tool.versions).joinedload(ToolVersion.parameters))
                 .filter_by(id=tool.id)
                 .one()
             )
@@ -98,9 +84,7 @@ class ToolRegistry:
         try:
             return (
                 session.query(Tool)
-                .options(
-                    joinedload(Tool.versions).joinedload(ToolVersion.parameters)
-                )
+                .options(joinedload(Tool.versions).joinedload(ToolVersion.parameters))
                 .filter_by(name=name, tenant_id=tenant_id)
                 .first()
             )
@@ -113,9 +97,7 @@ class ToolRegistry:
         try:
             return (
                 session.query(Tool)
-                .options(
-                    joinedload(Tool.versions).joinedload(ToolVersion.parameters)
-                )
+                .options(joinedload(Tool.versions).joinedload(ToolVersion.parameters))
                 .filter_by(tenant_id=tenant_id, is_active=True)
                 .order_by(Tool.name)
                 .all()

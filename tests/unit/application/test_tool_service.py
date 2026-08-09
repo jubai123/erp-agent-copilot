@@ -118,9 +118,7 @@ class TestValidation:
                     "get": {
                         "operationId": "emptyParam",
                         "summary": "Empty param",
-                        "parameters": [
-                            {"name": "", "in": "query", "schema": {"type": "string"}}
-                        ],
+                        "parameters": [{"name": "", "in": "query", "schema": {"type": "string"}}],
                         "responses": {"200": {"description": "OK"}},
                     }
                 }
@@ -189,9 +187,7 @@ class TestImportFlow:
                         "requestBody": {
                             "content": {
                                 "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/OrderReq"
-                                    }
+                                    "schema": {"$ref": "#/components/schemas/OrderReq"}
                                 }
                             }
                         },

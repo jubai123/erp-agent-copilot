@@ -35,10 +35,7 @@ class DashScopeReranker:
     ) -> None:
         import httpx
 
-        self._url = (
-            "https://dashscope.aliyuncs.com/api/v1/services/rerank/"
-            "text-rerank/text-rerank"
-        )
+        self._url = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
         self._api_key = api_key
         self._model = model
         self._client = httpx.Client(timeout=httpx.Timeout(30.0))
@@ -68,9 +65,7 @@ class DashScopeReranker:
                 detail = response.json()
             except Exception:
                 detail = response.text
-            raise RuntimeError(
-                f"Rerank API error {response.status_code}: {detail}"
-            )
+            raise RuntimeError(f"Rerank API error {response.status_code}: {detail}")
 
         results = response.json()["output"]["results"]
         scored = [(r["index"], float(r["relevance_score"])) for r in results]
@@ -125,13 +120,15 @@ def rerank_results(
     result = []
     for idx, score in scored[:top_k]:
         d = documents[idx]
-        result.append({
-            "chunk_id": d["chunk_id"],
-            "content": d["content"],
-            "section_path": d["section_path"],
-            "char_count": d["char_count"],
-            "source": d["source"],
-            "rerank_score": score,
-        })
+        result.append(
+            {
+                "chunk_id": d["chunk_id"],
+                "content": d["content"],
+                "section_path": d["section_path"],
+                "char_count": d["char_count"],
+                "source": d["source"],
+                "rerank_score": score,
+            }
+        )
 
     return result

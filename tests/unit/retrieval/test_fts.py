@@ -158,12 +158,20 @@ class TestKeywordSearch:
         session = MagicMock()
         session.execute.return_value.mappings.return_value.all.return_value = [
             _fake_row(
-                chunk_id="high", content="a", section_path="[]",
-                char_count=1, source="x", rank=0.9,
+                chunk_id="high",
+                content="a",
+                section_path="[]",
+                char_count=1,
+                source="x",
+                rank=0.9,
             ),
             _fake_row(
-                chunk_id="low", content="b", section_path="[]",
-                char_count=1, source="x", rank=0.1,
+                chunk_id="low",
+                content="b",
+                section_path="[]",
+                char_count=1,
+                source="x",
+                rank=0.1,
             ),
         ]
 

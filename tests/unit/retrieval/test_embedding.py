@@ -60,6 +60,7 @@ def _make_chunk(chunk_id: str, content: str, index: int) -> Chunk:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestEmbedChunks:
     """Tests for embed_chunks with a stub provider."""
 

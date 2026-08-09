@@ -100,7 +100,9 @@ class TestFalseTriggerRate:
 
         dataset = (
             Path(__file__).resolve().parent.parent.parent.parent
-            / "evals" / "datasets" / "skill_follow_20.json"
+            / "evals"
+            / "datasets"
+            / "skill_follow_20.json"
         )
         cases = json.loads(dataset.read_text(encoding="utf-8"))["cases"]
         report = evaluate(cases, judge_fn=lambda c, s: c["expected_decision"])

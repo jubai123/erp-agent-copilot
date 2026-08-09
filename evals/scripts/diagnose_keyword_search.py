@@ -5,7 +5,6 @@ Answers: Does keyword_search() return results? If not, why?
 
 from __future__ import annotations
 
-import json
 import os
 
 import jieba
@@ -30,35 +29,46 @@ def main() -> None:
     )
     init_db(settings)
 
-    queries = yaml.safe_load(open(EVAL_FILE, encoding="utf-8"))["queries"]
+    with open(EVAL_FILE, encoding="utf-8") as f:
+        queries = yaml.safe_load(f)["queries"]
     session = get_session()
 
     try:
         # Check basic stats
         total = session.execute(
-            text("SELECT count(*) FROM document_chunks dc "
-                 "JOIN knowledge_documents kd ON kd.id = dc.document_id "
-                 "WHERE kd.tenant_id = :tid"),
+            text(
+                "SELECT count(*) FROM document_chunks dc "
+                "JOIN knowledge_documents kd ON kd.id = dc.document_id "
+                "WHERE kd.tenant_id = :tid"
+            ),
             {"tid": TENANT_ID},
         ).scalar()
         print(f"Total chunks for tenant '{TENANT_ID}': {total}")
 
         # Check search_vector population
         null_sv = session.execute(
-            text("SELECT count(*) FROM document_chunks dc "
-                 "JOIN knowledge_documents kd ON kd.id = dc.document_id "
-                 "WHERE kd.tenant_id = :tid AND dc.search_vector IS NULL"),
+            text(
+                "SELECT count(*) FROM document_chunks dc "
+                "JOIN knowledge_documents kd ON kd.id = dc.document_id "
+                "WHERE kd.tenant_id = :tid AND dc.search_vector IS NULL"
+            ),
             {"tid": TENANT_ID},
         ).scalar()
         print(f"Chunks with NULL search_vector: {null_sv}")
 
         # Show sample search_vectors
-        sample = session.execute(
-            text("SELECT dc.id, dc.content, dc.search_vector FROM document_chunks dc "
-                 "JOIN knowledge_documents kd ON kd.id = dc.document_id "
-                 "WHERE kd.tenant_id = :tid LIMIT 3"),
-            {"tid": TENANT_ID},
-        ).mappings().all()
+        sample = (
+            session.execute(
+                text(
+                    "SELECT dc.id, dc.content, dc.search_vector FROM document_chunks dc "
+                    "JOIN knowledge_documents kd ON kd.id = dc.document_id "
+                    "WHERE kd.tenant_id = :tid LIMIT 3"
+                ),
+                {"tid": TENANT_ID},
+            )
+            .mappings()
+            .all()
+        )
         print("\nSample search_vectors:")
         for r in sample:
             print(f"  chunk={r['id']}")
@@ -85,8 +95,9 @@ def main() -> None:
             tokens = segmented.split()
             if tokens:
                 or_query = " | ".join(tokens)
-                or_results = session.execute(
-                    text("""
+                or_results = (
+                    session.execute(
+                        text("""
                         SELECT dc.id, kd.source
                         FROM document_chunks dc
                         JOIN knowledge_documents kd ON kd.id = dc.document_id
@@ -94,8 +105,11 @@ def main() -> None:
                           AND dc.search_vector @@ to_tsquery('simple', :q)
                         LIMIT 10
                     """),
-                    {"tid": TENANT_ID, "q": or_query},
-                ).mappings().all()
+                        {"tid": TENANT_ID, "q": or_query},
+                    )
+                    .mappings()
+                    .all()
+                )
             else:
                 or_results = []
 
@@ -103,16 +117,19 @@ def main() -> None:
                 empty_count += 1
                 print(f"\nEMPTY: '{query_text}'")
                 print(f"  jieba tokens: {segmented}")
-                plain_tsquery = "plainto_tsquery('simple', '{}')".format(segmented.replace("'", "''"))
+                escaped = segmented.replace("'", "''")
+                plain_tsquery = f"plainto_tsquery('simple', '{escaped}')"
                 print(f"  tsquery: {plain_tsquery}")
 
                 # Show tokens that exist in any document
                 for token in tokens[:10]:
                     cnt = session.execute(
-                        text("SELECT count(*) FROM document_chunks dc "
-                             "JOIN knowledge_documents kd ON kd.id = dc.document_id "
-                             "WHERE kd.tenant_id = :tid "
-                             "AND dc.search_vector @@ to_tsquery('simple', :t)"),
+                        text(
+                            "SELECT count(*) FROM document_chunks dc "
+                            "JOIN knowledge_documents kd ON kd.id = dc.document_id "
+                            "WHERE kd.tenant_id = :tid "
+                            "AND dc.search_vector @@ to_tsquery('simple', :t)"
+                        ),
                         {"tid": TENANT_ID, "t": token},
                     ).scalar()
                     print(f"    token '{token}' exists in {cnt} chunks")
@@ -134,8 +151,8 @@ def main() -> None:
                 query_text = q["query"]
                 emb = provider.embed([query_text])[0]
 
-                from erp_copilot.retrieval.vector_store import search_similar
                 from erp_copilot.retrieval.fts import keyword_search
+                from erp_copilot.retrieval.vector_store import search_similar
 
                 vec = search_similar(session, emb, TENANT_ID, top_k=10)
                 kw = keyword_search(session, query_text, TENANT_ID, top_k=10)
@@ -158,10 +175,18 @@ def main() -> None:
 def _discover() -> tuple[str, str, str]:
     for key_env, url_env, default_url, default_model in [
         ("LLM_API_KEY", "LLM_BASE_URL", "https://api.openai.com/v1", "text-embedding-3-small"),
-        ("DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
-         "https://dashscope.aliyuncs.com/compatible-mode/v1", "text-embedding-v4"),
-        ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL",
-         "https://api.deepseek.com/v1", "text-embedding-3-small"),
+        (
+            "DASHSCOPE_API_KEY",
+            "DASHSCOPE_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "text-embedding-v4",
+        ),
+        (
+            "DEEPSEEK_API_KEY",
+            "DEEPSEEK_BASE_URL",
+            "https://api.deepseek.com/v1",
+            "text-embedding-3-small",
+        ),
     ]:
         api_key = os.getenv(key_env, "")
         if api_key:

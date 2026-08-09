@@ -136,6 +136,4 @@ class TestDescriptions:
 
     def test_all_fields_have_descriptions(self) -> None:
         for name, field_info in Settings.model_fields.items():
-            assert field_info.description, (
-                f"Field '{name}' is missing a description"
-            )
+            assert field_info.description, f"Field '{name}' is missing a description"

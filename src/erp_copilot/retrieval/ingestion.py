@@ -71,10 +71,12 @@ def parse_markdown_sections(text: str) -> list[dict]:
                 # Flush accumulated body as previous section
                 content = "\n".join(body_lines).strip()
                 if content:
-                    sections.append({
-                        "heading_path": [h[1] for h in heading_stack],
-                        "content": content,
-                    })
+                    sections.append(
+                        {
+                            "heading_path": [h[1] for h in heading_stack],
+                            "content": content,
+                        }
+                    )
                 body_lines = []
 
                 level = len(m.group(1))
@@ -91,10 +93,12 @@ def parse_markdown_sections(text: str) -> list[dict]:
     # Flush trailing section
     content = "\n".join(body_lines).strip()
     if content:
-        sections.append({
-            "heading_path": [h[1] for h in heading_stack],
-            "content": content,
-        })
+        sections.append(
+            {
+                "heading_path": [h[1] for h in heading_stack],
+                "content": content,
+            }
+        )
 
     return sections
 
@@ -160,14 +164,16 @@ def ingest_document(
 
     for section in sections:
         for chunk_content in chunk_text(section["content"], chunk_size, overlap):
-            result.append(Chunk(
-                chunk_id=str(uuid.uuid4()),
-                content=chunk_content,
-                source_document=source,
-                section_path=list(section["heading_path"]),
-                chunk_index=global_index,
-                char_count=len(chunk_content),
-            ))
+            result.append(
+                Chunk(
+                    chunk_id=str(uuid.uuid4()),
+                    content=chunk_content,
+                    source_document=source,
+                    section_path=list(section["heading_path"]),
+                    chunk_index=global_index,
+                    char_count=len(chunk_content),
+                )
+            )
             global_index += 1
 
     return result

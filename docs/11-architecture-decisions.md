@@ -98,19 +98,30 @@ classify_intent → retrieve_context（必走）→ build_plan → ...
 # 第一级：确定性过滤（主引擎，必过）——2026-08-07 与 candidate_filter.py 落地实现同步
 DOMAIN_TOOL_MAP = {
     ("product", "query"): ["getProductByName", "getProductById", "getProductSubstitutesByName"],
-    ("product", "check_stock"): ["getProductByName", "getProductById", "getProductSubstitutesByName"],
+    ("product", "check_stock"): [
+        "getProductByName",
+        "getProductById",
+        "getProductSubstitutesByName",
+    ],
     ("supplier", "query"): ["querySuppliersByDeliveryRegion", "getSupplierByStatus"],
-    ("order", "create"): ["getProductByName", "querySuppliersByDeliveryRegion", "getSupplierByStatus", "createOrder"],
+    ("order", "create"): [
+        "getProductByName",
+        "querySuppliersByDeliveryRegion",
+        "getSupplierByStatus",
+        "createOrder",
+    ],
     ("order", "query"): ["getOrderByOrderId"],
     ("order", "cancel"): ["getOrderByOrderId", "cancelOrder", "createOrder"],
     ("order", "update_status"): ["getOrderByOrderId", "updateOrderStatus"],
     ("order", "modify"): ["getOrderByOrderId", "cancelOrder", "createOrder"],
     ("security", "data_access"): [],  # 无工具候选
-    ("system", "scenario"): [],       # 无工具候选
+    ("system", "scenario"): [],  # 无工具候选
 }
 
 # 第二级：向量检索（按需精排，仅候选 > 阈值时启用；"超过阈值"为严格大于）
 TOOL_RETRIEVAL_THRESHOLD = 5
+
+
 def should_use_tool_retrieval(candidates, threshold=TOOL_RETRIEVAL_THRESHOLD) -> bool:
     return len(candidates) > threshold
 ```

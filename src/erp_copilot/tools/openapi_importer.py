@@ -59,9 +59,7 @@ class OpenAPIImporter:
     def parse(self, spec: dict) -> list[ParsedTool]:
         """Extract tool definitions from an OpenAPI spec dict."""
         if "openapi" not in spec:
-            raise ValidationError(
-                "Not a valid OpenAPI 3.x spec: missing 'openapi' version field"
-            )
+            raise ValidationError("Not a valid OpenAPI 3.x spec: missing 'openapi' version field")
 
         schemas = _extract_schemas(spec)
         tools: list[ParsedTool] = []
@@ -91,9 +89,7 @@ class OpenAPIImporter:
                 # Request body parameters via $ref resolution
                 request_body = operation.get("requestBody")
                 if request_body:
-                    parameters.extend(
-                        _resolve_request_body(request_body, schemas)
-                    )
+                    parameters.extend(_resolve_request_body(request_body, schemas))
 
                 tools.append(
                     ParsedTool(
@@ -103,11 +99,7 @@ class OpenAPIImporter:
                         summary=operation.get("summary", ""),
                         description=operation.get("description", ""),
                         parameters=parameters,
-                        tags=[
-                            str(t)
-                            for t in operation.get("tags", [])
-                            if isinstance(t, str)
-                        ],
+                        tags=[str(t) for t in operation.get("tags", []) if isinstance(t, str)],
                     )
                 )
 
@@ -138,9 +130,7 @@ def _parse_parameter(param: dict) -> ParsedParameter:
     )
 
 
-def _resolve_request_body(
-    request_body: dict, schemas: dict[str, dict]
-) -> list[ParsedParameter]:
+def _resolve_request_body(request_body: dict, schemas: dict[str, dict]) -> list[ParsedParameter]:
     """Extract parameters from a requestBody by resolving ``$ref``."""
     content = request_body.get("content", {})
     json_content = content.get("application/json", {})
@@ -154,16 +144,13 @@ def _resolve_request_body(
     schema_def = schemas.get(schema_name)
     if schema_def is None:
         raise ValidationError(
-            f"Unresolvable $ref: '{ref}' — schema '{schema_name}' "
-            f"not found in components/schemas"
+            f"Unresolvable $ref: '{ref}' — schema '{schema_name}' not found in components/schemas"
         )
 
     return _extract_properties(schema_def, schemas)
 
 
-def _extract_properties(
-    schema_def: dict, schemas: dict[str, dict]
-) -> list[ParsedParameter]:
+def _extract_properties(schema_def: dict, schemas: dict[str, dict]) -> list[ParsedParameter]:
     """Flatten properties from a schema, resolving nested ``$ref``."""
     params: list[ParsedParameter] = []
 
@@ -209,9 +196,7 @@ def validate_tools(tools: list[ParsedTool]) -> None:
 
     for tool in tools:
         if not tool.name.strip():
-            raise ValidationError(
-                f"Tool at {tool.method} {tool.path} has an empty operationId"
-            )
+            raise ValidationError(f"Tool at {tool.method} {tool.path} has an empty operationId")
 
         seen_names: set[str] = set()
 
@@ -230,7 +215,5 @@ def validate_tools(tools: list[ParsedTool]) -> None:
                 )
 
             if param.name in seen_names:
-                raise ValidationError(
-                    f"Tool '{tool.name}' has duplicate parameter '{param.name}'"
-                )
+                raise ValidationError(f"Tool '{tool.name}' has duplicate parameter '{param.name}'")
             seen_names.add(param.name)

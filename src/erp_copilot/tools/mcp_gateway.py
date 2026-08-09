@@ -56,8 +56,7 @@ class MCPGatewayConnection:
         """
         if self._session is None:
             raise RuntimeError(
-                f"Cannot execute '{name}': not connected to {self._url}. "
-                f"Call connect() first."
+                f"Cannot execute '{name}': not connected to {self._url}. Call connect() first."
             )
         return await self._session.call_tool(name, arguments)
 

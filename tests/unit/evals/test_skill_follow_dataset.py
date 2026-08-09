@@ -53,8 +53,14 @@ class TestDatasetStructure:
 
     def test_every_case_has_required_fields(self) -> None:
         required = {
-            "case_id", "query", "domain", "action", "expected_skills",
-            "constraint", "expected_decision", "note",
+            "case_id",
+            "query",
+            "domain",
+            "action",
+            "expected_skills",
+            "constraint",
+            "expected_decision",
+            "note",
         }
         for case in _load_dataset()["cases"]:
             assert required <= set(case), f"missing fields in {case.get('case_id')}"
@@ -88,9 +94,7 @@ class TestDatasetConsistency:
     def test_includes_mandatory_reject_scenarios(self) -> None:
         """Task 3.12: must contain illegal state transitions and illegal
         region values that must be rejected."""
-        rejects = [
-            c for c in _load_dataset()["cases"] if c["expected_decision"] == "REJECT"
-        ]
+        rejects = [c for c in _load_dataset()["cases"] if c["expected_decision"] == "REJECT"]
         assert len(rejects) >= 10
         assert any("状态转换" in c["constraint"] for c in rejects), (
             "no illegal state transition case"

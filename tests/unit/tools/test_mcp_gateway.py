@@ -92,14 +92,10 @@ class TestMCPGatewayConnection:
             import asyncio
 
             asyncio.run(conn.connect())
-            result = asyncio.run(
-                conn.execute_tool("create_order", {"product_id": 1})
-            )
+            result = asyncio.run(conn.execute_tool("create_order", {"product_id": 1}))
 
             assert result == {"result": "ok"}
-            mock_session.call_tool.assert_awaited_once_with(
-                "create_order", {"product_id": 1}
-            )
+            mock_session.call_tool.assert_awaited_once_with("create_order", {"product_id": 1})
 
     def test_execute_without_connect_raises(self) -> None:
         from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
