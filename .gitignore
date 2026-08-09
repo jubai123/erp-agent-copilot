@@ -10,6 +10,18 @@ venv/
 
 # Environment
 .env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# Tool caches / local state
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.code-review-graph/
 
 # IDE
 .vscode/
