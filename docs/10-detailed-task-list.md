@@ -1492,11 +1492,30 @@
 **目标**：按 V6 设计文档完成完整评测集。
 
 **交付物**：
-- `evals/datasets/`（40 Tool Retrieval + 40 RAG + 50 Planning + 25 Recovery + 25 Security + 20 Failure）
+- `evals/datasets/tool_retrieval_40.json`（✅ 40 条，tool-001..040）
+- `evals/datasets/knowledge_rag_40.json`（✅ 40 条，rag-001..040）
+- `evals/datasets/planning_50.json`（✅ 50 条，plan-001..050）
+- `evals/datasets/recovery_25.json`（✅ 25 条，rec-001..025）
+- `evals/datasets/failure_20.json`（✅ 20 条，fail-001..020）
+- `evals/datasets/security_25.json`（✅ 25 条，复用 5.10 已提交文件，不计新改动）
+- `tests/unit/evals/test_datasets_200.py`（✅ 已实现，24 用例）
 
 **验收标准**：
-- 6 类共 200 条，每条可独立执行
-- 期望结果可量化比
+- ✅ 6 类共 200 条，每条可独立执行（40+40+50+25+25+20=200，case_id 文件内唯一）
+- ✅ 期望结果可量化比（expected_tool / should_answer / steps / expected_action / expected_behavior / expected_duplicate_writes / expected 全部机器可断言）
+- ✅ 每条用例锚定权威来源：9 个 V6 工具名、`(domain, action)` 映射、23 个知识库 document_id、模拟器种子数据（6 商品 / 5 供应商 / 10 区域 / 库存量）
+
+**落地细节**：全部 200 条由 `tests/unit/evals/test_datasets_200.py` 做结构校验与领域锚定（无 LLM、无网络）。分布：Tool Retrieval 40 条覆盖 9 工具、11 条 hard_negative、查询意图（query/check_stock）绝不期望写工具；Knowledge RAG 40 条沿用 `datasets/eval/retrieval_queries.yaml` v2 人工标注映射（34 可答 + 6 无答案拒答，无答案 relevant_docs 为空）；Planning 50 条 = 20 单步 + 30 多步，多步用 `$N.param` 编码计划 DAG（校验器断言引用只指向先前步骤、首步无前向依赖），createOrder 数量全部 ≤ 对应库存；Recovery 25 条覆盖 ask_missing(12)/confirm_conflict(5)/retry(4)/reject(4)，动作与缺参/冲突字段自洽（ask_missing 必有 missing_params 且 conflict 为 null）；Failure 20 条覆盖 7 类场景（worker_crash/tool_timeout/tool_5xx/tool_429/user_cancel/deadline/reconciliation），worker_crash 与 reconciliation 断言 expected_duplicate_writes=0。数据集 drift（改了种子数据或工具名）会被测试在 CI 拦下。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 为什么"可量化"先于"准确" | 评测集先要每个期望结果能机器断言（工具名、布尔、枚举、数量），LLM 评分器（6.6 harness）才站得住；否则"答得好不好"无法复现 |
+| 人工标注映射 vs 生成式造数据 | RAG 的 relevant_docs 沿用 retrieval_queries.yaml 的 v2 人工标注，可答/拒答分开；生成式造数据容易自我循环（LLM 造题又 LLM 评） |
+| 用 `$N.param` 编码计划 DAG | 多步规划用例用 `$1.product_id` 引用前一步输出，校验器反推依赖合法性（只能向后引用），数据集即"可执行计划断言" |
+| 领域锚定 = 数据集防漂移 | 用例里的商品名/区域/库存量全部指向种子数据常量，种子一改测试即红，避免"评测跑过但域名不存在"的假绿 |
+| 无答案拒答单独成类 | should_answer=false 的 6 条用于无答案拒答率指标；相关文档为空是硬性约定，防止拒答用例偷偷配了文档 |
+| 一个测试文件校验全部六类 | 24 个用例统一 schema、枚举、种子锚定与计数；后续增删用例改计数，测试强制同步 |
 
 ---
 

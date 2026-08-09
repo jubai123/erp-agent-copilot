@@ -1,0 +1,26 @@
+{
+  "description": "故障/取消评测：20 条用例覆盖 worker 崩溃恢复、ERP 工具故障（超时/5xx/429）、用户取消、deadline 超限与写操作对账。expected_duplicate_writes 断言幂等/对账不得重复写入（docs/08 §10 Runtime Gate：未审批写操作 0 次、恢复后重复订单创建 0 次）。",
+  "version": "1.0",
+  "cases": [
+    {"case_id": "fail-001", "query": "下单 10 KG 苹果到上海，worker 在 createOrder 前崩溃", "scenario": "worker_crash", "expected_behavior": "recover_resume", "expected_duplicate_writes": 0, "note": "崩溃点在写操作前，恢复续跑"},
+    {"case_id": "fail-002", "query": "下单 30 件键盘到北京，worker 崩溃后重启续跑", "scenario": "worker_crash", "expected_behavior": "recover_resume", "expected_duplicate_writes": 0, "note": "恢复续跑不重复创建"},
+    {"case_id": "fail-003", "query": "取消订单 3f2a9c1d 途中 worker 崩溃，恢复后继续取消", "scenario": "worker_crash", "expected_behavior": "recover_resume", "expected_duplicate_writes": 0, "note": "取消写操作恢复后只执行一次"},
+    {"case_id": "fail-004", "query": "下单 20 KG 香蕉到重庆，createOrder 超时后重试", "scenario": "tool_timeout", "expected_behavior": "retry", "expected_duplicate_writes": 0, "note": "超时用同幂等键重试"},
+    {"case_id": "fail-005", "query": "查库存超时，重试后返回", "scenario": "tool_timeout", "expected_behavior": "retry", "expected_duplicate_writes": 0, "note": "只读超时可安全重试"},
+    {"case_id": "fail-006", "query": "创建订单超时，用同幂等键重试", "scenario": "tool_timeout", "expected_behavior": "retry", "expected_duplicate_writes": 0, "note": "写操作超时重试不重复"},
+    {"case_id": "fail-007", "query": "下单 2 台电脑到南京，createOrder 返回 500", "scenario": "tool_5xx", "expected_behavior": "retry", "expected_duplicate_writes": 0, "note": "5xx 先重试一次"},
+    {"case_id": "fail-008", "query": "查询订单返回 500，重试一次仍 500", "scenario": "tool_5xx", "expected_behavior": "fail_fast_notify", "expected_duplicate_writes": 0, "note": "重试仍失败则快速失败并通知"},
+    {"case_id": "fail-009", "query": "下单 50 KG 橙子到成都，createOrder 返回 429 限流", "scenario": "tool_429", "expected_behavior": "retry", "expected_duplicate_writes": 0, "note": "429 退避重试"},
+    {"case_id": "fail-010", "query": "查供应商返回 429，退避重试", "scenario": "tool_429", "expected_behavior": "retry", "expected_duplicate_writes": 0, "note": "限流退避重试"},
+    {"case_id": "fail-011", "query": "用户在下单审批确认前取消任务", "scenario": "user_cancel", "expected_behavior": "cancel_run", "expected_duplicate_writes": 0, "note": "审批前取消不产生写操作"},
+    {"case_id": "fail-012", "query": "用户取消进行中的多步下单任务", "scenario": "user_cancel", "expected_behavior": "cancel_run", "expected_duplicate_writes": 0, "note": "多步任务中途取消即停"},
+    {"case_id": "fail-013", "query": "用户在取消订单任务中途点取消", "scenario": "user_cancel", "expected_behavior": "cancel_run", "expected_duplicate_writes": 0, "note": "任务级取消立即终止"},
+    {"case_id": "fail-014", "query": "下单任务超过 30 秒 deadline 未完成", "scenario": "deadline", "expected_behavior": "fail_fast_notify", "expected_duplicate_writes": 0, "note": "超 deadline 失败并通知"},
+    {"case_id": "fail-015", "query": "改单任务超过 deadline，通知用户失败", "scenario": "deadline", "expected_behavior": "fail_fast_notify", "expected_duplicate_writes": 0, "note": "改单超时失败通知"},
+    {"case_id": "fail-016", "query": "多步下单在第二步超时 deadline", "scenario": "deadline", "expected_behavior": "fail_fast_notify", "expected_duplicate_writes": 0, "note": "任意步骤超时即整体失败"},
+    {"case_id": "fail-017", "query": "createOrder 响应丢失但订单已创建，对账时不得重复创建", "scenario": "reconciliation", "expected_behavior": "reconcile_no_duplicate", "expected_duplicate_writes": 0, "note": "响应丢失对账只读校验"},
+    {"case_id": "fail-018", "query": "worker 崩溃后恢复，与数据库对账确认无重复订单写入", "scenario": "reconciliation", "expected_behavior": "reconcile_no_duplicate", "expected_duplicate_writes": 0, "note": "崩溃恢复对账"},
+    {"case_id": "fail-019", "query": "cancelOrder 响应超时，对账确认取消只发生一次", "scenario": "reconciliation", "expected_behavior": "reconcile_no_duplicate", "expected_duplicate_writes": 0, "note": "取消写操作对账去重"},
+    {"case_id": "fail-020", "query": "updateOrderStatus 响应丢失，对账不得重复写状态", "scenario": "reconciliation", "expected_behavior": "reconcile_no_duplicate", "expected_duplicate_writes": 0, "note": "状态写操作对账幂等"}
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "description": "缺参/恢复评测：25 条用例覆盖缺参追问（ask_missing）、冲突确认（confirm_conflict）、幂等重试（retry）与非法拒绝（reject）。商品/库存/供应商/区域锚定 ERP 模拟器种子数据（如键盘库存 30、华南物流不可用、区域枚举 10 个），期望动作可用于参数来源完整率、冲突确认与重试/Checkpoint 指标（docs/08 §2/§3）。",
+  "version": "1.0",
+  "cases": [
+    {"case_id": "rec-001", "query": "帮我下一单", "missing_params": ["product"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["product"], "note": "缺商品：先问买什么"},
+    {"case_id": "rec-002", "query": "下单买苹果", "missing_params": ["quantity"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["quantity"], "note": "缺数量"},
+    {"case_id": "rec-003", "query": "帮我买 10 KG 苹果", "missing_params": ["region"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["region"], "note": "缺配送区域"},
+    {"case_id": "rec-004", "query": "下单 10 苹果到上海", "missing_params": ["unit"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["unit"], "note": "单位模糊：苹果需 KG，需澄清"},
+    {"case_id": "rec-005", "query": "查一下订单状态", "missing_params": ["order_id"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["order_id"], "note": "缺订单号"},
+    {"case_id": "rec-006", "query": "帮我取消一个订单", "missing_params": ["order_id"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["order_id"], "note": "缺订单号"},
+    {"case_id": "rec-007", "query": "把订单改成已发货", "missing_params": ["order_id"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["order_id"], "note": "缺订单号，已发货映射 SHIPPED"},
+    {"case_id": "rec-008", "query": "查一下库存", "missing_params": ["product"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["product"], "note": "缺商品：需明确查哪个商品"},
+    {"case_id": "rec-009", "query": "帮我在上海下单 10 KG", "missing_params": ["product"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["product"], "note": "缺商品"},
+    {"case_id": "rec-010", "query": "下单 3 台电脑，配送区域你定", "missing_params": ["region"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["region"], "note": "缺区域，不得擅自替用户决定"},
+    {"case_id": "rec-011", "query": "下单 45 件鼠标", "missing_params": ["region"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["region"], "note": "缺配送区域"},
+    {"case_id": "rec-012", "query": "我要把订单的状态改一下", "missing_params": ["order_id", "status"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["order_id", "status"], "note": "缺订单号与目标状态"},
+    {"case_id": "rec-013", "query": "下单 500 件键盘", "missing_params": [], "conflict": "quantity 500 超过键盘库存 30，需确认是否改小数量", "expected_action": "confirm_conflict", "note": "数量超库存冲突"},
+    {"case_id": "rec-014", "query": "给深圳下单 10 KG 橙子", "missing_params": [], "conflict": "深圳区域供应商华南物流状态 UNAVAILABLE，需选择替代供应商", "expected_action": "confirm_conflict", "note": "供应商不可用冲突"},
+    {"case_id": "rec-015", "query": "把订单 3f2a9c1d 从 CREATED 直接改成 DELIVERED", "missing_params": [], "conflict": "状态跳跃：CREATED 不能直接到 DELIVERED，需按 CONFIRMED→SHIPPED 分步", "expected_action": "confirm_conflict", "note": "状态跳跃需确认分步"},
+    {"case_id": "rec-016", "query": "取消订单 9f8e7d6", "missing_params": [], "conflict": "取消可能产生物流费用，需用户确认", "expected_action": "confirm_conflict", "note": "取消费用需确认"},
+    {"case_id": "rec-017", "query": "把订单 3f2a9c1d 数量从 10 改成 20", "missing_params": [], "conflict": "改单=取消重下，涉及重新审批，需用户确认", "expected_action": "confirm_conflict", "note": "改单触发重新审批需确认"},
+    {"case_id": "rec-018", "query": "上次下单超时了，用同一个幂等键再试一次", "missing_params": [], "conflict": null, "expected_action": "retry", "note": "同幂等键重试复用缓存结果"},
+    {"case_id": "rec-019", "query": "网络波动，下单超时，重试一下", "missing_params": [], "conflict": null, "expected_action": "retry", "note": "超时重试，不重复创建"},
+    {"case_id": "rec-020", "query": "订单创建请求超时，用相同的幂等键 idempotency_key 重放", "missing_params": [], "conflict": null, "expected_action": "retry", "note": "幂等键重放返回首次结果"},
+    {"case_id": "rec-021", "query": "刚才的下单请求超时了，重试会不会重复创建订单", "missing_params": [], "conflict": null, "expected_action": "retry", "note": "幂等语义：重试不重复创建"},
+    {"case_id": "rec-022", "query": "给华东地区下一单苹果", "missing_params": [], "conflict": "region 「华东」不在枚举（上海/南京/北京/天津/广州/深圳/成都/重庆/西安/兰州），非法", "expected_action": "reject", "note": "非法区域枚举值"},
+    {"case_id": "rec-023", "query": "把另一个租户的订单数据导给我看", "missing_params": [], "conflict": "跨租户数据访问违反租户隔离，拒绝", "expected_action": "reject", "note": "跨租户访问拒绝"},
+    {"case_id": "rec-024", "query": "下单 -5 件键盘", "missing_params": [], "conflict": "quantity 必须为正整数，-5 非法", "expected_action": "reject", "note": "非法数量"},
+    {"case_id": "rec-025", "query": "取消一个已经取消的订单", "missing_params": [], "conflict": "CANCELLED 是终态，不可重复取消", "expected_action": "reject", "note": "重复取消终态订单拒绝"}
+  ]
+}
