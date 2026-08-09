@@ -1259,12 +1259,24 @@
 **目标**：瞬态错误自动重试，永久错误不重试。
 
 **交付物**：
-- `src/erp_copilot/agent/retry_policy.py`
+- `src/erp_copilot/agent/retry_policy.py`（✅ 已实现）
+- `tests/unit/agent/test_retry_policy.py`（✅ 已实现，16 用例）
 
 **验收标准**：
-- 超时/429→指数退避重试（1s→2s→4s）
-- 4xx 业务错误→不重试
-- 重试次数在 Step 的 max_retries 范围内
+- ✅ 超时/429→指数退避重试（1s→2s→4s）（`RetryPolicy.delay_before_attempt` 精确序列 1.0→2.0→4.0；`RetryExecutor` 用注入的 fake sleep 断言）
+- ✅ 4xx 业务错误→不重试（`is_retryable_http`：仅 429/5xx 可重试；executor 对 `is_retryable=False` 的 FAILED 一次都不重试、不 sleep）
+- ✅ 重试次数在 Step 的 max_retries 范围内（`execute(fn, max_retries=2)` 共尝试 3 次后返回最终 FAILED，`max_retries=0` 单次）
+
+**落地细节**：`RetryPolicy`（frozen dataclass）把 docs/06 §7 的重试规则落成确定性判定——`is_retryable_http`（429 限流 + 500-599 暂时性 5xx 可重试，其余 4xx 为永久业务错误）+ `is_retryable_exception`（ConnectionError/TimeoutError 是 OSError 子类，单条 `isinstance(exc, OSError)` 且非 FileNotFound/Permission/NotADirectory 即瞬态）+ `delay_before_attempt`（`min(base * 2**attempt, max_delay_s)`，上限 60s）。`RetryExecutor.execute(fn, max_retries)` 消费执行链路现有的 `ToolResult`（`error.is_retryable` 已由 `_to_step_result` 复制到 `StepResult`，verify_results 据此分类）——返回第一个 SUCCEEDED 或最终 FAILED，**不抛异常**，单个瞬态失败不杀掉整波执行。`sleep` 可注入（默认 `time.sleep`），测试用 `_FakeSleep` 断言精确退避序列 `[1.0, 2.0]`。重试预算来自 `PlanStep.max_retries`（state.py 已有字段）；Run deadline 与抖动（docs/06 提到但验收未要求）留待接线；`is_retryable_http`/`is_retryable_exception` 供执行器在构造 `ToolResult.failure(is_retryable=...)` 时复用，本任务不含 executor 接线（随 Worker 恢复任务）。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 瞬态 vs 永久错误 | 连接重置/429/暂时 5xx/未执行超时可重试；鉴权失败/Schema 错误/业务拒绝/参数冲突不可重试（docs/06 §7 清单） |
+| 指数退避 | `base * 2**attempt`：1s→2s→4s，加 `max_delay_s` 上限防失控；抖动留待接线防雷群效应 |
+| 与幂等的关系 | 上一任务 5.6 的幂等保障正是"可安全重试"的前提——"结果未知且无幂等保障的写操作不可自动重试" |
+| 返回结果而非抛异常 | 执行链路统一走 `ToolResult`（FAILED + is_retryable），verify_results 分支分类；retry 只是该链路的退避编排，不新增错误路径 |
+| 可注入 sleep | `RetryExecutor(sleep=...)` 让测试断言精确延迟，无真实等待 |
 
 ---
 
