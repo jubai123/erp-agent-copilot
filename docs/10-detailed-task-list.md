@@ -1630,7 +1630,7 @@
 
 ---
 
-## 任务 6.10：完成文档和演示
+## 任务 6.10：完成文档和演示 ✅
 
 **目标**：补全项目文档和演示视频。
 
@@ -1638,6 +1638,17 @@
 - `docs/product.md`、`docs/architecture.md`、`docs/api-contracts.md`
 - `docs/evaluation.md`、`docs/threat-model.md`、`docs/benchmark.md`
 - `README.md`（含架构图、一键启动说明）
+
+**完成情况**：
+- 7 个交付文件全部创建（`docs/product.md`、`docs/architecture.md`、`docs/api-contracts.md`、`docs/evaluation.md`、`docs/threat-model.md`、`docs/benchmark.md`、根 `README.md`），已提交。
+- 文档诚实标注三处未接线点：`/v1/knowledge/search` 为 STUB；Celery worker `execute_run` 为简化直连路径、未接入完整 LangGraph 状态机；`evals/run_all.py` 六分类中 `tool_retrieval`/`security` 跑真实逻辑、其余四个为 `golden_baseline`。
+- `docs/benchmark.md` 只写真实测量值：42 条查询消融（Vector-only / Hybrid / Hybrid+Rerank 的 Recall@1/5、MRR、NDCG@5、P@5、P50/P95）、故障注入 3/3 PASS、单元测试 874 通过、mypy 55 文件干净；负载测试明确标"待实测"。
+
+**验收标准**：
+- [x] 六份交付文档 + 根 README 齐全
+- [x] README 含 mermaid 架构图与一键启动命令（docker compose + 四个 uvicorn/celery 进程）
+- [x] 基准数字全部可复现（`docs/benchmark.md` §6 给出复现命令）
+- [x] 未测量项（负载 P50/P95、安全拦截率）标注"待实测/待列出"，不编造数字
 
 ---
 
