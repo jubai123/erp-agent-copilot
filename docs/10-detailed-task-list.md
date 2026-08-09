@@ -1312,12 +1312,25 @@
 **目标**：无法自动恢复的失败进入人工处理队列。
 
 **交付物**：
-- Run 的 FAILED 状态 + 失败原因 + 建议操作
+- `Run` 增加 `failure_code` / `failure_reason` / `suggested_action` 三列 + 迁移 `7c8d9e0f1a2b`（✅ 已实现）
+- `src/erp_copilot/application/failure_queue.py`（✅ 已实现）
+- `tests/unit/application/test_failure_queue.py`（✅ 已实现，11 用例）
 
 **验收标准**：
-- 永久失败→Run FAILED，记录具体错误
-- 对账失败→标记为需要人工介入
-- 失败信息足够让开发者定位问题
+- ✅ 永久失败→Run FAILED，记录具体错误（`FailureQueue.record(error_code="PERMANENT_TOOL_ERROR", reason, suggested_action)`：置 `status="FAILED"` + 三字段 + `completed_at` + `version+=1`）
+- ✅ 对账失败→标记为需要人工介入（`record(error_code="RECOVERY_RECONCILIATION_REQUIRED", ...)` 落入 `list_needing_intervention`，即 5.8 的对账场景落地）
+- ✅ 失败信息足够让开发者定位问题（机器可读 `failure_code` + 人类可读 `failure_reason` + `suggested_action` 落库，并追加不可变 `RUN_FAILED` 事件，payload 带全部三字段）
+
+**落地细节**：`FailureQueue`（注入 session + 可注入 clock，与 CheckpointSaver/IdempotencyStore 同风格）暴露两个方法——`record(run_id, tenant_id, *, error_code, reason, suggested_action)` 按 `(id, tenant_id)` 加载（租户隔离：t2 不能 fail t1 的 run），COMPLETED/CANCELLED 拒绝翻转（`CopilotError(code="INVALID_RUN_TRANSITION")`，防把已成功 run 打成失败），否则置 FAILED + 三字段 + `completed_at` + `version+=1`，追加 `RUN_FAILED` 事件（`sequence` 取 `max+1`，docs/03 §3 要求状态变化必须追加不可变 run_event），提交；`list_needing_intervention(tenant_id)` 返回 `status=FAILED` 且 `failure_reason` 非空的 run，按 `completed_at` 倒序（可注入 clock 保证确定性），即"人工处理队列"。`error_code` 复用 docs/03 §9 错误码清单（PERMANENT_TOOL_ERROR / RECOVERY_RECONCILIATION_REQUIRED / LLM_OUTPUT_ERROR / DEADLINE_EXCEEDED...）。Run 锁/CAS 属 5.8 Worker 流程，本服务只做`version+=1`沿用既有惯例；Worker 接线（把 execute_run 的 FAILED 分支换成调用本服务）留给接线任务。迁移 `7c8d9e0f1a2b` 只加 3 个 nullable 列，down_revision=`6b5c4d3e2f10`（head）。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 失败队列 = 查询面而非新表 | "队列"就是 `status=FAILED` 且带 `failure_reason` 的 Run 集合，按完成时间倒序——不加新表、不加后台进程，查就是队头 |
+| 诊断三要素 | `failure_code`（机器可读、可路由）、`failure_reason`（人类可读、定位问题）、`suggested_action`（给操作员的下一步）——docs/03 §9 错误码清单是 code 的取值来源 |
+| 状态机安全 | COMPLETED/CANCELLED 是终态，拒绝翻转（`INVALID_RUN_TRANSITION`），防止已成功 run 被误判失败；FAILED 可重录（补充详情） |
+| 事件审计 | docs/03 §3 要求每次状态变化追加不可变 run_event——失败详情除了落在 run 行，还写进 `RUN_FAILED` 事件（`sequence` 单调递增），审计不依赖业务表 |
+| 与 5.8 关系 | 5.8 把"状态不明的写 Step"标成 `RECOVERY_RECONCILIATION_REQUIRED`，本任务把它落成 Run FAILED + 人工介入标记——对账失败即入人工队列 |
 
 ---
 

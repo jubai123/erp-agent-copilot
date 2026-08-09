@@ -244,6 +244,11 @@ class Run(Base):
     version: Mapped[int] = mapped_column(default=1)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Failure detail (docs/03 §9 error codes) — populated when the run fails
+    # beyond auto-recovery and enters the human intervention queue (task 5.9).
+    failure_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suggested_action: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
