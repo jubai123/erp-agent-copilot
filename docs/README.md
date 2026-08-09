@@ -30,6 +30,7 @@ V6 不在 V5 的 Flask、MongoDB 和进程内任务模型上继续堆功能，�
 - [10-detailed-task-list.md](10-detailed-task-list.md)：精细化开发计划与任务列表（含教学要点）。
 - [11-architecture-decisions.md](11-architecture-decisions.md)：架构决策记录（ADR），每个决策含原因、取舍、评测和保留选项。
 - [12-resume-and-pitch.md](12-resume-and-pitch.md)：[REDACTED]项目描述（含实测数字）、10 分钟讲解大纲和常见[REDACTED] Q&A。
+- [13-final-delivery-summary.md](13-final-delivery-summary.md)：最终交付总结——72/76 任务完成、实测数字、4 项未完成与诚实边界。
 
 ### 数据集构建
 

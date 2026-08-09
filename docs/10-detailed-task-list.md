@@ -1041,6 +1041,8 @@
 - 超预算时先压缩工具结果和历史
 - 安全策略和审批信息不压缩
 
+> **状态：❌ 未完成（v1.1 待办）**。`src/erp_copilot/memory/context_budget.py` 未创建；`memory/` 下仅有 `checkpoint.py`。
+
 ---
 
 ## 任务 4.14：SSE 事件流
@@ -1054,6 +1056,8 @@
 - 客户端连接 SSE→收到 QUEUED→PLANNING→EXECUTING→...事件
 - 客户端断开不影响 Worker
 - 重连后可以收到后续事件
+
+> **状态：❌ 未完成（v1.1 待办）**。`runs.py` 仅有 create/get/approve 三个端点，无 `GET /v1/runs/{run_id}/events`。
 
 **教学要点**：
 | 概念 | 讲解内容 |
@@ -1077,6 +1081,8 @@
 - 超时→Run 状态变为 EXPIRED
 - 取消/超时不产生脏数据
 
+> **状态：❌ 未完成（v1.1 待办，部分）**。`AgentState.deadline_at` 字段已加（state.py），但无 `POST /v1/runs/{run_id}/cancel` 端点、无节点执行 deadline 检查 / EXPIRED 状态流转。
+
 ---
 
 ## 任务 4.16：首个只读场景端到端演示
@@ -1085,6 +1091,8 @@
 
 **交付物**：
 - 端到端测试：输入"查苹果库存并推荐供应商"→Agent 正确执行两个 READ 步骤
+
+> **状态：❌ 未完成（v1.1 待办）**。`tests/e2e/test_happy_path.py` 是阶段二的 API→Worker 直连路径冒烟，未走完整 LangGraph 图；Worker `execute_run` 仍是简化直连（见 README 诚实边界）。
 
 ---
 
