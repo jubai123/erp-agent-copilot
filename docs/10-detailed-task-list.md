@@ -1524,12 +1524,27 @@
 **目标**：一键运行所有评测并输出报告。
 
 **交付物**：
-- `evals/harness.py`
+- `evals/harness.py`（✅ runner 无关编排框架：加载数据集、注入 runner、聚合得分、失败日志、JSON 报告）
+- `evals/run_all.py`（✅ 6 个类别 runner + CLI 入口）
+- `tests/unit/evals/test_harness.py`（✅ 已实现，12 用例，假 runner 隔离框架）
+- `tests/unit/evals/test_run_all.py`（✅ 已实现，7 用例，真实 runner 跑真实 200 条）
 
 **验收标准**：
-- `uv run evals/run_all.py` 运行全部 200 条
-- 输出每类得分和总体得分
-- 失败案例有详细日志
+- ✅ `uv run evals/run_all.py` 运行全部 200 条（6 类 40+40+50+25+25+20，无 LLM/DB/网络，全部离线可复现）
+- ✅ 输出每类得分和总体得分（`primary_score` 按用例数加权成总体分；每类带 `mode` 标注来源）
+- ✅ 失败案例有详细日志（`failures` 含 category/case_id/expected/actual/detail；文本报告逐条列出）
+
+**落地细节**：harness 与 runner 解耦——runner 只返回 `{mode, primary_score, metrics, per_case}`，`run_category` 补齐 category/num_cases，`run_all` 按 `DATASET_SPECS` 顺序加载 6 个数据集并逐类 try/except 隔离（单类崩溃记入 `errors` 且该类计 0 分，绝不中断整轮）。run_all.py 的 6 个 runner 诚实标注 provenance：`tool_retrieval` 用 `filter_candidates` 的第一级 DOMAIN_TOOL_MAP 过滤器测"期望工具是否被召回"（40 条全部命中=1.0，锁定"9 工具规模下确定性分类学足够"这一不变量）；`security` 复用 5.10 的真实守卫（伪 DNS，拦截率 1.0/误报 0）；`knowledge_rag`/`planning`/`recovery`/`failure` 因 agent 运行时尚未接线，用 golden baseline（oracle 返回数据集期望答案）跑通管道，`mode` 字段明确标注，黄金 100% 不会被误当真实模型分；后续任务接真实 pipeline 时只换 runner 不动 harness。`score_retrieved` 复用 retrieval_scorer 算 recall@5/ndcg@5。报告 JSON 落盘 `evals/reports/`，`ensure_ascii=False` 保留中文。
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 编排层与执行层解耦 | harness 只做"加载→注入→聚合→报告"，不知道任何类别的评分细节；runner 是唯一知晓数据集 schema 的地方，替换 runner 即换评测对象，框架零改动 |
+| 失败隔离而非整体崩溃 | 单类 runner 抛异常记入 `errors`、该类按 0 分计入总体——评测跑完比"跑一半就断"更有诊断价值；同 Go 的 panic/recover 哲学，异于 Python 默认的快速失败 |
+| 为什么要有 mode 标注 | docs/08 §1 要求指标可复现、不虚报；黄金 baseline 的 100% 与真实模型 100% 天差地别，provenance 字段让报告读者一眼分辨"测的是管道还是模型" |
+| 总体分按用例数加权 | 200 条里各类数量不同（40/40/50/25/25/20），按用例数加权让大类别主导总体分，避免小类别的满分虚高总体 |
+| golden baseline 的价值边界 | 它验证的是"harness 从加载到报告整条链路正确"，不是系统能力；这是 6.9 故障注入前唯一能端到端跑通全 200 条的骨架 |
+| 确定性 runner 才是真指标 | tool_retrieval 的 recall@filter=1.0 是真实逻辑（DOMAIN_TOOL_MAP 覆盖全部期望工具）的不变量，测试锁死它，数据集或过滤器漂移即红 |
 
 ---
 
