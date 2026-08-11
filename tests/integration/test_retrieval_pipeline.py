@@ -103,6 +103,8 @@ def _ingest_doc(session, tenant_id: str, source: str, content: str) -> str:
     # 5. Store
     store_embeddings(session, doc.id, embedded)
 
+    # 6. Commit so a different session (e.g. the API route's) can read it.
+    session.commit()
     return doc.id
 
 
@@ -215,3 +217,76 @@ DELIVERED 状态不可取消，应引导用户走退货流程。
 
         results = search_similar(session, [0.1] * 1536, "tenant-empty", top_k=5)
         assert results == []
+
+
+class TestKnowledgeSearchEndpoint:
+    """POST /v1/knowledge/search runs the real pipeline against the DB.
+
+    Providers are pinned to the deterministic implementations so the test
+    exercises the full DB-backed chain without any external API call.
+    """
+
+    SAMPLE_DOC = """# 订单状态机
+
+## 合法转换
+
+CREATED → CONFIRMED → SHIPPED → DELIVERED。
+
+### 取消规则
+
+CREATED 和 CONFIRMED 状态的订单可以无责取消。
+DELIVERED 状态不可取消，应引导用户走退货流程。
+"""
+
+    @pytest.fixture
+    def client(self, monkeypatch: pytest.MonkeyPatch):
+        from fastapi.testclient import TestClient
+
+        from apps.api.main import create_app
+        from erp_copilot.retrieval.pipeline import (
+            DeterministicEmbeddingProvider,
+            DeterministicReranker,
+        )
+
+        monkeypatch.setattr(
+            "apps.api.routes.knowledge._build_providers",
+            lambda: (DeterministicEmbeddingProvider(), DeterministicReranker()),
+        )
+        return TestClient(create_app())
+
+    def test_search_returns_ingested_chunks(self, session, client) -> None:
+        _ingest_doc(session, "tenant-e2e", "order-lifecycle.md", self.SAMPLE_DOC)
+
+        response = client.post(
+            "/v1/knowledge/search",
+            json={"query": "订单状态", "tenant_id": "tenant-e2e"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["results"]
+        assert any(r["source"] == "order-lifecycle.md" for r in body["results"])
+        assert any(r["score"] > 0 for r in body["results"])
+        assert "参考资料" in body["citations"]
+
+    def test_search_respects_tenant_isolation(self, session, client) -> None:
+        _ingest_doc(session, "tenant-a", "rules-a.md", "# 规则A\n\n内容A")
+        _ingest_doc(session, "tenant-b", "rules-b.md", "# 规则B\n\n内容B")
+
+        response = client.post(
+            "/v1/knowledge/search",
+            json={"query": "规则", "tenant_id": "tenant-a"},
+        )
+
+        sources = {r["source"] for r in response.json()["results"]}
+        assert sources == {"rules-a.md"}
+
+    def test_empty_knowledge_base_returns_empty(self, session, client) -> None:
+        response = client.post(
+            "/v1/knowledge/search",
+            json={"query": "订单", "tenant_id": "tenant-empty"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["results"] == []
+        assert response.json()["citations"] == ""
