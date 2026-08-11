@@ -17,7 +17,8 @@ venv/
 logs/
 *.log
 
-# Generated load-test reports (reproducible via the documented locust command)
+# Generated eval/load-test reports (reproducible via the documented commands)
+evals/reports/
 tests/performance/reports/
 
 # Tool caches / local state

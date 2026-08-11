@@ -39,7 +39,21 @@ logger = get_task_logger(__name__)
 # Tool schemas the deterministic planner can emit (docs/05 simulator tools).
 _TOOL_SCHEMAS: dict[str, ToolSpec] = {
     "getProductByName": ToolSpec(name="getProductByName", required_params=["name"]),
+    "getProductById": ToolSpec(name="getProductById", required_params=["product_id"]),
+    "getProductSubstitutesByName": ToolSpec(
+        name="getProductSubstitutesByName", required_params=["name"]
+    ),
+    "querySuppliersByDeliveryRegion": ToolSpec(
+        name="querySuppliersByDeliveryRegion", required_params=["region"]
+    ),
     "getSupplierByStatus": ToolSpec(name="getSupplierByStatus", required_params=["status"]),
+    "getOrderByOrderId": ToolSpec(name="getOrderByOrderId", required_params=["order_id"]),
+    "createOrder": ToolSpec(
+        name="createOrder",
+        required_params=["product_id", "supplier_id", "quantity", "region"],
+    ),
+    "updateOrderStatus": ToolSpec(name="updateOrderStatus", required_params=["order_id", "status"]),
+    "cancelOrder": ToolSpec(name="cancelOrder", required_params=["order_id"]),
 }
 
 # Runtime AgentStatus -> persisted Run.status. create_run and the pre-LangGraph

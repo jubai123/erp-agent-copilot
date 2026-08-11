@@ -2,7 +2,8 @@
 
 Runs the actual run_all.py wiring against the real 200-case datasets. No LLM,
 no network: tool_retrieval uses the deterministic candidate_filter, security
-uses the real guards with faked DNS, and planning/recovery/failure run a
+uses the real guards with faked DNS, and planning drives the real
+classify_intent → build_plan_from_intent chain; recovery/failure still run a
 golden baseline oracle. knowledge_rag is a real retrieval runner that needs a
 pgvector database, so the unit suite injects a fake for that category (the
 real runner is exercised by tests/integration/test_retrieval_pipeline.py and
@@ -87,12 +88,13 @@ class TestRealRunners:
         assert result["metrics"]["interception_rate"] == 1.0
         assert result["metrics"]["false_positive_rate"] == 0.0
 
-    def test_planning_golden_baseline(self, runners: dict[str, RunnerFn]) -> None:
+    def test_planning_runs_real_deterministic_chain(self, runners: dict[str, RunnerFn]) -> None:
         report = run_all(runners)
         result = report["categories"]["planning"]
-        assert result["mode"] == "golden_baseline"
+        assert result["mode"] == "deterministic"
         assert result["primary_score"] == 1.0
         assert result["metrics"]["multi_step_count"] == 30
+        assert all(pc["passed"] for pc in result["per_case"])
 
     def test_failure_golden_baseline_no_duplicate_violations(
         self, runners: dict[str, RunnerFn]

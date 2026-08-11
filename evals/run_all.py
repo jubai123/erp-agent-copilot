@@ -8,15 +8,16 @@ what it is not:
 
 - ``deterministic`` — real production logic, offline and bit-reproducible:
   tool_retrieval uses candidate_filter's first-level DOMAIN_TOOL_MAP filter;
-  security uses the real guards with faked DNS resolution.
+  security uses the real guards with faked DNS resolution; planning drives the
+  real classify_intent → build_plan_from_intent 9-tool dispatch.
 - ``retrieval_pipeline`` — the real RAG chain (embed → vector → FTS → RRF →
   rerank) against the dedicated test database, using deterministic providers
   so it stays offline and reproducible. Requires a local pgvector database;
   the knowledge base is ingested idempotently from datasets/knowledge.
 - ``golden_baseline`` — an oracle that returns the dataset's expected answer
-  verbatim. planning, recovery, and failure are not yet wired to a live
-  executor, so the golden baseline exercises the harness plumbing
-  end-to-end; swap in the real runner without touching the harness.
+  verbatim. recovery and failure are not yet wired to a live decision module,
+  so the golden baseline exercises the harness plumbing end-to-end; swap in
+  the real runner without touching the harness.
 
 Usage::
 
@@ -33,6 +34,8 @@ from pathlib import Path
 
 import yaml
 
+from erp_copilot.agent.nodes.classify_intent import classify_intent
+from erp_copilot.agent.planner import build_plan_from_intent
 from erp_copilot.tools.candidate_filter import filter_candidates
 from evals.harness import RunnerFn, RunnerOutput, format_report, run_all, write_report
 from evals.scorers.retrieval_scorer import score_retrieved
@@ -279,12 +282,18 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
 
 
 def _planning(cases: list[dict]) -> RunnerOutput:
-    """Golden baseline: oracle returns the dataset's expected step tool sequence."""
+    """Deterministic: run the real classify_intent → build_plan_from_intent chain.
+
+    The tool sequence the 9-tool planner produces must match the dataset's
+    expected steps. mode is "deterministic" — the golden oracle is gone.
+    """
     per_case: list[dict] = []
     multi_step = 0
     for case in cases:
         expected = [step["tool"] for step in case["steps"]]
-        actual = expected
+        intent = classify_intent(case["query"])
+        plan, errors = build_plan_from_intent(intent)
+        actual = [step.tool_name for step in plan.steps] if not errors else []
         passed = actual == expected
         per_case.append(
             {
@@ -292,7 +301,7 @@ def _planning(cases: list[dict]) -> RunnerOutput:
                 "passed": passed,
                 "expected": expected,
                 "actual": actual,
-                "detail": "",
+                "detail": "" if passed else f"planner produced {actual!r}, expected {expected!r}",
             }
         )
         if not case["single_step"]:
@@ -300,7 +309,7 @@ def _planning(cases: list[dict]) -> RunnerOutput:
     n = len(per_case)
     valid = sum(1 for pc in per_case if pc["passed"])
     return {
-        "mode": "golden_baseline",
+        "mode": "deterministic",
         "primary_score": valid / n if n else 0.0,
         "metrics": {
             "plan_valid_rate": valid / n if n else 0.0,

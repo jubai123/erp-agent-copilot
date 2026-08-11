@@ -39,9 +39,25 @@ _REGIONS: tuple[str, ...] = (
 )
 _UNITS: tuple[str, ...] = ("KG", "台", "件")
 
-# order_id is a 12-char lowercase hex string (manifest order_fields).
-_ORDER_ID_RE = re.compile(r"[0-9a-f]{12}")
+# order_id is a lowercase hex string (manifest order_fields says 12 chars; the
+# planning dataset uses shorter ids like 3f2a9c1d / a1b2c3 / 20260809001).
+_ORDER_ID_RE = re.compile(r"[0-9a-f]{6,12}")
+_PRODUCT_ID_RE = re.compile(r"商品\s*(\d+)\s*号|编号\s*(\d+)")
 _QUANTITY_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(" + "|".join(_UNITS) + r")?")
+# New quantity in a modify query ("数量从 10 改成 20" -> 20). Distinct from
+# _QUANTITY_RE, which keeps the *first* number as the original quantity.
+_NEW_QUANTITY_RE = re.compile(r"(?:改成|改为)\s*(\d+)")
+
+# Order-status verbs -> ERP status string (ordered: English tokens win, then
+# the Chinese verb with the more specific meaning first).
+_STATUS_MAP: tuple[tuple[str, str], ...] = (
+    ("SHIPPED", "SHIPPED"),
+    ("DELIVERED", "DELIVERED"),
+    ("CONFIRMED", "CONFIRMED"),
+    ("已发货", "SHIPPED"),
+    ("确认收货", "DELIVERED"),
+    ("确认订单", "CONFIRMED"),
+)
 
 # Intent rules in priority order — first match wins.  Keys stay in sync with
 # datasets/knowledge/skills/intent_skill_map.yaml and candidate_filter.
@@ -50,14 +66,32 @@ _INTENT_RULES: tuple[tuple[tuple[str, ...], str, str, ToolRiskLevel], ...] = (
     (("场景",), "system", "scenario", ToolRiskLevel.READ),
     (("取消", "作废"), "order", "cancel", ToolRiskLevel.WRITE),
     (
-        ("确认订单", "更新订单状态", "标记已发货", "确认收货"),
+        (
+            "确认订单",
+            "更新订单状态",
+            "标记已发货",
+            "标记为已发货",
+            "确认收货",
+            "已发货",
+            "状态改为",
+            "更新为",
+            "改为",
+            "SHIPPED",
+            "DELIVERED",
+            "CONFIRMED",
+        ),
         "order",
         "update_status",
         ToolRiskLevel.WRITE,
     ),
     (("修改订单", "改单", "变更订单"), "order", "modify", ToolRiskLevel.WRITE),
     (("查订单", "查询订单", "订单状态", "订单详情"), "order", "query", ToolRiskLevel.READ),
-    (("下单", "创建订单", "新建订单", "购买", "采购"), "order", "create", ToolRiskLevel.WRITE),
+    (
+        ("下单", "下一单", "创建订单", "新建订单", "购买", "采购", "买"),
+        "order",
+        "create",
+        ToolRiskLevel.WRITE,
+    ),
     (("供应商", "物流", "配送", "发货"), "supplier", "query", ToolRiskLevel.READ),
     (("库存",), "product", "check_stock", ToolRiskLevel.READ),
 )
@@ -99,6 +133,31 @@ def _extract_quantity(query: str) -> tuple[int | float | None, str | None]:
     return quantity, match.group(2)
 
 
+def _extract_product_id(query: str) -> int | None:
+    match = _PRODUCT_ID_RE.search(query)
+    if match is None:
+        return None
+    return int(match.group(1) if match.group(1) is not None else match.group(2))
+
+
+def _is_substitute(query: str) -> bool:
+    return any(token in query for token in ("替代品", "类似", "相似"))
+
+
+def _extract_status(query: str) -> str | None:
+    for token, status in _STATUS_MAP:
+        if token in query:
+            return status
+    return None
+
+
+def _extract_new_quantity(query: str) -> int | None:
+    match = _NEW_QUANTITY_RE.search(query)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
 def _extract_entities(query: str) -> dict[str, Any]:
     entities: dict[str, Any] = {}
     for name in _PRODUCT_NAMES:
@@ -109,11 +168,25 @@ def _extract_entities(query: str) -> dict[str, Any]:
         if region in query:
             entities["region"] = region
             break
-    quantity, unit = _extract_quantity(query)
-    if quantity is not None:
-        entities["quantity"] = quantity
-    if unit is not None:
-        entities["unit"] = unit
+    product_id = _extract_product_id(query)
+    if product_id is not None:
+        entities["product_id"] = product_id
+    if _is_substitute(query):
+        entities["substitute"] = True
+    status = _extract_status(query)
+    if status is not None:
+        entities["status"] = status
+    new_quantity = _extract_new_quantity(query)
+    if new_quantity is not None:
+        entities["new_quantity"] = new_quantity
+    # product_id digits must not leak as quantity ("查商品 4 号" -> product_id
+    # 4, not quantity 4).
+    if "product_id" not in entities:
+        quantity, unit = _extract_quantity(query)
+        if quantity is not None:
+            entities["quantity"] = quantity
+        if unit is not None:
+            entities["unit"] = unit
     return entities
 
 
@@ -121,6 +194,11 @@ def classify_intent(query: str) -> IntentClassification:
     """Deterministic (domain, action) classification with explicit entities."""
     masked, order_id = _mask_order_ids(query)
     domain, action, risk = _match_intent(masked)
+    # A query that names a concrete order id but matched no rule is order
+    # domain — e.g. "订单 7c9e1d5 的金额" (plan-018) falls to the fallback
+    # otherwise and would be misread as a product query.
+    if order_id is not None and (domain, action) == ("product", "query"):
+        domain, action, risk = "order", "query", ToolRiskLevel.READ
     entities = _extract_entities(masked)
     if order_id is not None:
         entities["order_id"] = order_id

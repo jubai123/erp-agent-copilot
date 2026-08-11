@@ -2,15 +2,17 @@
 
 The worker has no LLM client wired, so the build_plan node it injects is a
 deterministic planner (ADR "确定性优先，概率兜底"): it maps the classified
-intent plus extracted entities onto a small READ-only Plan DAG against the ERP
-simulator's product/supplier tools. A combined query like "查苹果库存并推荐
-供应商" (task 4.16 acceptance) yields two independent READ steps that execute
-in parallel. A query that yields neither a product nor a supplier intent
-reports EMPTY_PLAN so the run fails honestly instead of inventing a tool call.
+intent plus extracted entities onto a Plan DAG against the ERP simulator's
+9 tools. READ intents emit single steps (or two independent READ steps for a
+combined product+supplier query, which execute in parallel); WRITE intents
+emit multi-step DAGs (create / cancel / update_status / modify) whose write
+steps carry the compensation note and approval flag validate_plan (layer 2)
+and the policy gate (layer 3) expect. A query that yields no tool emits
+EMPTY_PLAN so the run fails honestly instead of inventing a tool call.
 
 The LLM-driven planner (build_plan.py) stays the default for the interactive
-path; this module is the deterministic fallback the worker uses until a real
-LLM is wired into the task.
+path; this module is the deterministic fallback the worker and the planning
+eval runner use.
 """
 
 from __future__ import annotations
@@ -27,58 +29,240 @@ from erp_copilot.agent.state import (
 )
 from erp_copilot.domain.enums import ToolRiskLevel
 
-_PRODUCT_TOOL = "getProductByName"
-_SUPPLIER_TOOL = "getSupplierByStatus"
+_PRODUCT_BY_NAME = "getProductByName"
+_PRODUCT_BY_ID = "getProductById"
+_SUBSTITUTES_BY_NAME = "getProductSubstitutesByName"
+_SUPPLIERS_BY_REGION = "querySuppliersByDeliveryRegion"
+_SUPPLIER_BY_STATUS = "getSupplierByStatus"
+_ORDER_BY_ID = "getOrderByOrderId"
+_CREATE_ORDER = "createOrder"
+_UPDATE_ORDER_STATUS = "updateOrderStatus"
+_CANCEL_ORDER = "cancelOrder"
+
+_ORDER_WRITE_SCOPE = "order:write"
 
 
-def _product_step(product: str) -> PlanStep:
+def _read_step(
+    step_id: str,
+    tool_name: str,
+    description: str,
+    arguments: dict[str, Any],
+    required_scope: str,
+) -> PlanStep:
     return PlanStep(
-        step_id="s1",
-        tool_name=_PRODUCT_TOOL,
-        description=f"查询 {product} 库存",
-        arguments={"name": product},
+        step_id=step_id,
+        tool_name=tool_name,
+        description=description,
+        arguments=arguments,
         risk_level=ToolRiskLevel.READ,
-        required_scope="product:read",
-        success_condition=f"response.name == '{product}'",
+        required_scope=required_scope,
         timeout_s=10,
         max_retries=1,
     )
 
 
-def _supplier_step() -> PlanStep:
+def _write_step(
+    step_id: str,
+    tool_name: str,
+    description: str,
+    arguments: dict[str, Any],
+    argument_sources: dict[str, str],
+    depends_on: list[str],
+    fallback: str,
+) -> PlanStep:
     return PlanStep(
-        step_id="s2",
-        tool_name=_SUPPLIER_TOOL,
+        step_id=step_id,
+        tool_name=tool_name,
+        description=description,
+        arguments=arguments,
+        argument_sources=argument_sources,
+        depends_on=depends_on,
+        risk_level=ToolRiskLevel.WRITE,
+        required_scope=_ORDER_WRITE_SCOPE,
+        requires_approval=True,
+        timeout_s=30,
+        max_retries=2,
+        fallback=fallback,
+    )
+
+
+def _product_read_step(step_id: str, entities: dict[str, Any]) -> PlanStep:
+    """Pick the product READ tool by which entity pins the product."""
+    if entities.get("substitute"):
+        return _read_step(
+            step_id,
+            _SUBSTITUTES_BY_NAME,
+            description="查询替代品",
+            arguments={"name": entities.get("product")},
+            required_scope="product:read",
+        )
+    if entities.get("product_id") is not None:
+        return _read_step(
+            step_id,
+            _PRODUCT_BY_ID,
+            description="按 ID 查询商品",
+            arguments={"product_id": entities["product_id"]},
+            required_scope="product:read",
+        )
+    return _read_step(
+        step_id,
+        _PRODUCT_BY_NAME,
+        description="按名称查询商品",
+        arguments={"name": entities.get("product")},
+        required_scope="product:read",
+    )
+
+
+def _supplier_read_step(step_id: str, entities: dict[str, Any]) -> PlanStep:
+    """Pick the supplier READ tool by whether a delivery region is named."""
+    if entities.get("region"):
+        return _read_step(
+            step_id,
+            _SUPPLIERS_BY_REGION,
+            description="按配送区域查询供应商",
+            arguments={"region": entities["region"]},
+            required_scope="supplier:read",
+        )
+    return _read_step(
+        step_id,
+        _SUPPLIER_BY_STATUS,
         description="查询可用供应商",
         arguments={"status": "AVAILABLE"},
-        risk_level=ToolRiskLevel.READ,
         required_scope="supplier:read",
-        timeout_s=10,
-        max_retries=1,
     )
+
+
+def _order_lookup_step(step_id: str, order_id: str) -> PlanStep:
+    return _read_step(
+        step_id,
+        _ORDER_BY_ID,
+        description="按订单号查询订单",
+        arguments={"order_id": order_id},
+        required_scope="order:read",
+    )
+
+
+def _empty_plan_error() -> tuple[Plan, list[StateError]]:
+    return Plan(steps=[]), [
+        StateError(
+            code="EMPTY_PLAN",
+            message="无法从意图构造任何可执行步骤（缺少商品名、订单号或供应商意图）",
+        )
+    ]
 
 
 def build_plan_from_intent(intent: IntentClassification) -> tuple[Plan, list[StateError]]:
-    """Map the classified intent onto a READ-only Plan DAG.
+    """Map the classified intent onto a Plan DAG.
 
     Returns (plan, errors); errors is non-empty only when the intent carries
-    neither a product entity nor a supplier domain — the planner then has
-    nothing honest to execute and reports EMPTY_PLAN.
+    neither a product entity nor a supplier domain nor an order id — the
+    planner then has nothing honest to execute and reports EMPTY_PLAN.
     """
-    steps: list[PlanStep] = []
-    product = intent.entities.get("product")
-    if isinstance(product, str):
-        steps.append(_product_step(product))
+    entities = intent.entities
+    steps: list[PlanStep] | None
+
     if intent.domain == "supplier":
-        steps.append(_supplier_step())
-    if not steps:
-        return Plan(steps=[]), [
-            StateError(
-                code="EMPTY_PLAN",
-                message="无法从意图构造任何可执行步骤（缺少商品名或供应商意图）",
-            )
-        ]
+        # A supplier intent may also carry a product entity (e.g. "查苹果库存
+        # 并推荐供应商") — emit both independent READ steps.
+        steps = []
+        if entities.get("product"):
+            steps.append(_product_read_step("s1", entities))
+        steps.append(_supplier_read_step("s2" if steps else "s1", entities))
+    elif intent.domain == "order":
+        steps = _order_dag_steps(intent.action, entities)
+        if steps is None:
+            return _empty_plan_error()
+    else:
+        # product/query and product/check_stock (and the fallback domain).
+        if entities.get("product") or entities.get("product_id") is not None:
+            steps = [_product_read_step("s1", entities)]
+        else:
+            return _empty_plan_error()
+
+    assert steps is not None
     return Plan(steps=steps, title=intent.action), []
+
+
+def _order_dag_steps(action: str, entities: dict[str, Any]) -> list[PlanStep] | None:
+    """Build the multi-step WRITE DAGs (order domain), or None for EMPTY_PLAN."""
+    order_id = entities.get("order_id")
+
+    if action == "query":
+        if order_id is None:
+            return None
+        return [_order_lookup_step("s1", order_id)]
+
+    if action == "create":
+        if not entities.get("product") or not entities.get("region"):
+            return None
+        product = _product_read_step("s1", entities)
+        supplier = _supplier_read_step("s2", entities)
+        create = _write_step(
+            "s3",
+            _CREATE_ORDER,
+            description="创建订单",
+            arguments={"quantity": entities.get("quantity"), "region": entities["region"]},
+            argument_sources={"product_id": "step:s1", "supplier_id": "step:s2"},
+            depends_on=["s1", "s2"],
+            fallback="取消新建订单以补偿",
+        )
+        return [product, supplier, create]
+
+    if order_id is None:
+        return None
+
+    lookup = _order_lookup_step("s1", order_id)
+
+    if action == "cancel":
+        cancel = _write_step(
+            "s2",
+            _CANCEL_ORDER,
+            description="取消订单",
+            arguments={},
+            argument_sources={"order_id": "step:s1"},
+            depends_on=["s1"],
+            fallback="重新激活原订单",
+        )
+        return [lookup, cancel]
+
+    if action == "update_status":
+        update = _write_step(
+            "s2",
+            _UPDATE_ORDER_STATUS,
+            description="更新订单状态",
+            arguments={"status": entities.get("status")},
+            argument_sources={"order_id": "step:s1"},
+            depends_on=["s1"],
+            fallback="回滚订单状态到原值",
+        )
+        return [lookup, update]
+
+    if action == "modify":
+        cancel = _write_step(
+            "s2",
+            _CANCEL_ORDER,
+            description="取消原订单",
+            arguments={},
+            argument_sources={"order_id": "step:s1"},
+            depends_on=["s1"],
+            fallback="重新激活原订单",
+        )
+        create = _write_step(
+            "s3",
+            _CREATE_ORDER,
+            description="按原订单字段重建订单",
+            arguments={"quantity": entities.get("new_quantity") or entities.get("quantity")},
+            argument_sources={
+                "product_id": "step:s1",
+                "supplier_id": "step:s1",
+                "region": "step:s1",
+            },
+            depends_on=["s1", "s2"],
+            fallback="取消新建订单以补偿",
+        )
+        return [lookup, cancel, create]
+
+    return None
 
 
 def build_deterministic_plan_node() -> Callable[[AgentState], dict[str, Any]]:
