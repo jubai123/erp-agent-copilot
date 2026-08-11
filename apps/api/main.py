@@ -2,7 +2,26 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+
+from erp_copilot.infrastructure.config import Settings
+from erp_copilot.infrastructure.database import init_db
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Initialize the SQLAlchemy engine at startup (uvicorn fires this).
+
+    ``create_engine`` is lazy, so a briefly-down database does not block
+    startup; the first query surfaces the connection failure. TestClient does
+    not fire lifespan events, so the unit/integration suites initialize the
+    engine through their own conftest fixtures.
+    """
+    init_db(Settings())
+    yield
 
 
 def create_app() -> FastAPI:
@@ -10,6 +29,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="ERP Agent Copilot",
         version="0.1.0",
+        lifespan=lifespan,
     )
 
     from apps.api.routes.health import router as health_router
