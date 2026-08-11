@@ -10,16 +10,13 @@ what it is not:
   tool_retrieval uses candidate_filter's first-level DOMAIN_TOOL_MAP filter;
   security uses the real guards with faked DNS resolution; planning drives the
   real classify_intent → build_plan_from_intent 9-tool dispatch; recovery runs
-  the real recovery-action decision
-  (src/erp_copilot/agent/recovery_decision.py) on each query.
+  the real recovery-action decision (src/erp_copilot/agent/recovery_decision.py)
+  on each query; failure runs the real failure-behavior decision plus the
+  idempotency write observer (src/erp_copilot/agent/failure_decision.py).
 - ``retrieval_pipeline`` — the real RAG chain (embed → vector → FTS → RRF →
   rerank) against the dedicated test database, using deterministic providers
   so it stays offline and reproducible. Requires a local pgvector database;
   the knowledge base is ingested idempotently from datasets/knowledge.
-- ``golden_baseline`` — an oracle that returns the dataset's expected answer
-  verbatim. failure is not yet wired to a live decision module, so the golden
-  baseline exercises the harness plumbing end-to-end; swap in the real runner
-  without touching the harness.
 
 Usage::
 
@@ -36,6 +33,7 @@ from pathlib import Path
 
 import yaml
 
+from erp_copilot.agent.failure_decision import decide_failure_behavior, observe_duplicates
 from erp_copilot.agent.nodes.classify_intent import classify_intent
 from erp_copilot.agent.planner import build_plan_from_intent
 from erp_copilot.agent.recovery_decision import decide_recovery_action
@@ -349,14 +347,14 @@ def _recovery(cases: list[dict]) -> RunnerOutput:
 
 
 def _failure(cases: list[dict]) -> RunnerOutput:
-    """Golden baseline: oracle returns the expected behavior and observes zero duplicate writes."""
+    """Deterministic: real failure-behavior decision + idempotency write observer."""
     per_case: list[dict] = []
     violations = 0
     for case in cases:
         expected_behavior = case["expected_behavior"]
         expected_duplicates = case["expected_duplicate_writes"]
-        observed_behavior = expected_behavior
-        observed_duplicates = 0
+        observed_behavior = decide_failure_behavior(case["query"])
+        observed_duplicates = observe_duplicates(case["scenario"])
         behavior_ok = observed_behavior == expected_behavior
         dup_ok = observed_duplicates == expected_duplicates
         passed = behavior_ok and dup_ok
@@ -371,16 +369,24 @@ def _failure(cases: list[dict]) -> RunnerOutput:
                     "duplicate_writes": expected_duplicates,
                 },
                 "actual": {
-                    "behavior": expected_behavior,
+                    "behavior": observed_behavior,
                     "duplicate_writes": observed_duplicates,
                 },
-                "detail": "" if passed else "duplicate-write invariant violated",
+                "detail": (
+                    ""
+                    if passed
+                    else (
+                        f"behavior={observed_behavior!r}, expected {expected_behavior!r}"
+                        if not behavior_ok
+                        else f"duplicate writes {observed_duplicates} != {expected_duplicates}"
+                    )
+                ),
             }
         )
     n = len(per_case)
     accuracy = sum(1 for pc in per_case if pc["passed"]) / n if n else 0.0
     return {
-        "mode": "golden_baseline",
+        "mode": "deterministic",
         "primary_score": accuracy,
         "metrics": {
             "behavior_accuracy": accuracy,

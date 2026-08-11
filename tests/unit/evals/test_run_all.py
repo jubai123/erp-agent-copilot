@@ -3,11 +3,12 @@
 Runs the actual run_all.py wiring against the real 200-case datasets. No LLM,
 no network: tool_retrieval uses the deterministic candidate_filter, security
 uses the real guards with faked DNS, planning drives the real
-classify_intent → build_plan_from_intent chain, and recovery runs the real
-recovery-action decision module; failure still runs a golden baseline oracle.
-knowledge_rag is a real retrieval runner that needs a pgvector database, so
-the unit suite injects a fake for that category (the real runner is exercised
-by tests/integration/test_retrieval_pipeline.py and
+classify_intent → build_plan_from_intent chain, recovery runs the real
+recovery-action decision module, and failure runs the real failure-behavior
+decision plus the idempotency write observer. knowledge_rag is a real retrieval
+runner that needs a pgvector database, so the unit suite injects a fake for
+that category (the real runner is exercised by
+tests/integration/test_retrieval_pipeline.py and
 `uv run evals/run_all.py --pipeline`).
 """
 
@@ -105,11 +106,11 @@ class TestRealRunners:
         assert result["metrics"]["action_accuracy"] == 1.0
         assert all(pc["passed"] for pc in result["per_case"])
 
-    def test_failure_golden_baseline_no_duplicate_violations(
-        self, runners: dict[str, RunnerFn]
-    ) -> None:
+    def test_failure_runs_real_decision_module(self, runners: dict[str, RunnerFn]) -> None:
         report = run_all(runners)
         result = report["categories"]["failure"]
-        assert result["mode"] == "golden_baseline"
+        assert result["mode"] == "deterministic"
         assert result["primary_score"] == 1.0
+        assert result["metrics"]["behavior_accuracy"] == 1.0
         assert result["metrics"]["duplicate_write_violations"] == 0
+        assert all(pc["passed"] for pc in result["per_case"])
