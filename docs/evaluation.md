@@ -31,17 +31,17 @@ uv run evals/run_all.py --report evals/reports/report.json
 |---|---|---|---|---|
 | tool_retrieval | tool_retrieval_40.json | 40 | `deterministic` | **真实生产逻辑**：`candidate_filter` 的 `DOMAIN_TOOL_MAP` 一级过滤，离线可复现 |
 | security | security_25.json | 25 | `deterministic` | **真实安全守卫**（注入/SSRF/Redaction），SSRF 用伪造 DNS，逐位复现 |
-| knowledge_rag | knowledge_rag_40.json | 40 | `golden_baseline` | 预言机返回 ground-truth 文档（或拒答）；**尚未接入真实检索管线** |
-| planning | planning_50.json | 50 | `golden_baseline` | 预言机返回预期步骤序列；**尚未接入真实 Planner** |
-| recovery | recovery_25.json | 25 | `golden_baseline` | 预言机返回预期恢复动作；**尚未接入真实恢复流程** |
-| failure | failure_20.json | 20 | `golden_baseline` | 预言机返回预期行为并观测零重复写；**尚未接入真实幂等执行** |
+| knowledge_rag | knowledge_rag_40.json | 40 | `retrieval_pipeline` | **真实检索链路**：embed→vector→FTS→RRF→rerank，对专用测试库、确定性 provider，离线可复现 |
+| planning | planning_50.json | 50 | `deterministic` | **真实生产逻辑**：`classify_intent → build_plan_from_intent` 9 工具 DAG 派发，离线可复现 |
+| recovery | recovery_25.json | 25 | `deterministic` | **真实恢复动作判定**：`src/erp_copilot/agent/recovery_decision.py` 有序规则，离线可复现 |
+| failure | failure_20.json | 20 | `deterministic` | **真实故障行为判定 + 幂等写观测**：`src/erp_copilot/agent/failure_decision.py`，离线可复现 |
 
-> **结论**：`tool_retrieval` 与 `security` 两个分类跑真实逻辑；其余四个分类用 golden baseline 先把 harness 管线端到端跑通——换入真实 runner（检索管线 / LangGraph executor）时无需改动 harness。这正是"先把评测基线立起来、再逐分类替换真实实现"的路线。
+> **结论**：六个分类全部跑真实逻辑——五类 `deterministic`（确定性生产代码）+ 一类 `retrieval_pipeline`（真实检索管线，需本地 pgvector 测试库）。**不再有 golden baseline**；每个分数都代表被测系统的真实能力，可逐位复现。
 
 ### Runner 模式说明
 
 - **`deterministic`**：调用真实生产代码，无 LLM / 无网络 / 无数据库，位级可复现。
-- **`golden_baseline`**：直接返回数据集的期望答案。它**不代表被测系统已实现**，只证明评测管线本身正确；真实 runner 就位后该分类的分数才有意义。
+- **`retrieval_pipeline`**：调用真实 RAG 检索链路（embed→vector→FTS→RRF→rerank），确定性 provider 保持离线；需要一个本地 pgvector 测试库，知识库从 datasets/knowledge 幂等灌入。
 
 ## 3. 评测指标
 

@@ -87,8 +87,8 @@ migrations/     Alembic 版本化迁移
 
 ## 诚实边界
 
-三个当前未接线的点，文档与代码保持一致地标注，避免把"目标"当成"已实现"：
+当前未接线的点，文档与代码保持一致地标注，避免把"目标"当成"已实现"：
 
 1. `POST /v1/knowledge/search` 为 STUB（检索管线组件已交付，未接入 HTTP 层）。
 2. Celery worker 的 `execute_run` 是**简化直连路径**（直接查 ERP Simulator 并记 RunStep），尚未接入完整 LangGraph 状态机。
-3. `evals/run_all.py` 六个分类中，`tool_retrieval` 与 `security` 跑真实逻辑，其余四个为 `golden_baseline`（预言机返回期望答案，先验证 harness 管线）。
+3. `evals/run_all.py` 六分类全部跑真实逻辑（`tool_retrieval`/`planning`/`recovery`/`security`/`failure` 为 `deterministic`，`knowledge_rag` 为 `retrieval_pipeline`）；其中 `knowledge_rag` 需要本地 pgvector 测试库，离线单测中该分类注入 fake runner。

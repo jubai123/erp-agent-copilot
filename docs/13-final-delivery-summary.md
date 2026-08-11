@@ -64,11 +64,11 @@
 | 4.15 取消/超时 | `deadline_at` 字段有，但无 `POST /v1/runs/{id}/cancel`、无 EXPIRED 流转 | 长任务无法取消、无超时兜底 |
 | 4.16 图端到端演示 | Worker `execute_run` 为简化直连路径，未接完整 LangGraph | 生产链路未验证完整图行为 |
 
-### 5.2 三处接线缺口（README 已诚实标注，与此处一致）
+### 5.2 接线缺口（README 已诚实标注，与此处一致）
 
 1. `POST /v1/knowledge/search` 为 **STUB**——检索管线组件已交付并有消融数据，未接入 HTTP 层。
 2. Celery worker 的 `execute_run` 是**简化直连路径**——直接查 ERP Simulator 并记 RunStep，`policy_check` / `request_approval` / Checkpoint 在 worker 执行链路上未生效。
-3. 200 条评测中 `knowledge_rag` / `planning` / `recovery` / `failure` 四类为 **golden_baseline**（预言机返回期望答案），验证 harness 链路而非真实模型能力；`tool_retrieval` / `security` 跑真实逻辑。
+3. `evals/run_all.py` 六分类全部跑真实逻辑（`tool_retrieval`/`planning`/`recovery`/`security`/`failure` 为 `deterministic`，`knowledge_rag` 为 `retrieval_pipeline`）；其中 `knowledge_rag` 需要本地 pgvector 测试库，离线单测中该分类注入 fake runner。
 
 ### 5.3 已知技术局限（威胁模型剩余风险）
 
@@ -98,5 +98,5 @@ uv run evals/run_all.py                              # 200 条六类评测
 1. **把 worker 接入完整 LangGraph 图**（4.16）——`execute_run` 改由 `build_agent_graph(checkpoint_saver=...)` 驱动，`policy_check` / `request_approval` 立即生效，这是收益最大的单点。
 2. **补 4.15 取消/超时**（cancel 端点 + deadline 检查 + EXPIRED），让长任务可终止。
 3. **补 4.13 上下文预算**与 **4.14 SSE**，完善运行时边界。
-4. 接入 `POST /v1/knowledge/search`，把 golden_baseline 四类换成真实 pipeline runner（harness 已就位，只换 runner）。
+4. ~~把 golden_baseline 四类换成真实 pipeline runner~~——**已完成（2026-08-12）**：knowledge_rag → 检索管线、planning → 确定性 planner、recovery/failure → 真实决策模块，六分类全为真实逻辑。
 5. ~~跑 Locust 负载测试并回填 P50/P95~~——**已完成（2026-08-11）**：50 并发/60s 实测 1385 请求 0 失败、吞吐 23.25 req/s、P50 20ms / P95 44ms / P99 57ms，已回填 docs/benchmark.md §5；顺带修复 `create_app()` 未 `init_db` 的启动接线缺口（lifespan）。
