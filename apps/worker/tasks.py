@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from celery import Task
@@ -28,6 +29,7 @@ from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_
 from erp_copilot.agent.nodes.verify_results import build_verify_results_node
 from erp_copilot.agent.planner import build_deterministic_plan_node
 from erp_copilot.agent.state import AgentState, AgentStatus
+from erp_copilot.application.events import append_run_event
 from erp_copilot.domain.entities import Run, RunStep
 from erp_copilot.domain.enums import StepStatus
 from erp_copilot.memory.checkpoint import CheckpointSaver
@@ -87,6 +89,31 @@ def _resolve_read_scopes(_tenant_id: str, _user_id: str) -> set[str]:
     never a silent allow).
     """
     return {"product:read", "supplier:read"}
+
+
+def _make_status_event_sink(session) -> Callable[[str, AgentState], None]:
+    """Record one RUN_STATUS event per runtime status change (task 4.14).
+
+    The checkpoint saver persists after every node; this sink turns the
+    status transitions among those saves into a deduped, replayable event
+    log for the SSE stream. The runtime starts QUEUED, so the first emitted
+    status is the first that differs (e.g. planning).
+    """
+    last_status: AgentStatus = AgentStatus.QUEUED
+
+    def sink(node_name: str, state: AgentState) -> None:
+        nonlocal last_status
+        if state.status == last_status:
+            return
+        last_status = state.status
+        append_run_event(
+            session,
+            state.run_id,
+            "RUN_STATUS",
+            {"status": state.status.value, "node": node_name},
+        )
+
+    return sink
 
 
 def _build_graph(checkpoint_saver: CheckpointSaver) -> CompiledStateGraph:
@@ -209,7 +236,7 @@ def execute_run(
                 else None
             ),
         )
-        graph = _build_graph(CheckpointSaver(session))
+        graph = _build_graph(CheckpointSaver(session, event_sink=_make_status_event_sink(session)))
         final = _invoke_graph(graph, state)
         status = _persist(session, run, final)
         logger.info("Run %s finished with status %s", run_id, status)

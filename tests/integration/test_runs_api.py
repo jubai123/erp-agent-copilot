@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
 from erp_copilot.agent.state import (
@@ -16,6 +18,87 @@ from erp_copilot.domain.entities import Run, RunEvent, Tenant
 from erp_copilot.domain.enums import ToolRiskLevel
 from erp_copilot.infrastructure.database import get_session
 from erp_copilot.memory.checkpoint import CheckpointSaver
+
+
+def _parse_sse(body: str) -> list[dict[str, str]]:
+    """Parse a raw SSE body into {id, event, data} frames."""
+    frames: list[dict[str, str]] = []
+    for block in body.split("\n\n"):
+        if not block.strip():
+            continue
+        frame: dict[str, str] = {}
+        for line in block.split("\n"):
+            if line.startswith("id: "):
+                frame["id"] = line[len("id: ") :]
+            elif line.startswith("event: "):
+                frame["event"] = line[len("event: ") :]
+            elif line.startswith("data: "):
+                frame["data"] = line[len("data: ") :]
+        if frame:
+            frames.append(frame)
+    return frames
+
+
+class TestRunEvents:
+    """Acceptance: GET /v1/runs/{run_id}/events streams the run's event log."""
+
+    def test_stream_replays_lifecycle_in_order(self) -> None:
+        from apps.api.main import create_app
+
+        tenant_id = _create_tenant("Events", "events-test")
+        client = TestClient(create_app())
+        run_id = client.post("/v1/runs", json={"tenant_id": tenant_id, "title": "events"}).json()[
+            "run_id"
+        ]
+
+        with client.stream("GET", f"/v1/runs/{run_id}/events") as response:
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("text/event-stream")
+            body = "".join(response.iter_text())
+        frames = _parse_sse(body)
+
+        assert frames[0]["event"] == "RUN_CREATED"
+        statuses = [
+            json.loads(frame["data"])["status"]
+            for frame in frames
+            if frame["event"] == "RUN_STATUS"
+        ]
+        assert statuses[0] == "planning"
+        assert statuses[-1] == "succeeded"
+        assert (
+            statuses.index("planning") < statuses.index("executing") < statuses.index("succeeded")
+        )
+
+    def test_reconnect_with_last_event_id_resumes_stream(self) -> None:
+        from apps.api.main import create_app
+
+        tenant_id = _create_tenant("Events Resume", "events-resume")
+        client = TestClient(create_app())
+        run_id = client.post("/v1/runs", json={"tenant_id": tenant_id, "title": "resume"}).json()[
+            "run_id"
+        ]
+
+        with client.stream("GET", f"/v1/runs/{run_id}/events") as response:
+            first = _parse_sse("".join(response.iter_text()))
+        created_id = next(frame["id"] for frame in first if frame["event"] == "RUN_CREATED")
+
+        with client.stream(
+            "GET",
+            f"/v1/runs/{run_id}/events",
+            headers={"Last-Event-ID": created_id},
+        ) as response:
+            resumed = _parse_sse("".join(response.iter_text()))
+
+        assert resumed
+        assert all(frame["event"] == "RUN_STATUS" for frame in resumed)
+        assert "RUN_CREATED" not in {frame["event"] for frame in resumed}
+
+    def test_events_404_for_missing_run(self) -> None:
+        from apps.api.main import create_app
+
+        client = TestClient(create_app())
+        response = client.get("/v1/runs/ghost/events")
+        assert response.status_code == 404
 
 
 def _create_tenant(name: str, slug: str) -> str:

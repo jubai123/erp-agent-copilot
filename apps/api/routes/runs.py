@@ -1,17 +1,20 @@
-"""Run creation, query, cancellation, and approval endpoints."""
+"""Run creation, query, cancellation, approval, and event-stream endpoints."""
 
 from __future__ import annotations
 
-import json
+import asyncio
+import time
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from sqlalchemy import func
+from fastapi.responses import StreamingResponse
 
 from apps.api.schemas.runs import ApproveRunRequest, CreateRunRequest, RunResponse
 from erp_copilot.agent.graph import build_agent_graph
 from erp_copilot.agent.state import AgentStatus, ApprovalStatus
+from erp_copilot.application.events import append_run_event
 from erp_copilot.domain.entities import Run, RunEvent
 from erp_copilot.domain.errors import CopilotError, NotFoundError
 from erp_copilot.infrastructure.database import get_session
@@ -23,10 +26,58 @@ router = APIRouter(prefix="/v1/runs", tags=["runs"])
 # A run already settled (succeeded, failed, or cancelled) is never cancelled.
 _CANCEL_REJECT: tuple[str, ...] = ("COMPLETED", "FAILED", "CANCELLED")
 
+# The SSE stream ends once the run reaches one of these terminal statuses.
+_TERMINAL_STATUSES: frozenset[str] = frozenset({"COMPLETED", "FAILED", "CANCELLED"})
 
-def _next_event_sequence(session, run_id: str) -> int:
-    max_seq = session.query(func.max(RunEvent.sequence)).filter(RunEvent.run_id == run_id).scalar()
-    return int(max_seq) + 1 if max_seq is not None else 0
+
+def _resume_sequence(session, run_id: str, last_event_id: str | None) -> int:
+    """Return the sequence to resume from, or -1 to replay the whole log.
+
+    A missing or unknown Last-Event-ID replays from the start — safer than
+    dropping events the client never saw.
+    """
+    if not last_event_id:
+        return -1
+    row = session.query(RunEvent).filter(RunEvent.id == last_event_id).first()
+    return row.sequence if row is not None else -1
+
+
+def _run_is_terminal(session, run_id: str) -> bool:
+    status = session.query(Run.status).filter_by(id=run_id).scalar()
+    # A vanished run (row deleted mid-stream) closes the stream too.
+    return status is None or status in _TERMINAL_STATUSES
+
+
+async def _event_stream(run_id: str, resume_seq: int) -> AsyncIterator[str]:
+    """Yield SSE frames for events after *resume_seq* until the run ends.
+
+    Polls the append-only RunEvent log (docs/03 §3) rather than holding any
+    in-memory channel, so a reconnecting client replays durable events and a
+    disconnect only cancels this local generator.
+    """
+    session = get_session()
+    try:
+        seen = resume_seq
+        last_heartbeat = time.monotonic()
+        while True:
+            rows = (
+                session.query(RunEvent)
+                .filter(RunEvent.run_id == run_id, RunEvent.sequence > seen)
+                .order_by(RunEvent.sequence.asc())
+                .all()
+            )
+            for row in rows:
+                seen = row.sequence
+                yield f"id: {row.id}\nevent: {row.event_type}\ndata: {row.payload}\n\n"
+            if _run_is_terminal(session, run_id):
+                return
+            now = time.monotonic()
+            if now - last_heartbeat >= 15.0:
+                last_heartbeat = now
+                yield ": ping\n\n"
+            await asyncio.sleep(0.5)
+    finally:
+        session.close()
 
 
 def _run_to_response(run: Run) -> RunResponse:
@@ -50,6 +101,8 @@ async def create_run(body: CreateRunRequest, response: Response) -> RunResponse:
             status="QUEUED",
         )
         session.add(run)
+        session.commit()
+        append_run_event(session, run.id, "RUN_CREATED", {"status": AgentStatus.QUEUED.value})
         session.commit()
         from apps.worker.tasks import execute_run
 
@@ -157,15 +210,32 @@ async def cancel_run(run_id: str) -> dict[str, Any]:
             )
         else:
             session.commit()
-        session.add(
-            RunEvent(
-                run_id=run_id,
-                sequence=_next_event_sequence(session, run_id),
-                event_type="RUN_CANCELLED",
-                payload=json.dumps({"status": "CANCELLED"}, ensure_ascii=False),
-            )
-        )
+        append_run_event(session, run_id, "RUN_CANCELLED", {"status": "CANCELLED"})
         session.commit()
         return {"run_id": run_id, "status": "CANCELLED"}
+    finally:
+        session.close()
+
+
+@router.get("/{run_id}/events")
+async def stream_run_events(run_id: str, request: Request) -> StreamingResponse:
+    """Stream the run's event log over SSE (task 4.14, docs/07 §12).
+
+    Replays every RunEvent after the client's Last-Event-ID, then pushes new
+    events as the worker records them, ending once the run reaches a terminal
+    status. A disconnected client only cancels this local generator — the
+    worker writes the database and never holds the connection.
+    """
+    session = get_session()
+    try:
+        run = session.query(Run).filter_by(id=run_id).first()
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        resume_seq = _resume_sequence(session, run_id, request.headers.get("last-event-id"))
+        return StreamingResponse(
+            _event_stream(run_id, resume_seq),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
     finally:
         session.close()

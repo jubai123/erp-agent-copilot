@@ -33,7 +33,13 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from apps.erp_simulator.data.products import PRODUCT_BY_NAME  # noqa: E402
 from apps.worker.tasks import _persist, execute_run  # noqa: E402
 from erp_copilot.agent.state import AgentState, AgentStatus  # noqa: E402
-from erp_copilot.domain.entities import AgentCheckpoint, Run, RunStep, Tenant  # noqa: E402
+from erp_copilot.domain.entities import (  # noqa: E402
+    AgentCheckpoint,
+    Run,
+    RunEvent,
+    RunStep,
+    Tenant,
+)
 
 _EXPECTED_NODE_ORDER: set[str] = {
     "check_deadline",
@@ -66,6 +72,7 @@ def session(monkeypatch: pytest.MonkeyPatch) -> Iterator[Session]:
     Run.__table__.create(engine)
     RunStep.__table__.create(engine)
     AgentCheckpoint.__table__.create(engine)
+    RunEvent.__table__.create(engine)
 
     monkeypatch.setattr("erp_copilot.infrastructure.database.get_session", lambda: Session(engine))
     with Session(engine) as db:
@@ -136,6 +143,29 @@ class TestHappyPath:
         assert {row.node_name for row in rows} == _EXPECTED_NODE_ORDER
         finalize_row = next(row for row in rows if row.node_name == "finalize")
         assert finalize_row.run_status == "completed"
+
+    def test_lifecycle_events_recorded_in_order(self, session: Session) -> None:
+        # task 4.14: the worker's status-event sink records one RUN_STATUS per
+        # runtime status change (deduped), so the SSE stream can replay
+        # planning -> executing -> succeeded without per-node noise.
+        tenant = _make_tenant(session)
+        run = _make_run(session, tenant.id)
+
+        execute_run(run.id, "苹果")
+
+        events = (
+            session.query(RunEvent).filter_by(run_id=run.id).order_by(RunEvent.sequence.asc()).all()
+        )
+        assert events
+        assert events[0].event_type == "RUN_STATUS"
+        assert events[0].payload
+        assert json.loads(events[0].payload)["status"] == "planning"
+        statuses = [
+            json.loads(event.payload)["status"]
+            for event in events
+            if event.event_type == "RUN_STATUS"
+        ]
+        assert statuses == ["planning", "executing", "succeeded"]
 
 
 class TestScenarios:

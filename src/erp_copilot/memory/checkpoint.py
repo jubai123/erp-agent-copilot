@@ -32,6 +32,9 @@ from erp_copilot.domain.enums import RunStatus
 
 SyncNode = Callable[[AgentState], dict[str, Any]]
 AsyncNode = Callable[[AgentState], Awaitable[dict[str, Any]]]
+# Invoked after a checkpoint save with the node name and post-node state;
+# the worker injects a sink that records lifecycle events (task 4.14).
+EventSink = Callable[[str, AgentState], None]
 
 
 def _utcnow() -> datetime:
@@ -73,12 +76,19 @@ class CheckpointSaver:
         session: Session,
         *,
         clock: Callable[[], datetime] = _utcnow,
+        event_sink: EventSink | None = None,
     ) -> None:
         self._session = session
         self._clock = clock
+        self._event_sink = event_sink
 
     def save(self, node_name: str, state: AgentState) -> None:
-        """Persist *state* as the checkpoint for *node_name*, committing now."""
+        """Persist *state* as the checkpoint for *node_name*, committing now.
+
+        When an *event_sink* is injected it runs before the commit, so the
+        event it appends lands in the same transaction as the checkpoint.
+        Default None keeps the saver a pure recovery primitive (task 4.12).
+        """
         self._session.add(
             AgentCheckpoint(
                 run_id=state.run_id,
@@ -89,6 +99,8 @@ class CheckpointSaver:
                 created_at=self._clock(),
             )
         )
+        if self._event_sink is not None:
+            self._event_sink(node_name, state)
         self._session.commit()
 
     def load_latest(self, run_id: str, tenant_id: str) -> AgentState | None:
