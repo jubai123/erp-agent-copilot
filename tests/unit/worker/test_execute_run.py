@@ -31,10 +31,12 @@ from sqlalchemy.orm import Session  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from apps.erp_simulator.data.products import PRODUCT_BY_NAME  # noqa: E402
-from apps.worker.tasks import execute_run  # noqa: E402
+from apps.worker.tasks import _persist, execute_run  # noqa: E402
+from erp_copilot.agent.state import AgentState, AgentStatus  # noqa: E402
 from erp_copilot.domain.entities import AgentCheckpoint, Run, RunStep, Tenant  # noqa: E402
 
 _EXPECTED_NODE_ORDER: set[str] = {
+    "check_deadline",
     "classify_intent",
     "retrieve_context",
     "build_plan",
@@ -130,7 +132,7 @@ class TestHappyPath:
         execute_run(run.id, "苹果")
 
         rows = session.query(AgentCheckpoint).filter_by(run_id=run.id).all()
-        assert len(rows) == 9
+        assert len(rows) == 10
         assert {row.node_name for row in rows} == _EXPECTED_NODE_ORDER
         finalize_row = next(row for row in rows if row.node_name == "finalize")
         assert finalize_row.run_status == "completed"
@@ -179,3 +181,55 @@ class TestScenarios:
         session.refresh(run)
         assert run.status == "FAILED"
         assert run.failure_code == "EMPTY_PLAN"
+
+
+class TestDeadlineAndCancel:
+    """Task 4.15: deadline expiry and cancellation guards on the worker path."""
+
+    def test_expired_deadline_fails_run_with_deadline_code(self, session: Session) -> None:
+        tenant = _make_tenant(session)
+        run = _make_run(session, tenant.id)
+
+        result = execute_run(run.id, "苹果", deadline_s=-1)
+
+        assert result["status"] == "FAILED"
+        session.refresh(run)
+        assert run.status == "FAILED"
+        assert run.failure_code == "DEADLINE_EXCEEDED"
+        assert run.steps == []
+
+    def test_cancelled_run_is_not_reprocessed(self, session: Session) -> None:
+        tenant = _make_tenant(session)
+        run = Run(tenant_id=tenant.id, title="已取消", status="CANCELLED")
+        session.add(run)
+        session.commit()
+
+        result = execute_run(run.id, "苹果")
+
+        assert result["status"] == "CANCELLED"
+        session.refresh(run)
+        assert run.status == "CANCELLED"
+        assert run.steps == []
+        assert run.completed_at is None
+
+    def test_persist_does_not_overwrite_cancelled_run(self, session: Session) -> None:
+        # A cancel that landed mid-execution (another session flipped the row
+        # while the graph ran) must survive the worker's persist: the guard
+        # re-reads the row and refuses to clobber a settled CANCELLED run.
+        tenant = _make_tenant(session)
+        run = _make_run(session, tenant.id)
+        run.status = "CANCELLED"
+        session.commit()
+
+        final = AgentState(
+            run_id=run.id,
+            tenant_id=tenant.id,
+            query="查询苹果库存",
+            status=AgentStatus.SUCCEEDED,
+        )
+        status = _persist(session, run, final)
+
+        assert status == "CANCELLED"
+        session.refresh(run)
+        assert run.status == "CANCELLED"
+        assert run.steps == []

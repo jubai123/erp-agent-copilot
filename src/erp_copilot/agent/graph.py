@@ -1,13 +1,14 @@
 """LangGraph state-graph skeleton — task 4.2.
 
-Wires the ten Phase-4/5 nodes in the design-doc topology (docs/03 §4).
-Nodes are stubs here; each receives a real module in its own task
-(4.3-4.11, 5.2).
+Wires the Phase-4/5 nodes in the design-doc topology (docs/03 §4) plus the
+check_deadline gate (task 4.15). Nodes are stubs here; each receives a real
+module in its own task (4.3-4.11, 5.2).
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -18,11 +19,13 @@ from erp_copilot.agent.nodes.request_approval import (
     pending_approval_step_ids,
     request_approval_node,
 )
-from erp_copilot.agent.state import AgentState, AgentStatus
+from erp_copilot.agent.state import AgentState, AgentStatus, StateError
 from erp_copilot.memory.checkpoint import CheckpointSaver, checkpointed
 
-# Node names in execution order (docs/03 §4).
+# Node names in execution order (docs/03 §4). check_deadline runs first so a
+# run past its deadline (task 4.15) terminates before any work begins.
 NODE_NAMES: tuple[str, ...] = (
+    "check_deadline",
     "classify_intent",
     "retrieve_context",
     "build_plan",
@@ -93,6 +96,26 @@ def _verify_results_noop(state: AgentState) -> dict[str, Any]:
     return {"status": AgentStatus.SUCCEEDED}
 
 
+def check_deadline(state: AgentState) -> dict[str, Any]:
+    """Terminate a run whose deadline has passed (task 4.15).
+
+    With no deadline set the node is a no-op, so runs that never opt in behave
+    exactly as before. A run past its deadline transitions to EXPIRED; the
+    worker maps EXPIRED onto a FAILED Run with a DEADLINE_EXCEEDED code. The
+    node runs on every invocation, so a run paused in WAITING_APPROVAL that
+    passes its deadline expires on the next resume.
+    """
+    if state.deadline_at is None or datetime.now(UTC) <= state.deadline_at:
+        return {}
+    return {
+        "status": AgentStatus.EXPIRED,
+        "errors": [
+            *state.errors,
+            StateError(code="DEADLINE_EXCEEDED", message="run exceeded its deadline"),
+        ],
+    }
+
+
 def recover_or_replan(state: AgentState) -> dict[str, Any]:
     """TODO(task 4.11/5.8): decide retry vs replan vs give-up."""
     return {}
@@ -104,6 +127,10 @@ def finalize(state: AgentState) -> dict[str, Any]:
 
 
 # -- Routing ------------------------------------------------------------------
+
+
+def _route_after_deadline(state: AgentState) -> str:
+    return "finalize" if state.status == AgentStatus.EXPIRED else "classify_intent"
 
 
 def _route_after_validate(state: AgentState) -> str:
@@ -157,6 +184,7 @@ def build_agent_graph(
     """
     builder = StateGraph(AgentState)
     nodes: list[tuple[str, Callable[..., Any]]] = [
+        ("check_deadline", check_deadline),
         ("classify_intent", classify_intent_node),
         (
             "retrieve_context",
@@ -181,7 +209,12 @@ def build_agent_graph(
             node = checkpointed(name, node, checkpoint_saver)  # type: ignore[assignment]
         builder.add_node(name, node)  # type: ignore[arg-type]
 
-    builder.add_edge(START, "classify_intent")
+    builder.add_edge(START, "check_deadline")
+    builder.add_conditional_edges(
+        "check_deadline",
+        _route_after_deadline,
+        {"finalize": "finalize", "classify_intent": "classify_intent"},
+    )
     builder.add_edge("classify_intent", "retrieve_context")
     builder.add_edge("retrieve_context", "build_plan")
     builder.add_edge("build_plan", "validate_plan")

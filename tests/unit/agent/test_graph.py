@@ -9,6 +9,7 @@ is produced. A smoke run proves the happy path reaches SUCCEEDED.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 
 from erp_copilot.agent.graph import NODE_NAMES, build_agent_graph
 from erp_copilot.agent.nodes.build_plan import build_plan_node
@@ -90,8 +91,13 @@ class TestTopology:
 
     def test_start_and_end_termination(self) -> None:
         pairs = _edge_pairs()
-        assert ("__start__", "classify_intent") in pairs
+        assert ("__start__", "check_deadline") in pairs
+        assert ("check_deadline", "classify_intent") in pairs
         assert ("finalize", "__end__") in pairs
+
+    def test_deadline_can_route_to_finalize(self) -> None:
+        pairs = _edge_pairs()
+        assert ("check_deadline", "finalize") in pairs
 
 
 class TestVisualization:
@@ -337,6 +343,7 @@ class TestSmoke:
         assert result["status"] == "succeeded"
         names = [name for name, _ in saver.saved]
         assert names == [
+            "check_deadline",
             "classify_intent",
             "retrieve_context",
             "build_plan",
@@ -361,3 +368,34 @@ class TestSmoke:
         # classify_intent set PLANNING before the recovery detour; the stub
         # recovery/finalize nodes do not change status yet.
         assert result["status"] == "planning"
+
+
+class TestDeadline:
+    """check_deadline expires runs past their deadline, else is a no-op."""
+
+    def test_past_deadline_expires_run(self) -> None:
+        result = GRAPH.invoke(
+            {
+                "run_id": "r-dl-past",
+                "tenant_id": "t1",
+                "query": "查苹果库存",
+                "deadline_at": datetime(2020, 1, 1, tzinfo=UTC),
+            }
+        )
+        assert result["status"] == AgentStatus.EXPIRED
+        assert result["errors"][0].code == "DEADLINE_EXCEEDED"
+
+    def test_future_deadline_proceeds_to_success(self) -> None:
+        result = GRAPH.invoke(
+            {
+                "run_id": "r-dl-future",
+                "tenant_id": "t1",
+                "query": "查苹果库存",
+                "deadline_at": datetime(2100, 1, 1, tzinfo=UTC),
+            }
+        )
+        assert result["status"] == AgentStatus.SUCCEEDED
+
+    def test_no_deadline_is_a_no_op(self) -> None:
+        result = GRAPH.invoke({"run_id": "r-dl-none", "tenant_id": "t1", "query": "查苹果库存"})
+        assert result["status"] == AgentStatus.SUCCEEDED

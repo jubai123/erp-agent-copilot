@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from celery import Task
 from celery.utils.log import get_task_logger
@@ -125,8 +125,14 @@ def _invoke_graph(graph: CompiledStateGraph, state: AgentState) -> AgentState:
 def _persist(session, run: Run, final: AgentState) -> str:
     """Map the terminal AgentState onto the Run row and RunStep rows.
 
-    Returns the persisted Run.status so the task can log and return it.
+    The run row is re-read first so a cancel that landed while the graph ran
+    is never clobbered: a settled CANCELLED run stays cancelled (the same
+    settled-run rule failure_queue enforces for FAILED flips).
     """
+    fresh = session.query(Run).filter_by(id=run.id).first()
+    if fresh is None or fresh.status == "CANCELLED":
+        return fresh.status if fresh is not None else run.status
+    run = fresh
     run.status = _RUN_STATUS_UPPER[final.status]
     if run.status in {"COMPLETED", "FAILED", "CANCELLED"}:
         run.completed_at = datetime.now(UTC)
@@ -162,10 +168,14 @@ def execute_run(
     run_id: str,
     product_name: str = "苹果",
     query: str | None = None,
+    deadline_s: int | None = None,
 ) -> dict:
     """Drive one run through the LangGraph and persist the outcome.
 
     Lifecycle: QUEUED -> PROCESSING -> COMPLETED | FAILED | ...
+    A positive *deadline_s* seeds AgentState.deadline_at so the check_deadline
+    node (task 4.15) expires the run as EXPIRED -> FAILED if it is still going
+    at the deadline; None leaves the run without a deadline.
     """
     from erp_copilot.infrastructure.database import get_session
 
@@ -175,6 +185,12 @@ def execute_run(
         if run is None:
             logger.error("Run %s not found", run_id)
             return {"status": "error", "detail": f"Run {run_id} not found"}
+
+        # A run cancelled (or otherwise settled) before the worker picked it up
+        # must not be re-processed — cancel sticks, never clobbered.
+        if run.status in {"CANCELLED", "COMPLETED", "FAILED"}:
+            logger.info("Run %s already %s, skipping", run_id, run.status)
+            return {"status": run.status, "run_id": run.id}
 
         run.status = "PROCESSING"
         run.started_at = datetime.now(UTC)
@@ -187,6 +203,11 @@ def execute_run(
             # as a system actor so the policy gate resolves scopes (read-only).
             user_id=run.user_id or "system",
             query=query or _default_query(product_name),
+            deadline_at=(
+                datetime.now(UTC) + timedelta(seconds=deadline_s)
+                if deadline_s is not None
+                else None
+            ),
         )
         graph = _build_graph(CheckpointSaver(session))
         final = _invoke_graph(graph, state)
