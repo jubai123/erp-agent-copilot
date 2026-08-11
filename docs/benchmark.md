@@ -11,7 +11,7 @@
 | 静态检查 | ruff check / format 通过 | `uv run ruff check .` / `uv run ruff format --check` |
 | 故障注入 | 3/3 场景 PASS | `uv run python tests/performance/fault_injection.py` |
 | 检索消融 | 42 条查询 × 3 配置 | `evals/reports/ablation_after_keyword_fix.json` |
-| 负载测试 | 方法就绪，**待实测** | Locust 场景已提交，未在本机跑出 P50/P95 |
+| 负载测试 | 50 并发/60s：1385 请求 0 失败，吞吐 23.25 req/s，P50 20ms / P95 44ms / P99 57ms | 本机实测，详见 §5 |
 
 ## 2. 检索消融（42 条查询，本机实测）
 
@@ -63,9 +63,9 @@ uv run python evals/scripts/run_ablation.py
 uv run python tests/performance/fault_injection.py
 ```
 
-## 5. 负载测试（方法就绪，待实测）
+## 5. 负载测试（本机实测，2026-08-11）
 
-场景逻辑已就绪（[load_scenario.py](../tests/performance/load_scenario.py) + [locustfile.py](../tests/performance/locustfile.py)），提交路径不发 LLM 调用（docs/08 §9 的"固定 Mock LLM"要求天然满足——只有 ERP Simulator 在跑）。
+场景逻辑就绪（[load_scenario.py](../tests/performance/load_scenario.py) + [locustfile.py](../tests/performance/locustfile.py)），提交路径不发 LLM 调用（docs/08 §9 的"固定 Mock LLM"要求天然满足——只有 ERP Simulator 在跑）。
 
 前置条件：Postgres + Redis 启动、API 在 :8000、种子租户（`loadtest-tenant`，幂等 INSERT）。
 
@@ -73,10 +73,22 @@ uv run python tests/performance/fault_injection.py
 uv run locust -f tests/performance/locustfile.py \
     --headless -u 50 -r 5 -t 60s \
     --html tests/performance/reports/locust_report.html \
-    --host http://localhost:8000
+    --host http://127.0.0.1:8000
 ```
 
-> **状态**：**待实测**。P50 / P95 / RPS 尚未在本机跑出结果；跑通后把数值补进本表并注明环境（机器规格 / API 并发 / DB 与 Redis 是否同机）。
+> **Host 用 `127.0.0.1` 而非 `localhost`**：Windows 上 `localhost` 同时解析到 `::1` 与 `127.0.0.1`，客户端先试 IPv6 再回退 IPv4，每次请求多 ~2s 假延迟，P95 呈双峰；`127.0.0.1` 直接走 IPv4，得到干净数字。
+
+> **状态**：**实测完成**。50 用户 / 60s，`POST /v1/runs`（DB INSERT×2 + Celery Redis enqueue，返回 202）：
+>
+> | 指标 | 数值 |
+> | --- | --- |
+> | 总请求 / 失败 | 1385 / 0 |
+> | 吞吐 | 23.25 req/s |
+> | 平均 / P50 | 21.7 ms / 20 ms |
+> | P95 / P99 | 44 ms / 57 ms |
+> | 最大 | 69 ms |
+>
+> 环境：Windows 11、Postgres 与 Redis 同机、单进程 uvicorn、目标库为测试库 `erp_copilot_test`（绝不指回开发库）。原始 HTML 报告由上述命令即时生成，不入库。
 
 ## 6. 复现全部数字
 

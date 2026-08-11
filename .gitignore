@@ -17,6 +17,9 @@ venv/
 logs/
 *.log
 
+# Generated load-test reports (reproducible via the documented locust command)
+tests/performance/reports/
+
 # Tool caches / local state
 .mypy_cache/
 .pytest_cache/

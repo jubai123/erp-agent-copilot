@@ -51,7 +51,7 @@
 | 安全评测 | 25 条：**拦截率 100%（20/20）、误报率 0%（0/5）**，确定性守卫伪 DNS | `uv run python evals/scripts/run_security_eval.py` |
 | 评测集 | 200 条 / 6 类（40+40+50+25+25+20）；tool_retrieval 与 security 跑真实逻辑 | `uv run evals/run_all.py` |
 | 代码规模 | src 55 .py + apps 28 .py + tests 86 .py；git 279 跟踪文件；tag `v1.0.0` | `git ls-files \| wc -l` |
-| 负载测试 | 方法就绪，**待实测**（Locust 场景已提交，未跑出 P50/P95） | `tests/performance/locustfile.py` |
+| 负载测试 | 50 并发 / 60s：**1385 请求 0 失败，吞吐 23.25 req/s，P50 20ms / P95 44ms / P99 57ms**（2026-08-11 本机实测，测试库） | `tests/performance/locustfile.py` |
 
 ## 5. 未完成项与诚实边界
 
@@ -99,4 +99,4 @@ uv run evals/run_all.py                              # 200 条六类评测
 2. **补 4.15 取消/超时**（cancel 端点 + deadline 检查 + EXPIRED），让长任务可终止。
 3. **补 4.13 上下文预算**与 **4.14 SSE**，完善运行时边界。
 4. 接入 `POST /v1/knowledge/search`，把 golden_baseline 四类换成真实 pipeline runner（harness 已就位，只换 runner）。
-5. 跑 Locust 负载测试并回填 P50/P95，补基准表的"待实测"。
+5. ~~跑 Locust 负载测试并回填 P50/P95~~——**已完成（2026-08-11）**：50 并发/60s 实测 1385 请求 0 失败、吞吐 23.25 req/s、P50 20ms / P95 44ms / P99 57ms，已回填 docs/benchmark.md §5；顺带修复 `create_app()` 未 `init_db` 的启动接线缺口（lifespan）。
