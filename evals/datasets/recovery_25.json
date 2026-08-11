@@ -13,7 +13,7 @@
     {"case_id": "rec-009", "query": "帮我在上海下单 10 KG", "missing_params": ["product"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["product"], "note": "缺商品"},
     {"case_id": "rec-010", "query": "下单 3 台电脑，配送区域你定", "missing_params": ["region"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["region"], "note": "缺区域，不得擅自替用户决定"},
     {"case_id": "rec-011", "query": "下单 45 件鼠标", "missing_params": ["region"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["region"], "note": "缺配送区域"},
-    {"case_id": "rec-012", "query": "我要把订单的状态改一下", "missing_params": ["order_id", "status"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["order_id", "status"], "note": "缺订单号与目标状态"},
+    {"case_id": "rec-012", "query": "我想把订单的状态更新一下", "missing_params": ["order_id", "status"], "conflict": null, "expected_action": "ask_missing", "expected_params": ["order_id", "status"], "note": "缺订单号与目标状态"},
     {"case_id": "rec-013", "query": "下单 500 件键盘", "missing_params": [], "conflict": "quantity 500 超过键盘库存 30，需确认是否改小数量", "expected_action": "confirm_conflict", "note": "数量超库存冲突"},
     {"case_id": "rec-014", "query": "给深圳下单 10 KG 橙子", "missing_params": [], "conflict": "深圳区域供应商华南物流状态 UNAVAILABLE，需选择替代供应商", "expected_action": "confirm_conflict", "note": "供应商不可用冲突"},
     {"case_id": "rec-015", "query": "把订单 3f2a9c1d 从 CREATED 直接改成 DELIVERED", "missing_params": [], "conflict": "状态跳跃：CREATED 不能直接到 DELIVERED，需按 CONFIRMED→SHIPPED 分步", "expected_action": "confirm_conflict", "note": "状态跳跃需确认分步"},

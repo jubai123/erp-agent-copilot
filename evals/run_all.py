@@ -9,15 +9,17 @@ what it is not:
 - ``deterministic`` — real production logic, offline and bit-reproducible:
   tool_retrieval uses candidate_filter's first-level DOMAIN_TOOL_MAP filter;
   security uses the real guards with faked DNS resolution; planning drives the
-  real classify_intent → build_plan_from_intent 9-tool dispatch.
+  real classify_intent → build_plan_from_intent 9-tool dispatch; recovery runs
+  the real recovery-action decision
+  (src/erp_copilot/agent/recovery_decision.py) on each query.
 - ``retrieval_pipeline`` — the real RAG chain (embed → vector → FTS → RRF →
   rerank) against the dedicated test database, using deterministic providers
   so it stays offline and reproducible. Requires a local pgvector database;
   the knowledge base is ingested idempotently from datasets/knowledge.
 - ``golden_baseline`` — an oracle that returns the dataset's expected answer
-  verbatim. recovery and failure are not yet wired to a live decision module,
-  so the golden baseline exercises the harness plumbing end-to-end; swap in
-  the real runner without touching the harness.
+  verbatim. failure is not yet wired to a live decision module, so the golden
+  baseline exercises the harness plumbing end-to-end; swap in the real runner
+  without touching the harness.
 
 Usage::
 
@@ -36,6 +38,7 @@ import yaml
 
 from erp_copilot.agent.nodes.classify_intent import classify_intent
 from erp_copilot.agent.planner import build_plan_from_intent
+from erp_copilot.agent.recovery_decision import decide_recovery_action
 from erp_copilot.tools.candidate_filter import filter_candidates
 from evals.harness import RunnerFn, RunnerOutput, format_report, run_all, write_report
 from evals.scorers.retrieval_scorer import score_retrieved
@@ -320,11 +323,11 @@ def _planning(cases: list[dict]) -> RunnerOutput:
 
 
 def _recovery(cases: list[dict]) -> RunnerOutput:
-    """Golden baseline: oracle returns the expected recovery action."""
+    """Deterministic: run the real recovery-action decision on each query."""
     per_case: list[dict] = []
     for case in cases:
         expected = case["expected_action"]
-        actual = expected
+        actual = decide_recovery_action(case["query"])
         passed = actual == expected
         per_case.append(
             {
@@ -332,13 +335,13 @@ def _recovery(cases: list[dict]) -> RunnerOutput:
                 "passed": passed,
                 "expected": expected,
                 "actual": actual,
-                "detail": "",
+                "detail": "" if passed else f"decision={actual!r}, expected {expected!r}",
             }
         )
     n = len(per_case)
     accuracy = sum(1 for pc in per_case if pc["passed"]) / n if n else 0.0
     return {
-        "mode": "golden_baseline",
+        "mode": "deterministic",
         "primary_score": accuracy,
         "metrics": {"action_accuracy": accuracy},
         "per_case": per_case,
