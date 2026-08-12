@@ -46,6 +46,8 @@ async def erp_simulator_executor(tool_name: str, arguments: dict[str, Any]) -> T
         return _get_product(arguments)
     if tool_name == "getSupplierByStatus":
         return _get_suppliers(arguments)
+    if tool_name == "querySuppliersByDeliveryRegion":
+        return _query_suppliers_by_region(arguments)
     if tool_name == "createOrder":
         return _create_order(arguments)
     if tool_name == "getOrderByOrderId":
@@ -83,26 +85,41 @@ def _get_product(arguments: dict[str, Any]) -> ToolResult:
 def _get_suppliers(arguments: dict[str, Any]) -> ToolResult:
     status = arguments.get("status", "AVAILABLE")
     if get_scenario() == "supplier_unavailable":
-        suppliers = [s for s in SEED_SUPPLIERS if s.status != status]
+        matches = [s for s in SEED_SUPPLIERS if s.status != status]
     else:
-        suppliers = [s for s in SEED_SUPPLIERS if s.status == status]
+        matches = [s for s in SEED_SUPPLIERS if s.status == status]
+    return ToolResult.success(tool_version_id="getSupplierByStatus", data=_suppliers_data(matches))
+
+
+def _query_suppliers_by_region(arguments: dict[str, Any]) -> ToolResult:
+    region = arguments.get("region")
+    matches = [s for s in SEED_SUPPLIERS if region in s.regions]
     return ToolResult.success(
-        tool_version_id="getSupplierByStatus",
-        data={
-            "suppliers": [
-                {
-                    "supplier_id": s.supplier_id,
-                    "name": s.name,
-                    "regions": list(s.regions),
-                    "status": s.status,
-                    "rating": s.rating,
-                    "delivery_days": s.delivery_days,
-                    "price_per_kg": s.price_per_kg,
-                }
-                for s in suppliers
-            ]
-        },
+        tool_version_id="querySuppliersByDeliveryRegion",
+        data=_suppliers_data(matches),
     )
+
+
+def _suppliers_data(matches: list[Any]) -> dict[str, Any]:
+    """Serialize supplier matches; supplier_id names the first (deterministic)
+    one so the create DAG's argument_sources={"supplier_id": "step:s2"} resolves."""
+    data: dict[str, Any] = {
+        "suppliers": [
+            {
+                "supplier_id": s.supplier_id,
+                "name": s.name,
+                "regions": list(s.regions),
+                "status": s.status,
+                "rating": s.rating,
+                "delivery_days": s.delivery_days,
+                "price_per_kg": s.price_per_kg,
+            }
+            for s in matches
+        ]
+    }
+    if matches:
+        data["supplier_id"] = matches[0].supplier_id
+    return data
 
 
 def _create_order(arguments: dict[str, Any]) -> ToolResult:

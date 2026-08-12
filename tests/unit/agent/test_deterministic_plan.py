@@ -20,7 +20,8 @@ from pathlib import Path
 import pytest
 
 from erp_copilot.agent.nodes.classify_intent import classify_intent
-from erp_copilot.agent.planner import build_plan_from_intent
+from erp_copilot.agent.planner import build_deterministic_plan_node, build_plan_from_intent
+from erp_copilot.agent.state import AgentState, Plan
 from erp_copilot.domain.enums import ToolRiskLevel
 
 DATASET = Path(__file__).resolve().parents[3] / "evals" / "datasets" / "planning_50.json"
@@ -112,3 +113,42 @@ class TestWritePlanShape:
         plan, errors = build_plan_from_intent(intent)
         assert plan.steps == []
         assert any(e.code == "EMPTY_PLAN" for e in errors)
+
+
+class TestIdempotencyKeyStamping:
+    """Write DAGs get a deterministic run-scoped idempotency key (task: write path).
+
+    The pure build_plan_from_intent cannot stamp keys (no run_id); the
+    deterministic plan *node* can — it stamps f"{run_id}:{step_id}" on every
+    WRITE/DANGEROUS step, both on the step (for recovery/reconciliation) and in
+    its arguments (so the executor receives it as the write tool's
+    idempotency_key parameter).
+    """
+
+    def _stamped_plan(self, query: str, run_id: str = "run-1") -> Plan:
+        node = build_deterministic_plan_node()
+        state = AgentState(
+            run_id=run_id,
+            tenant_id="t1",
+            query=query,
+            intent=classify_intent(query),
+        )
+        return node(state)["plan"]
+
+    def test_write_step_carries_run_scoped_idempotency_key(self) -> None:
+        plan = self._stamped_plan("帮我在上海下一单 10 KG 苹果", run_id="run-1")
+        s3 = plan.steps[-1]
+        assert s3.risk_level == ToolRiskLevel.WRITE
+        assert s3.idempotency_key == "run-1:s3"
+        assert s3.arguments["idempotency_key"] == "run-1:s3"
+
+    def test_read_steps_keep_no_idempotency_key(self) -> None:
+        plan = self._stamped_plan("帮我在上海下一单 10 KG 苹果", run_id="run-1")
+        for step in plan.steps[:-1]:
+            assert step.risk_level == ToolRiskLevel.READ
+            assert step.idempotency_key is None
+
+    def test_keys_differ_across_runs(self) -> None:
+        plan_a = self._stamped_plan("帮我在上海下一单 10 KG 苹果", run_id="run-a")
+        plan_b = self._stamped_plan("帮我在上海下一单 10 KG 苹果", run_id="run-b")
+        assert plan_a.steps[-1].idempotency_key != plan_b.steps[-1].idempotency_key

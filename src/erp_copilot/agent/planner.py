@@ -265,6 +265,29 @@ def _order_dag_steps(action: str, entities: dict[str, Any]) -> list[PlanStep] | 
     return None
 
 
+def _stamp_idempotency_keys(plan: Plan, run_id: str) -> Plan:
+    """Stamp a deterministic idempotency key onto every WRITE/DANGEROUS step.
+
+    The key is f"{run_id}:{step_id}": the same run + same step always maps to
+    the same key, so a retry or crash-resume replays (never re-applies) the
+    write, while different runs get distinct keys. The key lives both on the
+    step (for recovery/reconciliation) and in the step's arguments (so the
+    executor receives it as the write tool's idempotency_key parameter).
+    """
+    stamped: list[PlanStep] = []
+    for step in plan.steps:
+        if step.risk_level in (ToolRiskLevel.WRITE, ToolRiskLevel.DANGEROUS):
+            key = f"{run_id}:{step.step_id}"
+            step = step.model_copy(
+                update={
+                    "idempotency_key": key,
+                    "arguments": {**step.arguments, "idempotency_key": key},
+                }
+            )
+        stamped.append(step)
+    return plan.model_copy(update={"steps": stamped})
+
+
 def build_deterministic_plan_node() -> Callable[[AgentState], dict[str, Any]]:
     """Build the build_plan LangGraph node using the deterministic planner.
 
@@ -277,6 +300,7 @@ def build_deterministic_plan_node() -> Callable[[AgentState], dict[str, Any]]:
         if state.intent is None:
             return {"errors": [StateError(code="NO_INTENT", message="build_plan 阶段缺少意图分类")]}
         plan, errors = build_plan_from_intent(state.intent)
+        plan = _stamp_idempotency_keys(plan, state.run_id)
         updates: dict[str, Any] = {
             "plan": plan,
             "candidate_tools": [step.tool_name for step in plan.steps],

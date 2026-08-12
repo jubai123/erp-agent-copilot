@@ -139,6 +139,32 @@ class TestGetOrderByOrderId:
         assert result.error.error_code == "ORDER_NOT_FOUND"
 
 
+class TestSupplierRead:
+    def test_get_supplier_by_status_carries_canonical_supplier_id(self) -> None:
+        result = _run("getSupplierByStatus", {"status": "AVAILABLE"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        # First (deterministic) available supplier — the id the create DAG's
+        # argument_sources={"supplier_id": "step:s2"} resolves from.
+        assert result.data["supplier_id"] == 3
+        assert {s["supplier_id"] for s in result.data["suppliers"]} == {3, 4, 6, 7}
+
+    def test_query_suppliers_by_region_returns_region_matches(self) -> None:
+        result = _run("querySuppliersByDeliveryRegion", {"region": "上海"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["supplier_id"] == 3
+        assert [s["name"] for s in result.data["suppliers"]] == ["华东物流"]
+
+    def test_query_suppliers_by_unknown_region_returns_empty(self) -> None:
+        result = _run("querySuppliersByDeliveryRegion", {"region": "不存在区域"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"suppliers": []}
+
+
 class TestErrorMapping:
     def test_timeout_scenario_fails_create_order_retryable(self, monkeypatch) -> None:
         import apps.erp_simulator.scenarios as _scenarios

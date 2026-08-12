@@ -527,3 +527,61 @@ def test_resolve_arguments_signature_is_callable() -> None:
     # Guards the pure-function seam used by the node so a refactor cannot
     # silently change it into an unexported helper.
     assert callable(resolve_arguments)
+
+
+class TestCreateWriteDag:
+    """The real planner + real simulator executor drive a create DAG to an order.
+
+    Acceptance for the write-path enablement: the create DAG's WRITE step runs
+    with the supplier_id resolved from the supplier step's list output and the
+    idempotency_key the planner stamped — so the executor's createOrder lands a
+    real order in the simulator store under that key.
+    """
+
+    def test_create_dag_resolves_supplier_and_lands_order(self) -> None:
+        from apps.erp_simulator.data.orders import get_by_idempotency_key
+        from apps.erp_simulator.data.products import PRODUCT_BY_NAME
+        from apps.worker.executor import erp_simulator_executor
+        from erp_copilot.agent.nodes.classify_intent import classify_intent
+        from erp_copilot.agent.planner import build_deterministic_plan_node
+
+        # The executor deducts stock; restore it so a later test that asserts
+        # the shared catalog still matches the simulator seed stays green.
+        apple = PRODUCT_BY_NAME["苹果"]
+        stock = apple.quantity_in_stock
+        try:
+            query = "帮我在上海下一单 1 KG 苹果"
+            planner = build_deterministic_plan_node()
+            plan = planner(
+                AgentState(
+                    run_id="dag-run-1", tenant_id="t1", query=query, intent=classify_intent(query)
+                )
+            )["plan"]
+            assert [s.tool_name for s in plan.steps] == [
+                "getProductByName",
+                "querySuppliersByDeliveryRegion",
+                "createOrder",
+            ]
+            s3 = plan.steps[-1]
+            assert s3.idempotency_key == "dag-run-1:s3"
+            assert s3.arguments["idempotency_key"] == "dag-run-1:s3"
+
+            node = build_execute_steps_node(executor=erp_simulator_executor)
+            state = _node_state(
+                plan=plan,
+                query=query,
+                validation=PlanValidation(is_valid=True, parallel_groups=[["s1", "s2"], ["s3"]]),
+            )
+            updates = _invoke(node, state)
+
+            s3_result = updates["step_results"]["s3"]
+            assert s3_result.status == StepStatus.COMPLETED
+            assert s3_result.data is not None
+            assert s3_result.data["status"] == "CREATED"
+            # supplier_id resolved from s2's supplier list, key stamped by planner.
+            assert s3_result.data["supplier_id"] == 3
+            order = get_by_idempotency_key("dag-run-1:s3")
+            assert order is not None
+            assert order.quantity == 1
+        finally:
+            apple.quantity_in_stock = stock
