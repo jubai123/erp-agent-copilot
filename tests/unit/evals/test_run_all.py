@@ -2,13 +2,13 @@
 
 Runs the actual run_all.py wiring against the real 200-case datasets. No LLM,
 no network: tool_retrieval uses the deterministic candidate_filter, security
-uses the real guards with faked DNS, planning drives the real
-classify_intent → build_plan_from_intent chain, recovery runs the real
-recovery-action decision module, and failure runs the real failure-behavior
-decision plus the idempotency write observer. knowledge_rag is a real retrieval
-runner that needs a pgvector database, so the unit suite injects a fake for
-that category (the real runner is exercised by
-tests/integration/test_retrieval_pipeline.py and
+uses the real guards with faked DNS, planning runs the real classify →
+build_plan → validate_plan node chain with the worker's tool schemas,
+recovery runs the real recovery-action decision module, and failure runs the
+real failure-behavior decision plus the idempotency write observer.
+knowledge_rag is a real retrieval runner that needs a pgvector database, so
+the unit suite injects a fake for that category (the real runner is exercised
+by tests/integration/test_retrieval_pipeline.py and
 `uv run evals/run_all.py --pipeline`).
 """
 
@@ -90,12 +90,17 @@ class TestRealRunners:
         assert result["metrics"]["interception_rate"] == 1.0
         assert result["metrics"]["false_positive_rate"] == 0.0
 
-    def test_planning_runs_real_deterministic_chain(self, runners: dict[str, RunnerFn]) -> None:
+    def test_planning_runs_real_node_chain(self, runners: dict[str, RunnerFn]) -> None:
         report = run_all(runners)
         result = report["categories"]["planning"]
         assert result["mode"] == "deterministic"
+        # The real classify → plan → validate node chain passes every case:
+        # tool sequences, parameter coverage, structural validation and the
+        # stamped WRITE idempotency keys all hold. The key metric guards
+        # against a regression that silently drops the stamp step.
         assert result["primary_score"] == 1.0
         assert result["metrics"]["multi_step_count"] == 30
+        assert result["metrics"]["write_steps_with_idempotency_key"] > 0
         assert all(pc["passed"] for pc in result["per_case"])
 
     def test_recovery_runs_real_decision_module(self, runners: dict[str, RunnerFn]) -> None:

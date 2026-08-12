@@ -8,11 +8,12 @@ what it is not:
 
 - ``deterministic`` — real production logic, offline and bit-reproducible:
   tool_retrieval uses candidate_filter's first-level DOMAIN_TOOL_MAP filter;
-  security uses the real guards with faked DNS resolution; planning drives the
-  real classify_intent → build_plan_from_intent 9-tool dispatch; recovery runs
-  the real recovery-action decision (src/erp_copilot/agent/recovery_decision.py)
-  on each query; failure runs the real failure-behavior decision plus the
-  idempotency write observer (src/erp_copilot/agent/failure_decision.py).
+  security uses the real guards with faked DNS resolution; planning runs the
+  real classify → build_plan → validate_plan node chain with the worker's
+  tool schemas; recovery runs the real recovery-action decision
+  (src/erp_copilot/agent/recovery_decision.py) on each query; failure runs the
+  real failure-behavior decision plus the idempotency write observer
+  (src/erp_copilot/agent/failure_decision.py).
 - ``retrieval_pipeline`` — the real RAG chain (embed → vector → FTS → RRF →
   rerank) against the dedicated test database, using deterministic providers
   so it stays offline and reproducible. Requires a local pgvector database;
@@ -34,8 +35,6 @@ from pathlib import Path
 import yaml
 
 from erp_copilot.agent.failure_decision import decide_failure_behavior, observe_duplicates
-from erp_copilot.agent.nodes.classify_intent import classify_intent
-from erp_copilot.agent.planner import build_plan_from_intent
 from erp_copilot.agent.recovery_decision import decide_recovery_action
 from erp_copilot.tools.candidate_filter import filter_candidates
 from evals.harness import RunnerFn, RunnerOutput, format_report, run_all, write_report
@@ -283,26 +282,84 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
 
 
 def _planning(cases: list[dict]) -> RunnerOutput:
-    """Deterministic: run the real classify_intent → build_plan_from_intent chain.
+    """Real agent node chain: classify_intent → build_plan → validate_plan.
 
-    The tool sequence the 9-tool planner produces must match the dataset's
-    expected steps. mode is "deterministic" — the golden oracle is gone.
+    Runs the exact nodes the worker graph executes (graph_builder's
+    build_deterministic_plan_node and build_validate_plan_node with the real
+    WORKER_TOOL_SCHEMAS). A case passes only when all four hold:
+
+    - the planned tool sequence matches the dataset's expected steps;
+    - every expected parameter is covered by step.arguments or a step source;
+    - the plan passes structural validation (required params, no cycles,
+      WRITE compensation notes);
+    - every WRITE step carries the run-scoped stamped idempotency key.
+
+    mode stays "deterministic" — these are the real production nodes, offline
+    and bit-reproducible.
     """
+    from apps.worker.graph_builder import WORKER_TOOL_SCHEMAS
+    from erp_copilot.agent.nodes.classify_intent import classify_intent_node
+    from erp_copilot.agent.nodes.validate_plan import build_validate_plan_node
+    from erp_copilot.agent.planner import build_deterministic_plan_node
+    from erp_copilot.agent.state import AgentState
+    from erp_copilot.domain.enums import ToolRiskLevel
+
+    plan_node = build_deterministic_plan_node()
+    validate_node = build_validate_plan_node(tool_schemas=WORKER_TOOL_SCHEMAS)
+
     per_case: list[dict] = []
     multi_step = 0
+    stamped = 0
     for case in cases:
+        state = AgentState(run_id=f"eval-{case['case_id']}", tenant_id="eval", query=case["query"])
+        state = state.model_copy(update=classify_intent_node(state))
+        state = state.model_copy(update=plan_node(state))
+        state = state.model_copy(update=validate_node(state))
+
         expected = [step["tool"] for step in case["steps"]]
-        intent = classify_intent(case["query"])
-        plan, errors = build_plan_from_intent(intent)
-        actual = [step.tool_name for step in plan.steps] if not errors else []
-        passed = actual == expected
+        plan = state.plan
+        actual = [step.tool_name for step in plan.steps] if plan else []
+        failures: list[str] = []
+        if actual != expected:
+            failures.append(f"plan {actual!r} != expected {expected!r}")
+        else:
+            # actual == expected and the dataset's steps are never empty, so
+            # the plan node must have produced a plan here.
+            assert plan is not None
+            for exp_step, act_step in zip(case["steps"], plan.steps, strict=True):
+                missing = [
+                    p
+                    for p in exp_step.get("params", {})
+                    if p not in act_step.arguments and p not in act_step.argument_sources
+                ]
+                if missing:
+                    failures.append(f"step {act_step.step_id} missing params {missing!r}")
+        if state.plan_validation is not None and not state.plan_validation.is_valid:
+            failures.append(
+                "validate: " + ", ".join(e.code for e in state.plan_validation.errors)
+            )
+        if state.plan is not None:
+            stamped += sum(
+                1
+                for s in state.plan.steps
+                if s.risk_level == ToolRiskLevel.WRITE and s.idempotency_key is not None
+            )
+            unstamped = [
+                s.step_id
+                for s in state.plan.steps
+                if s.risk_level == ToolRiskLevel.WRITE and s.idempotency_key is None
+            ]
+            if unstamped:
+                failures.append(f"WRITE steps without idempotency key: {unstamped!r}")
+
+        passed = not failures
         per_case.append(
             {
                 "case_id": case["case_id"],
                 "passed": passed,
                 "expected": expected,
                 "actual": actual,
-                "detail": "" if passed else f"planner produced {actual!r}, expected {expected!r}",
+                "detail": "" if passed else "; ".join(failures),
             }
         )
         if not case["single_step"]:
@@ -315,6 +372,7 @@ def _planning(cases: list[dict]) -> RunnerOutput:
         "metrics": {
             "plan_valid_rate": valid / n if n else 0.0,
             "multi_step_count": multi_step,
+            "write_steps_with_idempotency_key": stamped,
         },
         "per_case": per_case,
     }
