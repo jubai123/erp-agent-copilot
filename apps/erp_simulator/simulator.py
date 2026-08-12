@@ -13,11 +13,13 @@ from apps.erp_simulator.routes.orders import router as orders_router
 from apps.erp_simulator.routes.products import router as products_router
 from apps.erp_simulator.routes.suppliers import router as suppliers_router
 from apps.erp_simulator.scenarios import router as scenarios_router
+from erp_copilot.observability.http import TraceContextMiddleware
 
 
 def create_simulator_app() -> FastAPI:
     """Create a FastAPI application for the ERP Simulator."""
     app = FastAPI(title="ERP Agent Copilot - ERP Simulator", version="0.1.0")
+    app.add_middleware(TraceContextMiddleware)
 
     app.include_router(products_router)
     app.include_router(suppliers_router)

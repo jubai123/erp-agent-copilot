@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from erp_copilot.observability.http import TraceContextMiddleware
 from erp_copilot.tools.mcp_gateway import MCPGateway
 
 
@@ -18,6 +19,7 @@ def create_gateway_app() -> FastAPI:
     registering, listing, and executing tools through MCP connections.
     """
     app = FastAPI(title="ERP Agent Copilot - MCP Gateway", version="0.1.0")
+    app.add_middleware(TraceContextMiddleware)
     gateway = MCPGateway()
 
     @app.get("/health")
