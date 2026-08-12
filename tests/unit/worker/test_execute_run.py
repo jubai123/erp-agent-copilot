@@ -14,6 +14,7 @@ never connected to.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections.abc import Iterator
@@ -30,15 +31,23 @@ from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+from apps.erp_simulator.data.orders import get_by_idempotency_key  # noqa: E402
 from apps.erp_simulator.data.products import PRODUCT_BY_NAME  # noqa: E402
+from apps.worker.graph_builder import build_worker_graph  # noqa: E402
 from apps.worker.tasks import _persist, execute_run  # noqa: E402
-from erp_copilot.agent.state import AgentState, AgentStatus  # noqa: E402
+from erp_copilot.agent.state import AgentState, AgentStatus, ApprovalStatus  # noqa: E402
 from erp_copilot.domain.entities import (  # noqa: E402
     AgentCheckpoint,
+    IdempotencyRecord,
     Run,
     RunEvent,
     RunStep,
     Tenant,
+)
+from erp_copilot.memory.checkpoint import CheckpointSaver  # noqa: E402
+from erp_copilot.security.approval import (  # noqa: E402
+    ApprovalDecisionService,
+    resume_run,
 )
 
 _EXPECTED_NODE_ORDER: set[str] = {
@@ -73,6 +82,7 @@ def session(monkeypatch: pytest.MonkeyPatch) -> Iterator[Session]:
     RunStep.__table__.create(engine)
     AgentCheckpoint.__table__.create(engine)
     RunEvent.__table__.create(engine)
+    IdempotencyRecord.__table__.create(engine)
 
     monkeypatch.setattr("erp_copilot.infrastructure.database.get_session", lambda: Session(engine))
     with Session(engine) as db:
@@ -263,3 +273,57 @@ class TestDeadlineAndCancel:
         session.refresh(run)
         assert run.status == "CANCELLED"
         assert run.steps == []
+
+
+class TestWritePathEndToEnd:
+    """Task 4.17: worker grants order:write so a WRITE run pauses for approval,
+    then resumes through the real graph with at-most-once idempotency.
+
+    Before the grant, a create-order query is DENY-gated at policy_check and the
+    run "completes" with the write silently skipped. After the grant the run
+    pauses in WAITING_APPROVAL, and approving step s3 resumes the graph so the
+    order lands exactly once (idempotency key f"{run.id}:s3").
+    """
+
+    def test_write_run_pauses_then_resume_executes(self, session: Session) -> None:
+        tenant = _make_tenant(session)
+        run = _make_run(session, tenant.id)
+        product = PRODUCT_BY_NAME["苹果"]
+        original_stock = product.quantity_in_stock
+        try:
+            result = execute_run(run.id, "苹果", query="帮我在上海下一单 1 KG 苹果")
+
+            assert result["status"] == "WAITING_APPROVAL"
+            session.refresh(run)
+            assert run.status == "WAITING_APPROVAL"
+
+            saver = CheckpointSaver(session)
+            ApprovalDecisionService(saver).decide(
+                run_id=run.id,
+                tenant_id=tenant.id,
+                step_id="s3",
+                decision=ApprovalStatus.APPROVED,
+                decided_by="tester",
+            )
+
+            graph = build_worker_graph(session, saver)
+            final = asyncio.run(resume_run(graph, saver, run_id=run.id, tenant_id=tenant.id))
+
+            assert final["status"] == "succeeded"
+            s3 = final["step_results"]["s3"]
+            assert s3.status == "completed"
+            assert s3.data["status"] == "CREATED"
+            assert s3.data["quantity"] == 1
+
+            order = get_by_idempotency_key(f"{run.id}:s3")
+            assert order is not None
+            assert order.status == "CREATED"
+            assert order.quantity == 1
+
+            record = (
+                session.query(IdempotencyRecord).filter_by(idempotency_key=f"{run.id}:s3").first()
+            )
+            assert record is not None
+            assert record.status == "COMPLETED"
+        finally:
+            product.quantity_in_stock = original_stock

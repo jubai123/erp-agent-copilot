@@ -21,13 +21,7 @@ from celery.utils.log import get_task_logger
 from langgraph.graph.state import CompiledStateGraph
 
 from apps.worker.celery_app import celery_app
-from apps.worker.executor import erp_simulator_executor
-from erp_copilot.agent.graph import build_agent_graph
-from erp_copilot.agent.nodes.execute_steps import build_execute_steps_node
-from erp_copilot.agent.nodes.policy_check import build_policy_check_node
-from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
-from erp_copilot.agent.nodes.verify_results import build_verify_results_node
-from erp_copilot.agent.planner import build_deterministic_plan_node
+from apps.worker.graph_builder import build_worker_graph
 from erp_copilot.agent.state import AgentState, AgentStatus
 from erp_copilot.application.events import append_run_event
 from erp_copilot.domain.entities import Run, RunStep
@@ -40,26 +34,6 @@ logger = get_task_logger(__name__)
 # ~24 nodes, close to LangGraph's default recursion_limit of 25; raise it so a
 # budgeted recovery loop never trips GraphRecursionError.
 _RECURSION_LIMIT = 50
-
-# Tool schemas the deterministic planner can emit (docs/05 simulator tools).
-_TOOL_SCHEMAS: dict[str, ToolSpec] = {
-    "getProductByName": ToolSpec(name="getProductByName", required_params=["name"]),
-    "getProductById": ToolSpec(name="getProductById", required_params=["product_id"]),
-    "getProductSubstitutesByName": ToolSpec(
-        name="getProductSubstitutesByName", required_params=["name"]
-    ),
-    "querySuppliersByDeliveryRegion": ToolSpec(
-        name="querySuppliersByDeliveryRegion", required_params=["region"]
-    ),
-    "getSupplierByStatus": ToolSpec(name="getSupplierByStatus", required_params=["status"]),
-    "getOrderByOrderId": ToolSpec(name="getOrderByOrderId", required_params=["order_id"]),
-    "createOrder": ToolSpec(
-        name="createOrder",
-        required_params=["product_id", "supplier_id", "quantity", "region"],
-    ),
-    "updateOrderStatus": ToolSpec(name="updateOrderStatus", required_params=["order_id", "status"]),
-    "cancelOrder": ToolSpec(name="cancelOrder", required_params=["order_id"]),
-}
 
 # Runtime AgentStatus -> persisted Run.status. create_run and the pre-LangGraph
 # worker use uppercase strings; the checkpoint layer separately stores the
@@ -101,16 +75,6 @@ def _default_query(product_name: str) -> str:
     return f"查询{product_name}库存"
 
 
-def _resolve_read_scopes(_tenant_id: str, _user_id: str) -> set[str]:
-    """Scope resolver until RBAC lands.
-
-    The worker's deterministic READ demo only grants read-only scopes. Write
-    scopes are never granted here, so a future WRITE step stays gated (DENY,
-    never a silent allow).
-    """
-    return {"product:read", "supplier:read"}
-
-
 def _make_status_event_sink(session) -> Callable[[str, AgentState], None]:
     """Record one RUN_STATUS event per runtime status change (task 4.14).
 
@@ -134,18 +98,6 @@ def _make_status_event_sink(session) -> Callable[[str, AgentState], None]:
         )
 
     return sink
-
-
-def _build_graph(checkpoint_saver: CheckpointSaver) -> CompiledStateGraph:
-    """Build the worker graph with real nodes and the injected checkpoint saver."""
-    return build_agent_graph(
-        plan_node=build_deterministic_plan_node(),
-        validate_node=build_validate_plan_node(tool_schemas=_TOOL_SCHEMAS),
-        policy_node=build_policy_check_node(get_scopes=_resolve_read_scopes),
-        execute_node=build_execute_steps_node(executor=erp_simulator_executor),
-        verify_node=build_verify_results_node(),
-        checkpoint_saver=checkpoint_saver,
-    )
 
 
 def _invoke_graph(graph: CompiledStateGraph, state: AgentState) -> AgentState:
@@ -262,7 +214,9 @@ def execute_run(
                 else None
             ),
         )
-        graph = _build_graph(CheckpointSaver(session, event_sink=_make_status_event_sink(session)))
+        graph = build_worker_graph(
+            session, CheckpointSaver(session, event_sink=_make_status_event_sink(session))
+        )
         final = _invoke_graph(graph, state)
         status = _persist(session, run, final)
         logger.info("Run %s finished with status %s", run_id, status)
