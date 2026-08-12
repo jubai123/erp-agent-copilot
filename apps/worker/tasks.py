@@ -5,6 +5,9 @@ shortcut. execute_run seeds an AgentState from the Run row, runs
 build_agent_graph with real nodes (deterministic planner, validate, policy,
 ERP-simulator executor, verify) and a CheckpointSaver bound to the DB session,
 then maps the terminal runtime state back onto the Run row and RunStep rows.
+Task 5.8/5.9: a re-entered run resumes from its latest checkpoint via
+RunRecovery instead of restarting blank, and a FAILED/EXPIRED terminal routes
+through FailureQueue so the run lands in the human-intervention queue.
 Lifecycle: QUEUED -> PROCESSING -> COMPLETED | FAILED | ...
 """
 
@@ -22,8 +25,10 @@ from langgraph.graph.state import CompiledStateGraph
 
 from apps.worker.celery_app import celery_app
 from apps.worker.graph_builder import build_worker_graph
-from erp_copilot.agent.state import AgentState, AgentStatus
+from erp_copilot.agent.recovery import RunRecovery
+from erp_copilot.agent.state import AgentState, AgentStatus, StateError
 from erp_copilot.application.events import append_run_event
+from erp_copilot.application.failure_queue import FailureQueue
 from erp_copilot.domain.entities import Run, RunStep
 from erp_copilot.domain.enums import StepStatus
 from erp_copilot.memory.checkpoint import CheckpointSaver
@@ -62,6 +67,27 @@ _STEP_STATUS_UPPER: dict[StepStatus, str] = {
     StepStatus.FAILED: "FAILED",
     StepStatus.SKIPPED: "SKIPPED",
 }
+
+# docs/03 §9 error codes -> operator guidance for FailureQueue.suggested_action.
+# Keys cover the failures the worker graph can actually emit; anything else
+# falls back to a generic instruction.
+_SUGGESTED_ACTION: dict[str, str] = {
+    "RECOVERY_RECONCILIATION_REQUIRED": "核对 ERP 侧写操作是否已生效，再决定重试或人工处理",
+    "RECOVERY_REQUIRES_HUMAN": "人工对账结果不确定的写操作后重试",
+    "TIMEOUT": "检查 ERP Simulator 可用性后重试",
+    "DEADLINE_EXCEEDED": "确认截止时间配置后重新发起",
+    "EMPTY_PLAN": "补充查询条件（商品名/订单号/供应商意图）后重试",
+    "RETRY_BUDGET_EXHAUSTED": "检查持续失败根因后人工重试",
+    "REPLAN_BUDGET_EXHAUSTED": "检查计划生成失败根因后人工处理",
+    "WRITE_RETRY_UNSAFE": "核对写操作是否已生效后人工处理",
+    "RECOVERY_GIVE_UP": "检查恢复失败原因后人工处理",
+    "INSUFFICIENT_STOCK": "确认可用库存后调整下单数量",
+    "PRODUCT_NOT_FOUND": "确认商品名称/编号正确后重试",
+}
+
+
+def _suggested_action(code: str) -> str:
+    return _SUGGESTED_ACTION.get(code, "检查失败原因并确认修复后重试")
 
 
 def _default_query(product_name: str) -> str:
@@ -132,19 +158,32 @@ def _persist(session, run: Run, final: AgentState) -> str:
 
     The run row is re-read first so a cancel that landed while the graph ran
     is never clobbered: a settled CANCELLED run stays cancelled (the same
-    settled-run rule failure_queue enforces for FAILED flips).
+    settled-run rule FailureQueue enforces). A FAILED/EXPIRED terminal routes
+    through FailureQueue.record, which sets the three diagnostic fields, bumps
+    version and appends the RUN_FAILED event.
     """
     fresh = session.query(Run).filter_by(id=run.id).first()
     if fresh is None or fresh.status == "CANCELLED":
         return fresh.status if fresh is not None else run.status
     run = fresh
-    run.status = _RUN_STATUS_UPPER[final.status]
-    if run.status in {"COMPLETED", "FAILED", "CANCELLED"}:
-        run.completed_at = datetime.now(UTC)
-    if run.status == "FAILED" and final.errors:
-        first = final.errors[0]
-        run.failure_code = first.code
-        run.failure_reason = first.message
+    if final.status in (AgentStatus.FAILED, AgentStatus.EXPIRED):
+        # Task 5.9: a terminal failure routes through FailureQueue so it lands
+        # in the human-intervention queue with a machine-readable code, a
+        # human-readable reason, a suggested action, and an immutable
+        # RUN_FAILED event. FailureQueue re-guards COMPLETED/CANCELLED so a
+        # settled run is never clobbered even if this branch races one.
+        first = final.errors[0] if final.errors else StateError(code="UNKNOWN", message="未知错误")
+        FailureQueue(session).record(
+            run_id=run.id,
+            tenant_id=run.tenant_id,
+            error_code=first.code,
+            reason=first.message,
+            suggested_action=_suggested_action(first.code),
+        )
+    else:
+        run.status = _RUN_STATUS_UPPER[final.status]
+        if run.status in {"COMPLETED", "FAILED", "CANCELLED"}:
+            run.completed_at = datetime.now(UTC)
     steps = {step.step_id: step for step in final.plan.steps} if final.plan else {}
     for index, (step_id, step) in enumerate(steps.items(), start=1):
         result = final.step_results.get(step_id)
@@ -201,22 +240,31 @@ def execute_run(
         run.started_at = datetime.now(UTC)
         session.commit()
 
-        state = AgentState(
-            run_id=run.id,
-            tenant_id=run.tenant_id,
-            # No per-user identity is carried by create_run yet; the run executes
-            # as a system actor so the policy gate resolves scopes (read-only).
-            user_id=run.user_id or "system",
-            query=query or _default_query(product_name),
-            deadline_at=(
-                datetime.now(UTC) + timedelta(seconds=deadline_s)
-                if deadline_s is not None
-                else None
-            ),
-        )
-        graph = build_worker_graph(
-            session, CheckpointSaver(session, event_sink=_make_status_event_sink(session))
-        )
+        saver = CheckpointSaver(session, event_sink=_make_status_event_sink(session))
+        graph = build_worker_graph(session, saver)
+
+        # Task 5.8: a run that was mid-flight when the worker (re)started resumes
+        # from its latest checkpoint (reconciled for writes) instead of restarting
+        # from a blank state — otherwise a decided approval or partial execution
+        # would be lost. A fresh run has no checkpoint and starts blank.
+        recovery = RunRecovery(session, saver=saver)
+        resumed = recovery.load(run.id, run.tenant_id)
+        if resumed.resumed and resumed.state is not None:
+            state = resumed.state
+        else:
+            state = AgentState(
+                run_id=run.id,
+                tenant_id=run.tenant_id,
+                # No per-user identity is carried by create_run yet; the run
+                # executes as a system actor and the policy gate resolves scopes.
+                user_id=run.user_id or "system",
+                query=query or _default_query(product_name),
+                deadline_at=(
+                    datetime.now(UTC) + timedelta(seconds=deadline_s)
+                    if deadline_s is not None
+                    else None
+                ),
+            )
         final = _invoke_graph(graph, state)
         status = _persist(session, run, final)
         logger.info("Run %s finished with status %s", run_id, status)

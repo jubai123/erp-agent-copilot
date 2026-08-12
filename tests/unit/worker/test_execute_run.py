@@ -36,6 +36,7 @@ from apps.erp_simulator.data.products import PRODUCT_BY_NAME  # noqa: E402
 from apps.worker.graph_builder import build_worker_graph  # noqa: E402
 from apps.worker.tasks import _persist, execute_run  # noqa: E402
 from erp_copilot.agent.state import AgentState, AgentStatus, ApprovalStatus  # noqa: E402
+from erp_copilot.application.failure_queue import FailureQueue  # noqa: E402
 from erp_copilot.domain.entities import (  # noqa: E402
     AgentCheckpoint,
     IdempotencyRecord,
@@ -325,5 +326,109 @@ class TestWritePathEndToEnd:
             )
             assert record is not None
             assert record.status == "COMPLETED"
+        finally:
+            product.quantity_in_stock = original_stock
+
+
+class TestRecoveryAndFailureQueue:
+    """Task 5.8/5.9 worker wiring: crash-resume from checkpoint + FAILED -> human queue."""
+
+    def test_crash_resume_replays_decided_approval_and_executes(self, session: Session) -> None:
+        # A run paused for approval, approved, then re-entered (worker crashed
+        # before resuming) must resume from the checkpoint — not restart blank
+        # and lose the decision. Without RunRecovery the second execute_run
+        # would re-pause in WAITING_APPROVAL forever.
+        tenant = _make_tenant(session)
+        run = _make_run(session, tenant.id)
+        product = PRODUCT_BY_NAME["苹果"]
+        original_stock = product.quantity_in_stock
+        try:
+            first = execute_run(run.id, "苹果", query="帮我在上海下一单 1 KG 苹果")
+            assert first["status"] == "WAITING_APPROVAL"
+
+            ApprovalDecisionService(CheckpointSaver(session)).decide(
+                run_id=run.id,
+                tenant_id=tenant.id,
+                step_id="s3",
+                decision=ApprovalStatus.APPROVED,
+                decided_by="tester",
+            )
+
+            second = execute_run(run.id, "苹果", query="帮我在上海下一单 1 KG 苹果")
+
+            assert second["status"] == "COMPLETED"
+            session.refresh(run)
+            assert run.status == "COMPLETED"
+            order = get_by_idempotency_key(f"{run.id}:s3")
+            assert order is not None
+            assert order.status == "CREATED"
+            record = (
+                session.query(IdempotencyRecord).filter_by(idempotency_key=f"{run.id}:s3").first()
+            )
+            assert record is not None
+            assert record.status == "COMPLETED"
+        finally:
+            product.quantity_in_stock = original_stock
+
+    def test_failed_run_records_suggested_action_and_enters_human_queue(
+        self, session: Session
+    ) -> None:
+        tenant = _make_tenant(session)
+        run = _make_run(session, tenant.id)
+
+        result = execute_run(run.id, "苹果", query="查询库存")
+
+        assert result["status"] == "FAILED"
+        session.refresh(run)
+        assert run.status == "FAILED"
+        assert run.failure_code == "EMPTY_PLAN"
+        assert run.failure_reason
+        assert run.suggested_action
+        event = session.query(RunEvent).filter_by(run_id=run.id, event_type="RUN_FAILED").first()
+        assert event is not None
+        payload = json.loads(event.payload)
+        assert payload["error_code"] == "EMPTY_PLAN"
+        assert payload["suggested_action"] == run.suggested_action
+        queue = FailureQueue(session).list_needing_intervention(tenant.id)
+        assert [q.id for q in queue] == [run.id]
+
+    def test_reconciliation_uncertain_write_enters_human_queue(self, session: Session) -> None:
+        # Crash between begin() and complete(): the idempotency record stays
+        # PENDING, so the write outcome is unknown. On resume RunRecovery flags
+        # the step and the run fails into the human queue instead of an unsafe
+        # auto-retry.
+        tenant = _make_tenant(session)
+        run = _make_run(session, tenant.id)
+        product = PRODUCT_BY_NAME["苹果"]
+        original_stock = product.quantity_in_stock
+        try:
+            execute_run(run.id, "苹果", query="帮我在上海下一单 1 KG 苹果")
+            ApprovalDecisionService(CheckpointSaver(session)).decide(
+                run_id=run.id,
+                tenant_id=tenant.id,
+                step_id="s3",
+                decision=ApprovalStatus.APPROVED,
+                decided_by="tester",
+            )
+            session.add(
+                IdempotencyRecord(
+                    tenant_id=tenant.id,
+                    run_id=run.id,
+                    step_id="s3",
+                    idempotency_key=f"{run.id}:s3",
+                    status="PENDING",
+                    request_payload="{}",
+                )
+            )
+            session.commit()
+
+            result = execute_run(run.id, "苹果", query="帮我在上海下一单 1 KG 苹果")
+
+            assert result["status"] == "FAILED"
+            session.refresh(run)
+            assert run.status == "FAILED"
+            assert run.failure_code == "RECOVERY_RECONCILIATION_REQUIRED"
+            queue = FailureQueue(session).list_needing_intervention(tenant.id)
+            assert [q.id for q in queue] == [run.id]
         finally:
             product.quantity_in_stock = original_stock
