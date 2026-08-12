@@ -1007,7 +1007,7 @@
 - 有步骤 failed、是永久错误→进入 recover_or_replan
 - 区分"工具调用成功"和"业务目标达成"
 
-> **状态：✅ 已完成**（2026-08-08，`verify_results` 语义门（第 4 层防御）：COMPLETED 步骤按 `success_condition` 确定性求值（AST 白名单安全 eval，仅放行比较/布尔/算术表达式、属性与下标访问、`len/str/int/float` 调用 + 空 `__builtins__`，拒绝 `__import__`/任意调用，零新依赖），`response` 绑定结果数据；条件不满足→`SUCCESS_CONDITION_FAILED`、条件非法→`SUCCESS_CONDITION_INVALID`、步骤无结果→`MISSING_STEP_RESULT`（均永久）；FAILED 步骤按 `is_retryable` 归类（execute 已记 error 不重复追加）；SKIPPED 不判失败。分类写入 AgentStatus：无失败→SUCCEEDED（finalize）、全部可重试→RETRYING、任一永久→REPLANNING——9 节点拓扑只有 recover_or_replan 一个恢复汇点，retry/replan/give-up 三路拆分留给 5.8，路由仍由 errors 驱动；graph 增加 `verify_node` 注入参数，stub 改名 `_verify_results_noop`）
+> **状态：✅ 已完成**（2026-08-08，`verify_results` 语义门（第 4 层防御）：COMPLETED 步骤按 `success_condition` 确定性求值（AST 白名单安全 eval，仅放行比较/布尔/算术表达式、属性与下标访问、`len/str/int/float` 调用 + 空 `__builtins__`，拒绝 `__import__`/任意调用，零新依赖），`response` 绑定结果数据；条件不满足→`SUCCESS_CONDITION_FAILED`、条件非法→`SUCCESS_CONDITION_INVALID`、步骤无结果→`MISSING_STEP_RESULT`（均永久）；FAILED 步骤按 `is_retryable` 归类（execute 已记 error 不重复追加）；SKIPPED 不判失败。分类写入 AgentStatus：无失败→SUCCEEDED（finalize）、全部可重试→RETRYING、任一永久→REPLANNING——9 节点拓扑只有 recover_or_replan 一个恢复汇点，retry/replan/give-up 三路拆分由 5.8 的 recover_or_replan 节点实现（2026-08-12，commit c44d60a），路由仍由 errors 驱动；graph 增加 `verify_node` 注入参数，stub 改名 `_verify_results_noop`）
 
 ---
 
@@ -1041,7 +1041,7 @@
 - 超预算时先压缩工具结果和历史
 - 安全策略和审批信息不压缩
 
-> **状态：❌ 未完成（v1.1 待办）**。`src/erp_copilot/memory/context_budget.py` 未创建；`memory/` 下仅有 `checkpoint.py`。
+> **状态：✅ 已完成**（2026-08-11，commit `24a9244`，`context_budget.py`：docs/03 §8 按类别 token 预算，超限先压缩工具结果与历史，安全策略/审批/引用永不压缩；无 tokenizer 依赖时默认启发式 ≈1 token/4 字符，可注入真实 tokenizer）。
 
 ---
 
@@ -1057,7 +1057,7 @@
 - 客户端断开不影响 Worker
 - 重连后可以收到后续事件
 
-> **状态：❌ 未完成（v1.1 待办）**。`runs.py` 仅有 create/get/approve 三个端点，无 `GET /v1/runs/{run_id}/events`。
+> **状态：✅ 已完成**（2026-08-11，commit `618b5b3`，`GET /v1/runs/{run_id}/events`：SSE 实时推送 RUN_STATUS 等事件，带 `resume_seq` 断点重放——重连客户端从上次序号续收，断开只终止本地生成器，不影响 Worker）。
 
 **教学要点**：
 | 概念 | 讲解内容 |
@@ -1081,7 +1081,7 @@
 - 超时→Run 状态变为 EXPIRED
 - 取消/超时不产生脏数据
 
-> **状态：❌ 未完成（v1.1 待办，部分）**。`AgentState.deadline_at` 字段已加（state.py），但无 `POST /v1/runs/{run_id}/cancel` 端点、无节点执行 deadline 检查 / EXPIRED 状态流转。
+> **状态：✅ 已完成**（2026-08-11，commit `eb9e543`，`POST /v1/runs/{run_id}/cancel` 取消端点 + `check_deadline` 图首节点：超时→EXPIRED→worker 映射 FAILED + DEADLINE_EXCEEDED；已 settle 的 run 拒绝重复取消，取消/超时各追加不可变事件）。
 
 ---
 
@@ -1092,7 +1092,7 @@
 **交付物**：
 - 端到端测试：输入"查苹果库存并推荐供应商"→Agent 正确执行两个 READ 步骤
 
-> **状态：❌ 未完成（v1.1 待办）**。`tests/e2e/test_happy_path.py` 是阶段二的 API→Worker 直连路径冒烟，未走完整 LangGraph 图；Worker `execute_run` 仍是简化直连（见 README 诚实边界）。
+> **状态：✅ 已完成**（2026-08-11，commit `4c796a5`，Worker `execute_run` 由 `build_agent_graph(checkpoint_saver=...)` 驱动：确定性 planner → validate → policy → ERP 模拟器 executor → verify 全真实节点，CheckpointSaver 绑定 DB 会话，状态事件经 SSE 推送；`查苹果库存并推荐供应商` 两步 READ 场景由 tests/unit/worker/test_execute_run.py 覆盖）。
 
 ---
 
@@ -1294,12 +1294,15 @@
 
 **交付物**：
 - `src/erp_copilot/agent/recovery.py`（✅ 已实现）
+- `src/erp_copilot/agent/nodes/recover_or_replan.py`（✅ 已实现，2026-08-12，commit `c44d60a`：图级恢复汇点，重试/重规划/放弃三路决策，预算 `MAX_RETRIES=2` / `MAX_REPLANS=1`）
 - `tests/unit/agent/test_recovery.py`（✅ 已实现，13 用例）
+- `tests/unit/agent/test_recover_or_replan.py`（✅ 已实现，16 用例）
 
 **验收标准**：
 - ✅ Worker 重启→加载最新 checkpoint（`RunRecovery.load` 复用 `CheckpointSaver.load_latest`，按 `(run_id, tenant_id)` 取最新行；无 checkpoint → `resumed=False`；B 覆盖 A 由注入 clock 保证确定性；租户隔离：t2 查 t1 的 run → 不恢复）
 - ✅ 状态不明确的写 Step→标记为需要对账（PENDING 幂等记录 → 追加 `StateError(code="RECOVERY_RECONCILIATION_REQUIRED", step_id, details={"idempotency_key"})`，`reconciled_steps` 记录；不盲目重试）
 - ✅ 已完成的 Step→不重复执行（COMPLETED step result 或 COMPLETED 幂等记录都跳过；`step_results` 原样保留，`execute_ready_steps` 据此跳过）
+- ✅ 图内恢复汇点 retry/replan/give-up（2026-08-12，commit `c44d60a`：`recover_or_replan` 节点按预算决定重试→execute_ready_steps / 重规划→build_plan / 放弃→FAILED；`RECOVERY_RECONCILIATION_REQUIRED` 短路人工介入；WRITE/DANGEROUS 步骤失败且无幂等键不自动重试，保证 at-most-once）
 
 **落地细节**：`RunRecovery(session, *, saver=None)` 是纯编排模块——注入 session（与 `CheckpointSaver`/`IdempotencyStore` 同风格），`saver` 默认构造 `CheckpointSaver(session)`；`load(run_id, tenant_id)` 返回 frozen dataclass `RecoveryResult(state, resumed, reconciled_steps)`，不持久化、不重存 checkpoint，由 Worker 把对账后的 state 重新喂回图，下一个节点的 checkpoint save 自然落盘新增的 error。`_reconcile(state)` 遍历 `plan.steps`，只关心 WRITE/DANGEROUS 且带 `idempotency_key` 的 Step，按 `(tenant_id, idempotency_key)` 查幂等记录（与 5.6 唯一约束一致）：**PENDING**（执行意图已写、结果未知）→ 标记对账；**COMPLETED**（已成功，checkpoint 只是滞后）→ 跳过；**FAILED**（明确失败、可重试）→ 跳过；**无记录**（`begin()` 从未跑过，工具必然未执行）→ 安全直接跑，跳过。优先级：checkpoint 里 COMPLETED 的 step result 胜过任何 PENDING 记录（已成功优先，防 stale 幂等行误判）。`RECOVERY_RECONCILIATION_REQUIRED` 是 docs/03 §9 错误码，落成模块常量供后续 Worker/对账服务引用；现有 error 保留（append 不覆盖）。
 

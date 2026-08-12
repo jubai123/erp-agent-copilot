@@ -105,6 +105,6 @@ uv run python evals/scripts/run_security_eval.py --report report.json
 uv run evals/run_all.py                 # 200 条六大分类评测
 uv run python evals/scripts/run_security_eval.py   # 25 条安全守卫评测
 uv run python evals/scripts/run_ablation.py        # 42 条检索消融
-uv run pytest tests/unit                # 单元测试（874 条通过）
+uv run pytest tests/unit                # 单元测试（1063 条通过）
 uv run python tests/performance/fault_injection.py # 故障注入 3/3 PASS
 ```

@@ -53,8 +53,8 @@ uv run evals/run_all.py                       # 200 条六大分类评测
 uv run python evals/scripts/run_security_eval.py   # 25 条安全守卫
 uv run python evals/scripts/run_ablation.py        # 42 条检索消融
 uv run python tests/performance/fault_injection.py # 故障注入 3/3
-uv run pytest tests/unit                      # 单元测试（874 通过）
-uv run mypy src                               # 类型检查（55 文件干净）
+uv run pytest tests/unit                      # 单元测试（1063 通过）
+uv run mypy src                               # 类型检查（62 文件干净）
 ```
 
 ## 文档
@@ -87,8 +87,7 @@ migrations/     Alembic 版本化迁移
 
 ## 诚实边界
 
-当前未接线的点，文档与代码保持一致地标注，避免把"目标"当成"已实现"：
+接线现状与依赖注意点，文档与代码保持一致地标注，避免把"目标"当成"已实现"：
 
-1. `POST /v1/knowledge/search` 为 STUB（检索管线组件已交付，未接入 HTTP 层）。
-2. Celery worker 的 `execute_run` 是**简化直连路径**（直接查 ERP Simulator 并记 RunStep），尚未接入完整 LangGraph 状态机。
-3. `evals/run_all.py` 六分类全部跑真实逻辑（`tool_retrieval`/`planning`/`recovery`/`security`/`failure` 为 `deterministic`，`knowledge_rag` 为 `retrieval_pipeline`）；其中 `knowledge_rag` 需要本地 pgvector 测试库，离线单测中该分类注入 fake runner。
+- `POST /v1/knowledge/search` 已接入完整检索管线（embed → 向量 → 关键词 → RRF → rerank）；Worker `execute_run` 由完整 LangGraph 驱动（确定性 planner → validate → policy → executor → verify，Checkpoint 绑定 DB 会话）。
+- `evals/run_all.py` 六分类全部跑真实逻辑（`tool_retrieval`/`planning`/`recovery`/`security`/`failure` 为 `deterministic`，`knowledge_rag` 为 `retrieval_pipeline`）；其中 `knowledge_rag` 需要本地 pgvector 测试库，离线单测中该分类注入 fake runner。
