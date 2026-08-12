@@ -22,8 +22,16 @@ from erp_copilot.infrastructure.database import get_session
 from erp_copilot.memory.checkpoint import CheckpointSaver
 from erp_copilot.observability.metrics import METRICS
 from erp_copilot.security.approval import decide_and_resume
+from erp_copilot.security.injection_guard import InjectionGuard, record_injection_event
+from erp_copilot.security.redaction import Redactor
 
 router = APIRouter(prefix="/v1/runs", tags=["runs"])
+
+# Input/output guards (tasks 5.4/5.5) with the default rule sets. The
+# injection guard blocks flagged queries before a run is created; the
+# redactor scrubs every SSE payload before it leaves the API.
+_INJECTION_GUARD = InjectionGuard()
+_REDACTOR = Redactor()
 
 # A run already settled (succeeded, failed, or cancelled) is never cancelled.
 _CANCEL_REJECT: tuple[str, ...] = ("COMPLETED", "FAILED", "CANCELLED")
@@ -70,7 +78,8 @@ async def _event_stream(run_id: str, resume_seq: int) -> AsyncIterator[str]:
             )
             for row in rows:
                 seen = row.sequence
-                yield f"id: {row.id}\nevent: {row.event_type}\ndata: {row.payload}\n\n"
+                redacted = _REDACTOR.redact(row.payload).redacted
+                yield f"id: {row.id}\nevent: {row.event_type}\ndata: {redacted}\n\n"
             if _run_is_terminal(session, run_id):
                 return
             now = time.monotonic()
@@ -97,6 +106,19 @@ async def create_run(body: CreateRunRequest, response: Response) -> RunResponse:
     """Create a new Run and dispatch it for execution. Returns 202 Accepted."""
     session = get_session()
     try:
+        # Input boundary (docs/06 §7): an injection-flagged query is blocked
+        # before the run is created — no run row, event recorded with no run
+        # link. record_injection_event commits, so the raised HTTPException
+        # cannot roll the audit row back.
+        verdict = _INJECTION_GUARD.check(body.query or "")
+        if verdict.flagged:
+            record_injection_event(
+                session, run_id=None, text=body.query or "", verdict=verdict
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=f"Query blocked by security policy: {verdict.detail}",
+            )
         # The acting user's scopes resolve from the role graph downstream, so an
         # unknown/inactive user would silently run as no-scope. Reject it at the
         # boundary instead (system boundary validation, docs/06 §4).
