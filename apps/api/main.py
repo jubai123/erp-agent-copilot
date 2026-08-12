@@ -9,6 +9,7 @@ from fastapi import FastAPI
 
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.infrastructure.database import init_db
+from erp_copilot.observability.http import TraceContextMiddleware
 from erp_copilot.observability.logging import setup_logging
 from erp_copilot.observability.tracing import build_otlp_exporter, setup_tracing
 
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    app.add_middleware(TraceContextMiddleware)
 
     from apps.api.routes.health import router as health_router
     from apps.api.routes.knowledge import router as knowledge_router
