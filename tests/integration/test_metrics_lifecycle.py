@@ -12,7 +12,13 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from erp_copilot.domain.entities import Tenant
+from erp_copilot.domain.entities import (
+    Role,
+    RoleScope,
+    Tenant,
+    User,
+    UserRole,
+)
 from erp_copilot.infrastructure.database import get_session
 from erp_copilot.observability.metrics import METRICS, generate_latest
 
@@ -25,6 +31,36 @@ def _create_tenant(name: str, slug: str) -> str:
         session.add(tenant)
         session.commit()
         return str(tenant.id)
+    finally:
+        session.close()
+
+
+def _make_user(tenant_id: str, scopes: list[tuple[str, str]]) -> str:
+    """Create an active user in *tenant_id* with *scopes*; return its id.
+
+    DB-driven RBAC (docs/06 §4) resolves the acting user's scopes from the role
+    graph, so a test that expects real tool execution must provision a user
+    holding the plan's required scopes — otherwise every scoped step is
+    policy-denied and the run completes as a silent no-op.
+    """
+    session = get_session()
+    try:
+        role = Role(tenant_id=tenant_id, name="tester")
+        session.add(role)
+        session.flush()
+        for resource, action in scopes:
+            session.add(RoleScope(role_id=role.id, resource=resource, action=action))
+        user = User(
+            tenant_id=tenant_id,
+            email=f"user-{role.id}@example.com",
+            hashed_password="x",
+            is_active=True,
+        )
+        session.add(user)
+        session.flush()
+        session.add(UserRole(user_id=user.id, role_id=role.id))
+        session.commit()
+        return user.id
     finally:
         session.close()
 
@@ -51,13 +87,14 @@ class TestRunLifecycleMetrics:
         from apps.api.main import create_app
 
         tenant_id = _create_tenant("Metrics Read", "metrics-read")
+        user_id = _make_user(tenant_id, [("product", "read"), ("supplier", "read")])
         client = TestClient(create_app())
         created_before = _counter("erp_runs_created_total")
         completed_before = _counter("erp_runs_completed_total")
 
         response = client.post(
             "/v1/runs",
-            json={"tenant_id": tenant_id, "title": "metrics-read"},
+            json={"tenant_id": tenant_id, "title": "metrics-read", "user_id": user_id},
         )
 
         assert response.status_code == 202
@@ -69,6 +106,7 @@ class TestRunLifecycleMetrics:
         from apps.api.main import create_app
 
         tenant_id = _create_tenant("Metrics Phases", "metrics-phases")
+        user_id = _make_user(tenant_id, [("product", "read"), ("supplier", "read")])
         client = TestClient(create_app())
         plan_before = _phase_count("plan")
         execute_before = _phase_count("execute")
@@ -76,7 +114,7 @@ class TestRunLifecycleMetrics:
 
         response = client.post(
             "/v1/runs",
-            json={"tenant_id": tenant_id, "title": "metrics-phases"},
+            json={"tenant_id": tenant_id, "title": "metrics-phases", "user_id": user_id},
         )
 
         assert response.status_code == 202
@@ -89,6 +127,9 @@ class TestRunLifecycleMetrics:
         from apps.api.main import create_app
 
         tenant_id = _create_tenant("Metrics Pause", "metrics-pause")
+        user_id = _make_user(
+            tenant_id, [("product", "read"), ("supplier", "read"), ("order", "write")]
+        )
         client = TestClient(create_app())
         created_before = _counter("erp_runs_created_total")
         completed_before = _counter("erp_runs_completed_total")
@@ -99,6 +140,7 @@ class TestRunLifecycleMetrics:
                 "tenant_id": tenant_id,
                 "title": "metrics-pause",
                 "query": "帮我在上海下一单 1 KG 苹果",
+                "user_id": user_id,
             },
         )
 

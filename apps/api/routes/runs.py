@@ -16,7 +16,7 @@ from apps.worker.graph_builder import build_worker_graph
 from erp_copilot.agent.state import AgentState, AgentStatus, ApprovalStatus
 from erp_copilot.application.events import append_run_event
 from erp_copilot.application.run_persistence import make_status_event_sink, persist_run
-from erp_copilot.domain.entities import Run, RunEvent
+from erp_copilot.domain.entities import Run, RunEvent, User
 from erp_copilot.domain.errors import CopilotError, NotFoundError
 from erp_copilot.infrastructure.database import get_session
 from erp_copilot.memory.checkpoint import CheckpointSaver
@@ -97,8 +97,26 @@ async def create_run(body: CreateRunRequest, response: Response) -> RunResponse:
     """Create a new Run and dispatch it for execution. Returns 202 Accepted."""
     session = get_session()
     try:
+        # The acting user's scopes resolve from the role graph downstream, so an
+        # unknown/inactive user would silently run as no-scope. Reject it at the
+        # boundary instead (system boundary validation, docs/06 §4).
+        if body.user_id is not None:
+            actor = (
+                session.query(User)
+                .filter_by(id=body.user_id, tenant_id=body.tenant_id, is_active=True)
+                .first()
+            )
+            if actor is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Unknown or inactive user '{body.user_id}' "
+                        f"in tenant '{body.tenant_id}'"
+                    ),
+                )
         run = Run(
             tenant_id=body.tenant_id,
+            user_id=body.user_id,
             title=body.title or "",
             status="QUEUED",
         )

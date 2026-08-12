@@ -16,6 +16,12 @@ class CreateRunRequest(BaseModel):
     # falls back to "查询{product_name}库存", which can only ever produce READ
     # plans — a WRITE query ("下一单…") must be passed here to reach approval.
     query: str | None = None
+    # Identity of the acting user within the tenant. The worker resolves this
+    # user's scopes from the role graph; None (system-initiated) resolves to no
+    # scopes, so every scoped step (reads included) is policy-denied and the run
+    # completes without executing — pass a real user to do actual work.
+    # Scopes are never accepted from the client.
+    user_id: str | None = None
 
 
 class RunResponse(BaseModel):

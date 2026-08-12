@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from apps.erp_simulator.data.orders import get_by_idempotency_key
 from apps.erp_simulator.data.products import PRODUCT_BY_NAME
@@ -27,7 +28,17 @@ from erp_copilot.agent.state import (
     ApprovalRequest,
 )
 from erp_copilot.application.failure_queue import FailureQueue
-from erp_copilot.domain.entities import AuditLog, IdempotencyRecord, Run, RunEvent, Tenant
+from erp_copilot.domain.entities import (
+    AuditLog,
+    IdempotencyRecord,
+    Role,
+    RoleScope,
+    Run,
+    RunEvent,
+    Tenant,
+    User,
+    UserRole,
+)
 from erp_copilot.domain.enums import ToolRiskLevel
 from erp_copilot.infrastructure.database import get_session
 from erp_copilot.memory.checkpoint import CheckpointSaver
@@ -48,6 +59,32 @@ def _create_tenant(name: str, slug: str) -> str:
         return str(tenant.id)
     finally:
         session.close()
+
+
+def _make_writer_user(session: Session, tenant_id: str) -> str:
+    """Create an active user whose scopes let the resumed create-order DAG run.
+
+    On resume the graph re-runs policy_check against the checkpoint's user_id
+    (docs/07 §8), so the acting user must exist in the role graph holding
+    product:read, supplier:read and order:write — otherwise every scoped step is
+    policy-denied and the resumed run completes as a silent no-op.
+    """
+    role = Role(tenant_id=tenant_id, name="writer")
+    session.add(role)
+    session.flush()
+    for resource, action in [("product", "read"), ("supplier", "read"), ("order", "write")]:
+        session.add(RoleScope(role_id=role.id, resource=resource, action=action))
+    user = User(
+        tenant_id=tenant_id,
+        email="writer@example.com",
+        hashed_password="x",
+        is_active=True,
+    )
+    session.add(user)
+    session.flush()
+    session.add(UserRole(user_id=user.id, role_id=role.id))
+    session.commit()
+    return user.id
 
 
 def _create_paused_run(tenant_id: str) -> str:
@@ -79,12 +116,13 @@ def _save_paused_checkpoint(
     """
     session = get_session()
     try:
+        user_id = _make_writer_user(session, tenant_id)
         CheckpointSaver(session).save(
             "request_approval",
             AgentState(
                 run_id=run_id,
                 tenant_id=tenant_id,
-                user_id="u1",
+                user_id=user_id,
                 query=query,
                 status=AgentStatus.WAITING_APPROVAL if waiting else AgentStatus.EXECUTING,
                 approvals=[

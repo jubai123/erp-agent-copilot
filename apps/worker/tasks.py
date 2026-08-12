@@ -28,6 +28,7 @@ from erp_copilot.agent.state import AgentState
 from erp_copilot.application.run_persistence import make_status_event_sink, persist_run
 from erp_copilot.domain.entities import Run
 from erp_copilot.memory.checkpoint import CheckpointSaver
+from erp_copilot.observability.metrics import METRICS
 
 logger = get_task_logger(__name__)
 
@@ -124,9 +125,11 @@ def execute_run(
             state = AgentState(
                 run_id=run.id,
                 tenant_id=run.tenant_id,
-                # No per-user identity is carried by create_run yet; the run
-                # executes as a system actor and the policy gate resolves scopes.
-                user_id=run.user_id or "system",
+                # The acting user's scopes resolve from the role graph via
+                # resolve_user_scopes; None (system-initiated) resolves to no
+                # scopes, so every scoped step (reads included) is policy-denied
+                # and the run completes without executing.
+                user_id=run.user_id,
                 query=query or _default_query(product_name),
                 deadline_at=(
                     datetime.now(UTC) + timedelta(seconds=deadline_s)
@@ -146,6 +149,10 @@ def execute_run(
                 run.status = "FAILED"
                 run.completed_at = datetime.now(UTC)
                 session.commit()
+                # The crash bypassed persist_run (it is what took us down), so
+                # this direct FAILED write is the one failure never counted by
+                # persist_run — bump the counter only after the commit lands.
+                METRICS.runs_failed.inc()
         except Exception:
             session.rollback()
         raise

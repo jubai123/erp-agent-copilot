@@ -41,12 +41,17 @@ from erp_copilot.application.run_persistence import persist_run  # noqa: E402
 from erp_copilot.domain.entities import (  # noqa: E402
     AgentCheckpoint,
     IdempotencyRecord,
+    Role,
+    RoleScope,
     Run,
     RunEvent,
     RunStep,
     Tenant,
+    User,
+    UserRole,
 )
 from erp_copilot.memory.checkpoint import CheckpointSaver  # noqa: E402
+from erp_copilot.observability.metrics import METRICS, generate_latest  # noqa: E402
 from erp_copilot.security.approval import (  # noqa: E402
     ApprovalDecisionService,
     resume_run,
@@ -80,6 +85,10 @@ def session(monkeypatch: pytest.MonkeyPatch) -> Iterator[Session]:
         poolclass=StaticPool,
     )
     Tenant.__table__.create(engine)
+    User.__table__.create(engine)
+    Role.__table__.create(engine)
+    RoleScope.__table__.create(engine)
+    UserRole.__table__.create(engine)
     Run.__table__.create(engine)
     RunStep.__table__.create(engine)
     AgentCheckpoint.__table__.create(engine)
@@ -99,17 +108,60 @@ def _make_tenant(session: Session) -> Tenant:
     return tenant
 
 
-def _make_run(session: Session, tenant_id: str, title: str = "查询库存") -> Run:
-    run = Run(tenant_id=tenant_id, title=title, status="QUEUED")
+def _make_run(
+    session: Session, tenant_id: str, title: str = "查询库存", user_id: str | None = None
+) -> Run:
+    run = Run(tenant_id=tenant_id, title=title, status="QUEUED", user_id=user_id)
     session.add(run)
     session.commit()
     return run
 
 
+def _make_user(session: Session, tenant_id: str, scopes: list[tuple[str, str]]) -> str:
+    """Create an active user bound to a role granting *scopes*; return its id.
+
+    DB-driven RBAC (docs/06 §4) resolves the acting user's scopes from the role
+    graph, so a test that expects real tool execution must provision a user
+    holding the plan's required scopes — otherwise every scoped step is
+    policy-denied and the run completes as a silent no-op.
+    """
+    role = Role(tenant_id=tenant_id, name="tester")
+    session.add(role)
+    session.flush()
+    for resource, action in scopes:
+        session.add(RoleScope(role_id=role.id, resource=resource, action=action))
+    user = User(
+        tenant_id=tenant_id,
+        email=f"user-{role.id}@example.com",
+        hashed_password="x",
+        is_active=True,
+    )
+    session.add(user)
+    session.flush()
+    session.add(UserRole(user_id=user.id, role_id=role.id))
+    session.commit()
+    return user.id
+
+
+def _make_reader_user(session: Session, tenant_id: str) -> str:
+    """Return a user holding the READ scopes the planner stamps on read steps."""
+    return _make_user(session, tenant_id, [("product", "read"), ("supplier", "read")])
+
+
+def _make_writer_user(session: Session, tenant_id: str) -> str:
+    """Return a user whose scopes let a create-order DAG pause for approval."""
+    return _make_user(
+        session,
+        tenant_id,
+        [("product", "read"), ("supplier", "read"), ("order", "write")],
+    )
+
+
 class TestHappyPath:
     def test_product_query_completes_and_persists_step(self, session: Session) -> None:
         tenant = _make_tenant(session)
-        run = _make_run(session, tenant.id)
+        user_id = _make_reader_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
 
         result = execute_run(run.id, "苹果")
 
@@ -132,7 +184,8 @@ class TestHappyPath:
     def test_stock_and_supplier_query_runs_two_read_steps(self, session: Session) -> None:
         # task 4.16 acceptance: "查苹果库存并推荐供应商" -> two READ steps.
         tenant = _make_tenant(session)
-        run = _make_run(session, tenant.id)
+        user_id = _make_reader_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
 
         result = execute_run(run.id, "苹果", query="查苹果库存并推荐供应商")
 
@@ -146,7 +199,8 @@ class TestHappyPath:
 
     def test_checkpoint_rows_written_for_every_node(self, session: Session) -> None:
         tenant = _make_tenant(session)
-        run = _make_run(session, tenant.id)
+        user_id = _make_reader_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
 
         execute_run(run.id, "苹果")
 
@@ -188,7 +242,8 @@ class TestScenarios:
 
         monkeypatch.setattr(_scenarios, "_current_scenario", "timeout")
         tenant = _make_tenant(session)
-        run = _make_run(session, tenant.id)
+        user_id = _make_reader_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
 
         result = execute_run(run.id, "苹果")
 
@@ -205,7 +260,8 @@ class TestScenarios:
 
         monkeypatch.setattr(_scenarios, "_current_scenario", "stock_insufficient")
         tenant = _make_tenant(session)
-        run = _make_run(session, tenant.id)
+        user_id = _make_reader_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
 
         result = execute_run(run.id, "苹果")
 
@@ -289,7 +345,8 @@ class TestWritePathEndToEnd:
 
     def test_write_run_pauses_then_resume_executes(self, session: Session) -> None:
         tenant = _make_tenant(session)
-        run = _make_run(session, tenant.id)
+        user_id = _make_writer_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
         product = PRODUCT_BY_NAME["苹果"]
         original_stock = product.quantity_in_stock
         try:
@@ -340,7 +397,8 @@ class TestRecoveryAndFailureQueue:
         # and lose the decision. Without RunRecovery the second execute_run
         # would re-pause in WAITING_APPROVAL forever.
         tenant = _make_tenant(session)
-        run = _make_run(session, tenant.id)
+        user_id = _make_writer_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
         product = PRODUCT_BY_NAME["苹果"]
         original_stock = product.quantity_in_stock
         try:
@@ -399,7 +457,8 @@ class TestRecoveryAndFailureQueue:
         # the step and the run fails into the human queue instead of an unsafe
         # auto-retry.
         tenant = _make_tenant(session)
-        run = _make_run(session, tenant.id)
+        user_id = _make_writer_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
         product = PRODUCT_BY_NAME["苹果"]
         original_stock = product.quantity_in_stock
         try:
@@ -433,3 +492,37 @@ class TestRecoveryAndFailureQueue:
             assert [q.id for q in queue] == [run.id]
         finally:
             product.quantity_in_stock = original_stock
+
+
+def _counter(name: str) -> float:
+    """Read a cumulative counter from the shared module registry (delta reads)."""
+    for line in generate_latest(METRICS).splitlines():
+        if line.startswith(f"{name} "):
+            return float(line.split()[-1])
+    return 0.0
+
+
+class TestCrashBranchFailedMetric:
+    """Session 18 known gap: a graph crash bypasses persist_run and marks the
+    run FAILED directly in execute_run's except branch, so the failed counter
+    must be bumped there too — the crash path is the only failure that never
+    reaches the persist_run counter."""
+
+    def test_graph_crash_marks_failed_and_increments_failed_counter(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("simulated graph crash")
+
+        monkeypatch.setattr("apps.worker.tasks._invoke_graph", boom)
+        tenant = _make_tenant(session)
+        run = _make_run(session, tenant.id)
+        failed_before = _counter("erp_runs_failed_total")
+
+        with pytest.raises(RuntimeError, match="simulated graph crash"):
+            execute_run(run.id, "苹果")
+
+        session.refresh(run)
+        assert run.status == "FAILED"
+        assert run.completed_at is not None
+        assert _counter("erp_runs_failed_total") == failed_before + 1

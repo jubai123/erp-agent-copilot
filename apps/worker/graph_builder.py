@@ -17,6 +17,7 @@ from __future__ import annotations
 import inspect
 import time
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 from langgraph.graph.state import CompiledStateGraph
@@ -32,6 +33,7 @@ from erp_copilot.agent.planner import build_deterministic_plan_node
 from erp_copilot.agent.state import AgentState
 from erp_copilot.memory.checkpoint import CheckpointSaver
 from erp_copilot.observability.metrics import METRICS
+from erp_copilot.security.rbac import resolve_user_scopes
 from erp_copilot.tools.idempotency import IdempotencyStore
 
 # Tool schemas the deterministic planner can emit (docs/05 simulator tools).
@@ -53,20 +55,6 @@ WORKER_TOOL_SCHEMAS: dict[str, ToolSpec] = {
     "updateOrderStatus": ToolSpec(name="updateOrderStatus", required_params=["order_id", "status"]),
     "cancelOrder": ToolSpec(name="cancelOrder", required_params=["order_id"]),
 }
-
-_WRITER_SCOPES: frozenset[str] = frozenset({"product:read", "supplier:read", "order:write"})
-
-
-def resolve_worker_scopes(_tenant_id: str, _user_id: str) -> set[str]:
-    """Scope resolver until RBAC lands.
-
-    The worker executes as a system actor; granting order:write lets a WRITE
-    plan reach the approval gate (REQUIRE_APPROVAL) instead of being DENY'd by
-    the scope check — the human approval, not a missing scope, is what governs
-    a write.
-    """
-    return set(_WRITER_SCOPES)
-
 
 def _observe_phase(phase: str, node: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap one phase node so its wall-clock duration feeds the phase histogram.
@@ -110,7 +98,7 @@ def build_worker_graph(
     return build_agent_graph(
         plan_node=_observe_phase("plan", build_deterministic_plan_node()),
         validate_node=build_validate_plan_node(tool_schemas=WORKER_TOOL_SCHEMAS),
-        policy_node=build_policy_check_node(get_scopes=resolve_worker_scopes),
+        policy_node=build_policy_check_node(get_scopes=partial(resolve_user_scopes, session)),
         execute_node=_observe_phase(
             "execute",
             build_execute_steps_node(

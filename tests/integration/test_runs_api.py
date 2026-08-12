@@ -16,7 +16,16 @@ from erp_copilot.agent.state import (
     PlanStep,
     PolicyDecision,
 )
-from erp_copilot.domain.entities import IdempotencyRecord, Run, RunEvent, Tenant
+from erp_copilot.domain.entities import (
+    IdempotencyRecord,
+    Role,
+    RoleScope,
+    Run,
+    RunEvent,
+    Tenant,
+    User,
+    UserRole,
+)
 from erp_copilot.domain.enums import ToolRiskLevel
 from erp_copilot.infrastructure.database import get_session
 from erp_copilot.memory.checkpoint import CheckpointSaver
@@ -115,6 +124,39 @@ def _create_tenant(name: str, slug: str) -> str:
         session.close()
 
 
+def _make_writer_user(tenant_id: str) -> str:
+    """Create an active writer-scoped user in *tenant_id*; return its id.
+
+    DB-driven RBAC (docs/06 §4) resolves the acting user's scopes from the role
+    graph, so a WRITE create_run only pauses for approval when the caller's
+    user_id holds product:read, supplier:read and order:write.
+    """
+    session = get_session()
+    try:
+        role = Role(tenant_id=tenant_id, name="writer")
+        session.add(role)
+        session.flush()
+        for resource, action in [
+            ("product", "read"),
+            ("supplier", "read"),
+            ("order", "write"),
+        ]:
+            session.add(RoleScope(role_id=role.id, resource=resource, action=action))
+        user = User(
+            tenant_id=tenant_id,
+            email="writer@example.com",
+            hashed_password="x",
+            is_active=True,
+        )
+        session.add(user)
+        session.flush()
+        session.add(UserRole(user_id=user.id, role_id=role.id))
+        session.commit()
+        return user.id
+    finally:
+        session.close()
+
+
 class TestCreateRun:
     """Acceptance: POST /v1/runs creates a new Run."""
 
@@ -150,6 +192,21 @@ class TestCreateRun:
         assert data["run_id"]
         assert data["status"] == "COMPLETED"
 
+    def test_create_run_with_unknown_user_returns_422(self) -> None:
+        from apps.api.main import create_app
+
+        # Scopes resolve from the role graph by user_id, so an unknown/inactive
+        # user would silently run as no-scope — the boundary rejects it instead.
+        tenant_id = _create_tenant("Unknown User", "unknown-user")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/v1/runs",
+            json={"tenant_id": tenant_id, "title": "x", "user_id": "ghost-user"},
+        )
+
+        assert response.status_code == 422
+
     def test_create_run_write_query_pauses_then_approve_completes(self) -> None:
         from apps.api.main import create_app
 
@@ -159,6 +216,7 @@ class TestCreateRun:
         # the write path was unreachable from the API. Approving s3 resumes the
         # graph and the order lands exactly once.
         tenant_id = _create_tenant("Write Query", "write-query")
+        user_id = _make_writer_user(tenant_id)
         product = PRODUCT_BY_NAME["苹果"]
         original_stock = product.quantity_in_stock
         client = TestClient(create_app())
@@ -169,6 +227,7 @@ class TestCreateRun:
                     "tenant_id": tenant_id,
                     "title": "下单",
                     "query": "帮我在上海下一单 1 KG 苹果",
+                    "user_id": user_id,
                 },
             )
 
