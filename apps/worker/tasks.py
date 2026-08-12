@@ -36,6 +36,11 @@ from erp_copilot.memory.checkpoint import CheckpointSaver
 
 logger = get_task_logger(__name__)
 
+# The worst retry/replan sequence (2 retries -> 1 replan -> give up) visits
+# ~24 nodes, close to LangGraph's default recursion_limit of 25; raise it so a
+# budgeted recovery loop never trips GraphRecursionError.
+_RECURSION_LIMIT = 50
+
 # Tool schemas the deterministic planner can emit (docs/05 simulator tools).
 _TOOL_SCHEMAS: dict[str, ToolSpec] = {
     "getProductByName": ToolSpec(name="getProductByName", required_params=["name"]),
@@ -65,8 +70,9 @@ _RUN_STATUS_UPPER: dict[AgentStatus, str] = {
     AgentStatus.CANCELLED: "CANCELLED",
     AgentStatus.FAILED: "FAILED",
     AgentStatus.EXPIRED: "FAILED",
-    # The single-pass worker cannot loop back into the graph, so the runtime
-    # in-flight/retry states that exit the graph are terminal failures here.
+    # The recover_or_replan node resolves RETRYING/REPLANNING inside the graph
+    # (to EXECUTING/PLANNING or FAILED), so these are safety nets — kept in case
+    # a future path lets an in-flight state escape the graph.
     AgentStatus.QUEUED: "FAILED",
     AgentStatus.PLANNING: "FAILED",
     AgentStatus.EXECUTING: "FAILED",
@@ -155,10 +161,16 @@ def _invoke_graph(graph: CompiledStateGraph, state: AgentState) -> AgentState:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        result: dict = asyncio.run(graph.ainvoke(state_dict))
+        result: dict = asyncio.run(
+            graph.ainvoke(state_dict, config={"recursion_limit": _RECURSION_LIMIT})
+        )
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            result = pool.submit(lambda: asyncio.run(graph.ainvoke(state_dict))).result()
+            result = pool.submit(
+                lambda: asyncio.run(
+                    graph.ainvoke(state_dict, config={"recursion_limit": _RECURSION_LIMIT})
+                )
+            ).result()
 
     return AgentState.model_validate(result)
 

@@ -15,6 +15,7 @@ from erp_copilot.agent.graph import NODE_NAMES, build_agent_graph
 from erp_copilot.agent.nodes.build_plan import build_plan_node
 from erp_copilot.agent.nodes.execute_steps import build_execute_steps_node
 from erp_copilot.agent.nodes.policy_check import build_policy_check_node
+from erp_copilot.agent.nodes.recover_or_replan import MAX_REPLANS, MAX_RETRIES
 from erp_copilot.agent.nodes.retrieve_context import build_retrieve_context_node
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.nodes.verify_results import build_verify_results_node
@@ -158,8 +159,12 @@ class TestSmoke:
                 "plan": {"steps": [{"step_id": "s1", "tool_name": "ghostTool"}]},
             }
         )
+        # The validator flags the unknown tool; the recovery node replans once,
+        # and with a no-op planner the rerun still has no valid plan, so the
+        # run gives up FAILED instead of executing the bad plan.
         assert result["plan_validation"].is_valid is False
-        assert result["errors"][0].code == "UNKNOWN_TOOL"
+        assert result["status"] == AgentStatus.FAILED
+        assert result["replan_count"] == 1
 
     def test_injected_policy_node_populates_state(self) -> None:
         policy = build_policy_check_node(get_scopes=lambda _t, _u: {"product:read"})
@@ -333,8 +338,11 @@ class TestSmoke:
                 },
             }
         )
-        assert result["status"] == "replanning"
-        assert result["errors"][0].code == "SUCCESS_CONDITION_FAILED"
+        # The semantic mismatch classifies the run REPLANNING; the recovery node
+        # replans once, and with a no-op planner the rerun still has no plan, so
+        # the run gives up FAILED instead of executing the wrong-data step again.
+        assert result["status"] == AgentStatus.FAILED
+        assert result["replan_count"] == 1
 
     def test_checkpoint_saver_records_every_node(self) -> None:
         saver = _RecordingSaver()
@@ -356,7 +364,7 @@ class TestSmoke:
         ]
         assert saver.saved[-1][1].status == "succeeded"
 
-    def test_error_path_routes_to_recovery(self) -> None:
+    def test_error_path_replans_once_then_succeeds(self) -> None:
         result = GRAPH.invoke(
             {
                 "run_id": "r2",
@@ -365,9 +373,12 @@ class TestSmoke:
                 "errors": [StateError(code="TRANSIENT_TOOL_ERROR", message="timeout")],
             }
         )
-        # classify_intent set PLANNING before the recovery detour; the stub
-        # recovery/finalize nodes do not change status yet.
-        assert result["status"] == "planning"
+        # The real recovery node consumes the detour-triggering error as one
+        # replan (status PLANNING -> recover -> build_plan), clears it, then
+        # the no-op graph proceeds clean to SUCCEEDED.
+        assert result["status"] == "succeeded"
+        assert result["replan_count"] == 1
+        assert result["errors"] == []
 
 
 class TestDeadline:
@@ -399,3 +410,78 @@ class TestDeadline:
     def test_no_deadline_is_a_no_op(self) -> None:
         result = GRAPH.invoke({"run_id": "r-dl-none", "tenant_id": "t1", "query": "查苹果库存"})
         assert result["status"] == AgentStatus.SUCCEEDED
+
+
+class TestRecoveryLoop:
+    """recover_or_replan drives real retry/replan loops in the compiled graph."""
+
+    def _failing_graph(self, is_retryable: bool):
+        validate = build_validate_plan_node(
+            tool_schemas={"getProductById": ToolSpec(name="getProductById", required_params=["id"])}
+        )
+        policy = build_policy_check_node(get_scopes=lambda _t, _u: {"product:read"})
+
+        async def executor(tool_name: str, arguments: dict[str, object]) -> ToolResult:
+            return ToolResult.failure(
+                tool_version_id=tool_name,
+                error_code="TIMEOUT" if is_retryable else "PERMISSION_DENIED",
+                error_message="boom",
+                is_retryable=is_retryable,
+            )
+
+        return build_agent_graph(
+            validate_node=validate,
+            policy_node=policy,
+            execute_node=build_execute_steps_node(executor=executor),
+            verify_node=build_verify_results_node(),
+        )
+
+    def test_retryable_failure_exhausts_retry_budget_then_gives_up(self) -> None:
+        graph = self._failing_graph(is_retryable=True)
+        result = asyncio.run(
+            graph.ainvoke(
+                {
+                    "run_id": "r-loop-retry",
+                    "tenant_id": "t1",
+                    "user_id": "u1",
+                    "query": "查询苹果",
+                    "plan": {
+                        "steps": [
+                            {
+                                "step_id": "s1",
+                                "tool_name": "getProductById",
+                                "arguments": {"id": 1},
+                            }
+                        ]
+                    },
+                }
+            )
+        )
+        assert result["status"] == AgentStatus.FAILED
+        assert result["retry_count"] == MAX_RETRIES
+        assert result["errors"][-1].code == "RETRY_BUDGET_EXHAUSTED"
+
+    def test_permanent_failure_exhausts_replan_budget_then_gives_up(self) -> None:
+        graph = self._failing_graph(is_retryable=False)
+        result = asyncio.run(
+            graph.ainvoke(
+                {
+                    "run_id": "r-loop-replan",
+                    "tenant_id": "t1",
+                    "user_id": "u1",
+                    "query": "查询苹果",
+                    "plan": {
+                        "steps": [
+                            {
+                                "step_id": "s1",
+                                "tool_name": "getProductById",
+                                "arguments": {"id": 1},
+                            }
+                        ]
+                    },
+                }
+            )
+        )
+        assert result["status"] == AgentStatus.FAILED
+        assert result["replan_count"] == MAX_REPLANS
+        assert result["errors"][-1].code == "REPLAN_BUDGET_EXHAUSTED"

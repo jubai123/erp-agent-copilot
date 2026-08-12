@@ -1,0 +1,242 @@
+"""Unit tests for the recover_or_replan node — tasks 4.11/5.8.
+
+The graph's single recovery sink: after validate_plan or verify_results reports
+errors, this node decides retry (back to execute_ready_steps) vs replan (back
+to build_plan) vs give up (finalize -> FAILED), bounded by run-level retry and
+replan budgets. Two invariants must hold:
+
+- termination: every continuing decision strictly increments retry_count or
+  replan_count, both capped, so any input sequence reaches FAILED/SUCCEEDED;
+- at-most-once: a WRITE/DANGEROUS step that failed without an idempotency key
+  is never auto-re-run (its outcome is uncertain), and a run annotated with
+  RECOVERY_RECONCILIATION_REQUIRED gives up for a human instead.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from erp_copilot.agent.nodes.recover_or_replan import (
+    MAX_REPLANS,
+    MAX_RETRIES,
+    recover_or_replan,
+)
+from erp_copilot.agent.recovery import RECOVERY_RECONCILIATION_REQUIRED
+from erp_copilot.agent.state import (
+    AgentState,
+    AgentStatus,
+    Plan,
+    PlanStep,
+    StateError,
+    StepResult,
+)
+from erp_copilot.domain.enums import StepStatus, ToolRiskLevel
+
+
+def _step(step_id: str = "s1", **overrides: object) -> PlanStep:
+    data: dict[str, object] = {
+        "step_id": step_id,
+        "tool_name": "getProductById",
+        "risk_level": ToolRiskLevel.READ,
+        "depends_on": [],
+    }
+    data.update(overrides)
+    return PlanStep(**data)
+
+
+def _failed(
+    step_id: str, *, is_retryable: bool, risk: ToolRiskLevel = ToolRiskLevel.READ
+) -> StepResult:
+    return StepResult(
+        step_id=step_id,
+        status=StepStatus.FAILED,
+        error_code="TIMEOUT" if is_retryable else "PERMISSION_DENIED",
+        is_retryable=is_retryable,
+    )
+
+
+def _state(
+    *,
+    status: AgentStatus = AgentStatus.QUEUED,
+    plan: Plan | None = None,
+    step_results: dict[str, StepResult] | None = None,
+    errors: list[StateError] | None = None,
+    retry_count: int = 0,
+    replan_count: int = 0,
+) -> AgentState:
+    return AgentState(
+        run_id="r1",
+        tenant_id="t1",
+        user_id="u1",
+        query="q",
+        status=status,
+        plan=plan,
+        step_results=step_results or {},
+        errors=errors or [],
+        retry_count=retry_count,
+        replan_count=replan_count,
+    )
+
+
+def _invoke(state: AgentState) -> dict[str, Any]:
+    return recover_or_replan(state)
+
+
+class TestRetryBranch:
+    def test_retryable_failure_retries_once(self) -> None:
+        plan = Plan(steps=[_step("s1")])
+        state = _state(
+            status=AgentStatus.RETRYING,
+            plan=plan,
+            step_results={"s1": _failed("s1", is_retryable=True)},
+            errors=[StateError(code="TIMEOUT", message="timeout", step_id="s1")],
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.EXECUTING
+        assert updates["retry_count"] == 1
+        assert updates["errors"] == []
+
+    def test_completed_steps_survive_a_retry(self) -> None:
+        plan = Plan(steps=[_step("s1"), _step("s2")])
+        state = _state(
+            status=AgentStatus.RETRYING,
+            plan=plan,
+            step_results={
+                "s1": StepResult(step_id="s1", status=StepStatus.COMPLETED),
+                "s2": _failed("s2", is_retryable=True),
+            },
+            errors=[StateError(code="TIMEOUT", message="timeout", step_id="s2")],
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.EXECUTING
+        # A retry must not touch step_results — the graph merge keeps completed
+        # steps so the executor's resume guard skips them on the next pass.
+        assert "step_results" not in updates
+
+    def test_retry_budget_exhausted_gives_up(self) -> None:
+        plan = Plan(steps=[_step("s1")])
+        state = _state(
+            status=AgentStatus.RETRYING,
+            plan=plan,
+            step_results={"s1": _failed("s1", is_retryable=True)},
+            retry_count=MAX_RETRIES,
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.FAILED
+        assert updates["errors"][-1].code == "RETRY_BUDGET_EXHAUSTED"
+
+    def test_retry_without_plan_gives_up(self) -> None:
+        state = _state(status=AgentStatus.RETRYING)
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.FAILED
+        assert updates["errors"][-1].code == "RECOVERY_GIVE_UP"
+
+
+class TestAtMostOnceGuard:
+    def test_write_without_idempotency_key_never_auto_retries(self) -> None:
+        plan = Plan(steps=[_step("s1", risk_level=ToolRiskLevel.WRITE)])
+        state = _state(
+            status=AgentStatus.RETRYING,
+            plan=plan,
+            step_results={"s1": _failed("s1", is_retryable=True, risk=ToolRiskLevel.WRITE)},
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.FAILED
+        assert updates["errors"][-1].code == "WRITE_RETRY_UNSAFE"
+
+    def test_write_with_idempotency_key_may_retry(self) -> None:
+        plan = Plan(steps=[_step("s1", risk_level=ToolRiskLevel.WRITE, idempotency_key="k-1")])
+        state = _state(
+            status=AgentStatus.RETRYING,
+            plan=plan,
+            step_results={"s1": _failed("s1", is_retryable=True, risk=ToolRiskLevel.WRITE)},
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.EXECUTING
+        assert updates["retry_count"] == 1
+
+    def test_dangerous_without_idempotency_key_never_auto_retries(self) -> None:
+        plan = Plan(steps=[_step("s1", risk_level=ToolRiskLevel.DANGEROUS)])
+        state = _state(
+            status=AgentStatus.RETRYING,
+            plan=plan,
+            step_results={"s1": _failed("s1", is_retryable=True, risk=ToolRiskLevel.DANGEROUS)},
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.FAILED
+        assert updates["errors"][-1].code == "WRITE_RETRY_UNSAFE"
+
+
+class TestReplanBranch:
+    def test_permanent_failure_replans(self) -> None:
+        plan = Plan(steps=[_step("s1")])
+        state = _state(
+            status=AgentStatus.REPLANNING,
+            plan=plan,
+            step_results={"s1": _failed("s1", is_retryable=False)},
+            errors=[StateError(code="PERMISSION_DENIED", message="denied", step_id="s1")],
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.PLANNING
+        assert updates["replan_count"] == 1
+        assert updates["plan"] is None
+        assert updates["plan_validation"] is None
+        assert updates["policy_decisions"] == {}
+        assert updates["errors"] == []
+
+    def test_replan_preserves_completed_step_results(self) -> None:
+        # A completed WRITE step's result must survive replan so the resume
+        # guard skips it on the new pass — at-most-once (deterministic planner
+        # reuses positional step ids like s1/s2). The node omits step_results
+        # from its updates; the graph merge keeps the existing completed ones.
+        plan = Plan(steps=[_step("s1", risk_level=ToolRiskLevel.WRITE)])
+        state = _state(
+            status=AgentStatus.REPLANNING,
+            plan=plan,
+            step_results={"s1": StepResult(step_id="s1", status=StepStatus.COMPLETED)},
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.PLANNING
+        assert "step_results" not in updates
+
+    def test_validate_error_routes_to_replan(self) -> None:
+        state = _state(
+            status=AgentStatus.PLANNING,
+            plan=None,
+            errors=[StateError(code="UNKNOWN_TOOL", message="ghost", step_id="s1")],
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.PLANNING
+        assert updates["replan_count"] == 1
+
+    def test_replan_budget_exhausted_gives_up(self) -> None:
+        state = _state(status=AgentStatus.REPLANNING, replan_count=MAX_REPLANS)
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.FAILED
+        assert updates["errors"][-1].code == "REPLAN_BUDGET_EXHAUSTED"
+
+
+class TestHumanIntervention:
+    def test_reconciliation_error_short_circuits_to_failed(self) -> None:
+        state = _state(
+            status=AgentStatus.RETRYING,
+            errors=[StateError(code=RECOVERY_RECONCILIATION_REQUIRED, message="reconcile")],
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.FAILED
+        assert updates["errors"][-1].code == "RECOVERY_REQUIRES_HUMAN"
+
+    def test_reconciliation_error_wins_over_replan_budget(self) -> None:
+        state = _state(
+            status=AgentStatus.REPLANNING,
+            errors=[StateError(code=RECOVERY_RECONCILIATION_REQUIRED, message="reconcile")],
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.FAILED
+        assert updates["errors"][-1].code == "RECOVERY_REQUIRES_HUMAN"
+
+
+class TestNoAction:
+    def test_succeeded_without_errors_is_a_noop(self) -> None:
+        updates = _invoke(_state(status=AgentStatus.SUCCEEDED))
+        assert updates == {}

@@ -1,8 +1,9 @@
-"""LangGraph state-graph skeleton — task 4.2.
+"""LangGraph state-graph assembly — task 4.2.
 
 Wires the Phase-4/5 nodes in the design-doc topology (docs/03 §4) plus the
-check_deadline gate (task 4.15). Nodes are stubs here; each receives a real
-module in its own task (4.3-4.11, 5.2).
+check_deadline gate (task 4.15) and the recover_or_replan sink (tasks 4.11/5.8).
+Real node implementations are injected by the caller (worker, app); when
+omitted, no-op stand-ins keep topology/smoke tests free of their dependencies.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from erp_copilot.agent.nodes.classify_intent import classify_intent_node
+from erp_copilot.agent.nodes.recover_or_replan import recover_or_replan
 from erp_copilot.agent.nodes.request_approval import (
     pending_approval_step_ids,
     request_approval_node,
@@ -116,11 +118,6 @@ def check_deadline(state: AgentState) -> dict[str, Any]:
     }
 
 
-def recover_or_replan(state: AgentState) -> dict[str, Any]:
-    """TODO(task 4.11/5.8): decide retry vs replan vs give-up."""
-    return {}
-
-
 def finalize(state: AgentState) -> dict[str, Any]:
     """TODO: persist the Run and emit the final event."""
     return {}
@@ -152,8 +149,13 @@ def _route_after_verify(state: AgentState) -> str:
 
 
 def _route_after_recover(state: AgentState) -> str:
-    # Retry/replan budget logic arrives with tasks 4.11/5.8; the edge mapping
-    # in build_agent_graph still declares all three transitions as legal.
+    # recover_or_replan sets the next status: EXECUTING -> retry the failed
+    # steps, PLANNING -> regenerate the plan; anything else (FAILED after give
+    # up, or a no-op status) ends at finalize.
+    if state.status == AgentStatus.EXECUTING:
+        return "execute_ready_steps"
+    if state.status == AgentStatus.PLANNING:
+        return "build_plan"
     return "finalize"
 
 
