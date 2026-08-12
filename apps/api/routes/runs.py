@@ -12,9 +12,10 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from apps.api.schemas.runs import ApproveRunRequest, CreateRunRequest, RunResponse
-from erp_copilot.agent.graph import build_agent_graph
-from erp_copilot.agent.state import AgentStatus, ApprovalStatus
+from apps.worker.graph_builder import build_worker_graph
+from erp_copilot.agent.state import AgentState, AgentStatus, ApprovalStatus
 from erp_copilot.application.events import append_run_event
+from erp_copilot.application.run_persistence import make_status_event_sink, persist_run
 from erp_copilot.domain.entities import Run, RunEvent
 from erp_copilot.domain.errors import CopilotError, NotFoundError
 from erp_copilot.infrastructure.database import get_session
@@ -138,8 +139,11 @@ async def approve_run(run_id: str, body: ApproveRunRequest, request: Request) ->
     The tenant boundary comes from the Run row, never from the client. The
     decision is flipped on the checkpoint, audited to audit_logs, then the
     graph resumes from the decided state — an approved step executes, a denied
-    step is skipped. The graph is built with the same builder the worker will
-    use; real node injection lands with the worker wiring task.
+    step is skipped. The graph is the shared worker graph (build_worker_graph,
+    apps/worker/graph_builder), so a resumed write runs at-most-once through
+    the idempotency store, and the terminal state is persisted onto the Run and
+    RunStep rows (persist_run) — a FAILED/EXPIRED resume lands in the
+    human-intervention queue.
     """
     session = get_session()
     try:
@@ -148,9 +152,9 @@ async def approve_run(run_id: str, body: ApproveRunRequest, request: Request) ->
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
         decision = ApprovalStatus.APPROVED if body.decision == "APPROVE" else ApprovalStatus.DENIED
-        saver = CheckpointSaver(session)
+        saver = CheckpointSaver(session, event_sink=make_status_event_sink(session))
         decided, result = await decide_and_resume(
-            build_agent_graph(checkpoint_saver=saver),
+            build_worker_graph(session, saver),
             saver,
             session,
             run_id=run_id,
@@ -162,6 +166,7 @@ async def approve_run(run_id: str, body: ApproveRunRequest, request: Request) ->
             ip=request.client.host if request.client else None,
             trace_id=body.trace_id,
         )
+        persist_run(session, run, AgentState.model_validate(result))
         return {
             "run_id": run_id,
             "step_id": body.step_id,

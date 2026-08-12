@@ -1,28 +1,41 @@
 """Integration tests for the approve/deny API route — task 5.2 backfill.
 
 POST /v1/runs/{run_id}/approve flips a PENDING approval to APPROVED/DENIED,
-writes an audit_logs row, then resumes the run from its checkpoint. Tests run
-against the dedicated test database (tests/conftest.py) with the agent graph
-built by the route itself (default no-op nodes; real node composition lands
-with the worker wiring task).
+writes an audit_logs row, then resumes the run from its checkpoint. Since the
+route was wired to the shared worker graph (real nodes + idempotent writes), a
+resumed run actually executes against the ERP simulator and the terminal state
+is persisted onto the Run/RunStep rows — FAILED/EXPIRED outcomes route through
+the human-intervention queue (task 5.9).
+
+Tests run against the dedicated test database (tests/conftest.py). The paused
+checkpoint is seeded directly because POST /v1/runs cannot carry a WRITE query
+(the route only passes product_name), so create_run alone never pauses for
+approval.
 """
 
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
+from apps.erp_simulator.data.orders import get_by_idempotency_key
+from apps.erp_simulator.data.products import PRODUCT_BY_NAME
 from erp_copilot.agent.state import (
     AgentState,
     AgentStatus,
     ApprovalRequest,
-    Plan,
-    PlanStep,
-    PolicyDecision,
 )
-from erp_copilot.domain.entities import AuditLog, Run, Tenant
+from erp_copilot.application.failure_queue import FailureQueue
+from erp_copilot.domain.entities import AuditLog, IdempotencyRecord, Run, RunEvent, Tenant
 from erp_copilot.domain.enums import ToolRiskLevel
 from erp_copilot.infrastructure.database import get_session
 from erp_copilot.memory.checkpoint import CheckpointSaver
+
+# The same WRITE query the worker tests use: the deterministic planner maps it
+# to a create-order DAG (s1 product read, s2 supplier read, s3 createOrder), so
+# approving s3 resumes the run through a real idempotent write.
+_WRITE_QUERY = "帮我在上海下一单 1 KG 苹果"
 
 
 def _create_tenant(name: str, slug: str) -> str:
@@ -37,7 +50,7 @@ def _create_tenant(name: str, slug: str) -> str:
         session.close()
 
 
-def _create_run(tenant_id: str) -> str:
+def _create_paused_run(tenant_id: str) -> str:
     """Create a Run paused in WAITING_APPROVAL and return its ID."""
     session = get_session()
     try:
@@ -49,8 +62,21 @@ def _create_run(tenant_id: str) -> str:
         session.close()
 
 
-def _save_paused_checkpoint(run_id: str, tenant_id: str, *, waiting: bool) -> None:
-    """Save a checkpoint with a single WRITE step awaiting approval."""
+def _save_paused_checkpoint(
+    run_id: str,
+    tenant_id: str,
+    *,
+    query: str = _WRITE_QUERY,
+    step_id: str = "s3",
+    waiting: bool = True,
+) -> None:
+    """Save a checkpoint paused at request_approval with one PENDING write step.
+
+    The plan/policy are deliberately omitted: on resume the graph re-runs
+    classify -> build_plan (deterministic) and regenerates the create-order DAG,
+    so the seed only needs to carry the query and the pending approval record
+    the decision API flips.
+    """
     session = get_session()
     try:
         CheckpointSaver(session).save(
@@ -59,23 +85,11 @@ def _save_paused_checkpoint(run_id: str, tenant_id: str, *, waiting: bool) -> No
                 run_id=run_id,
                 tenant_id=tenant_id,
                 user_id="u1",
-                query="创建订单",
+                query=query,
                 status=AgentStatus.WAITING_APPROVAL if waiting else AgentStatus.EXECUTING,
-                plan=Plan(
-                    steps=[
-                        PlanStep(
-                            step_id="s1",
-                            tool_name="createOrder",
-                            description="创建订单",
-                            risk_level=ToolRiskLevel.WRITE,
-                            required_scope="order:write",
-                        )
-                    ]
-                ),
-                policy_decisions={"s1": PolicyDecision.REQUIRE_APPROVAL},
                 approvals=[
                     ApprovalRequest(
-                        step_id="s1",
+                        step_id=step_id,
                         tool_name="createOrder",
                         description="创建订单",
                         risk_level=ToolRiskLevel.WRITE,
@@ -88,57 +102,103 @@ def _save_paused_checkpoint(run_id: str, tenant_id: str, *, waiting: bool) -> No
         session.close()
 
 
-class TestApproveRun:
-    """Acceptance: POST /v1/runs/{run_id}/approve continues the run + audits."""
-
-    def test_approve_continues_and_writes_audit_log(self) -> None:
-        from apps.api.main import create_app
-
-        tenant_id = _create_tenant("Approve Run", "approve-run")
-        run_id = _create_run(tenant_id)
-        _save_paused_checkpoint(run_id, tenant_id, waiting=True)
-        client = TestClient(create_app())
-
-        response = client.post(
-            f"/v1/runs/{run_id}/approve",
-            json={
-                "step_id": "s1",
-                "decision": "APPROVE",
-                "decided_by": "manager",
-                "reason": "已核对产品与数量",
-            },
+def _run_status_events(run_id: str) -> list[str]:
+    """Return RUN_STATUS event payload statuses for *run_id* in order."""
+    session = get_session()
+    try:
+        events = (
+            session.query(RunEvent)
+            .filter_by(run_id=run_id, event_type="RUN_STATUS")
+            .order_by(RunEvent.sequence.asc())
+            .all()
         )
+        return [json.loads(event.payload)["status"] for event in events]
+    finally:
+        session.close()
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["run_id"] == run_id
-        assert data["step_id"] == "s1"
-        assert data["decision"] == "approved"
-        assert data["decided_by"] == "manager"
-        assert data["run_status"] == "succeeded"
 
-        session = get_session()
-        try:
-            log = session.query(AuditLog).filter_by(resource=f"run:{run_id}/step:s1").first()
-            assert log is not None
-            assert log.actor == "manager"
-            assert log.action == "approval.approved"
-            assert log.result == "approved"
-        finally:
-            session.close()
+class TestApproveRun:
+    """Acceptance: approve resumes the run through the real graph and persists."""
 
-    def test_deny_continues_and_writes_audit_log(self) -> None:
+    def test_approve_executes_write_end_to_end(self) -> None:
         from apps.api.main import create_app
 
-        tenant_id = _create_tenant("Deny Run", "deny-run")
-        run_id = _create_run(tenant_id)
-        _save_paused_checkpoint(run_id, tenant_id, waiting=True)
+        tenant_id = _create_tenant("Approve Write", "approve-write")
+        run_id = _create_paused_run(tenant_id)
+        _save_paused_checkpoint(run_id, tenant_id)
+        product = PRODUCT_BY_NAME["苹果"]
+        original_stock = product.quantity_in_stock
+        client = TestClient(create_app())
+        try:
+            response = client.post(
+                f"/v1/runs/{run_id}/approve",
+                json={
+                    "step_id": "s3",
+                    "decision": "APPROVE",
+                    "decided_by": "manager",
+                    "reason": "已核对产品与数量",
+                },
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["run_id"] == run_id
+            assert data["step_id"] == "s3"
+            assert data["decision"] == "approved"
+            assert data["decided_by"] == "manager"
+            assert data["run_status"] == "succeeded"
+
+            session = get_session()
+            try:
+                log = session.query(AuditLog).filter_by(resource=f"run:{run_id}/step:s3").first()
+                assert log is not None
+                assert log.actor == "manager"
+                assert log.action == "approval.approved"
+                assert log.result == "approved"
+
+                run = session.query(Run).filter_by(id=run_id).first()
+                assert run is not None
+                assert run.status == "COMPLETED"
+                assert run.completed_at is not None
+                assert {step.step_index: step.status for step in run.steps} == {
+                    1: "COMPLETED",
+                    2: "COMPLETED",
+                    3: "COMPLETED",
+                }
+
+                record = (
+                    session.query(IdempotencyRecord)
+                    .filter_by(idempotency_key=f"{run_id}:s3")
+                    .first()
+                )
+                assert record is not None
+                assert record.status == "COMPLETED"
+            finally:
+                session.close()
+
+            order = get_by_idempotency_key(f"{run_id}:s3")
+            assert order is not None
+            assert order.status == "CREATED"
+            assert order.quantity == 1
+
+            # The resume path shares the worker's status-event sink, so the SSE
+            # stream shows the resumed run reach its terminal status.
+            assert _run_status_events(run_id)[-1] == "succeeded"
+        finally:
+            product.quantity_in_stock = original_stock
+
+    def test_deny_skips_write_and_completes(self) -> None:
+        from apps.api.main import create_app
+
+        tenant_id = _create_tenant("Deny Write", "deny-write")
+        run_id = _create_paused_run(tenant_id)
+        _save_paused_checkpoint(run_id, tenant_id)
         client = TestClient(create_app())
 
         response = client.post(
             f"/v1/runs/{run_id}/approve",
             json={
-                "step_id": "s1",
+                "step_id": "s3",
                 "decision": "DENY",
                 "decided_by": "risk",
                 "reason": "风控拒绝",
@@ -152,10 +212,61 @@ class TestApproveRun:
 
         session = get_session()
         try:
-            log = session.query(AuditLog).filter_by(resource=f"run:{run_id}/step:s1").first()
+            log = session.query(AuditLog).filter_by(resource=f"run:{run_id}/step:s3").first()
             assert log is not None
             assert log.action == "approval.denied"
             assert log.actor == "risk"
+
+            run = session.query(Run).filter_by(id=run_id).first()
+            assert run is not None
+            assert run.status == "COMPLETED"
+            # The denied WRITE step is skipped; the READ lookups still ran.
+            assert {step.step_index: step.status for step in run.steps} == {
+                1: "COMPLETED",
+                2: "COMPLETED",
+                3: "SKIPPED",
+            }
+            order = get_by_idempotency_key(f"{run_id}:s3")
+            assert order is None
+        finally:
+            session.close()
+
+    def test_failed_resume_enters_human_queue(self) -> None:
+        from apps.api.main import create_app
+
+        # "创建订单" carries no product/region entity, so on resume the
+        # deterministic planner emits EMPTY_PLAN and the run fails into the
+        # human-intervention queue (task 5.9) instead of completing.
+        tenant_id = _create_tenant("Approve Fail", "approve-fail")
+        run_id = _create_paused_run(tenant_id)
+        _save_paused_checkpoint(run_id, tenant_id, query="创建订单", step_id="s1")
+        client = TestClient(create_app())
+
+        response = client.post(
+            f"/v1/runs/{run_id}/approve",
+            json={"step_id": "s1", "decision": "APPROVE", "decided_by": "manager"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["run_status"] == "failed"
+
+        session = get_session()
+        try:
+            run = session.query(Run).filter_by(id=run_id).first()
+            assert run is not None
+            assert run.status == "FAILED"
+            assert run.failure_code == "EMPTY_PLAN"
+            assert run.failure_reason
+            assert run.suggested_action
+
+            event = (
+                session.query(RunEvent).filter_by(run_id=run_id, event_type="RUN_FAILED").first()
+            )
+            assert event is not None
+            assert json.loads(event.payload)["error_code"] == "EMPTY_PLAN"
+
+            queue = FailureQueue(session).list_needing_intervention(tenant_id)
+            assert [q.id for q in queue] == [run_id]
         finally:
             session.close()
 
@@ -173,12 +284,12 @@ class TestApproveRun:
         from apps.api.main import create_app
 
         tenant_id = _create_tenant("Busy Run", "busy-run")
-        run_id = _create_run(tenant_id)
+        run_id = _create_paused_run(tenant_id)
         _save_paused_checkpoint(run_id, tenant_id, waiting=False)
         client = TestClient(create_app())
 
         response = client.post(
             f"/v1/runs/{run_id}/approve",
-            json={"step_id": "s1", "decision": "APPROVE", "decided_by": "manager"},
+            json={"step_id": "s3", "decision": "APPROVE", "decided_by": "manager"},
         )
         assert response.status_code == 409

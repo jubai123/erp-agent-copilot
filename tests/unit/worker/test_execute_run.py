@@ -34,9 +34,10 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from apps.erp_simulator.data.orders import get_by_idempotency_key  # noqa: E402
 from apps.erp_simulator.data.products import PRODUCT_BY_NAME  # noqa: E402
 from apps.worker.graph_builder import build_worker_graph  # noqa: E402
-from apps.worker.tasks import _persist, execute_run  # noqa: E402
+from apps.worker.tasks import execute_run  # noqa: E402
 from erp_copilot.agent.state import AgentState, AgentStatus, ApprovalStatus  # noqa: E402
 from erp_copilot.application.failure_queue import FailureQueue  # noqa: E402
+from erp_copilot.application.run_persistence import persist_run  # noqa: E402
 from erp_copilot.domain.entities import (  # noqa: E402
     AgentCheckpoint,
     IdempotencyRecord,
@@ -268,7 +269,7 @@ class TestDeadlineAndCancel:
             query="查询苹果库存",
             status=AgentStatus.SUCCEEDED,
         )
-        status = _persist(session, run, final)
+        status = persist_run(session, run, final)
 
         assert status == "CANCELLED"
         session.refresh(run)
