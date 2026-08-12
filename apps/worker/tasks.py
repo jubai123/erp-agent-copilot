@@ -111,7 +111,7 @@ def execute_run(
         session.commit()
 
         saver = CheckpointSaver(session, event_sink=make_status_event_sink(session))
-        graph = build_worker_graph(session, saver)
+        graph = build_worker_graph(session, saver, run_id=run.id)
 
         # Task 5.8: a run that was mid-flight when the worker (re)started resumes
         # from its latest checkpoint (reconciled for writes) instead of restarting

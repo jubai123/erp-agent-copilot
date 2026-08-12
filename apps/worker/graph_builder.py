@@ -27,12 +27,22 @@ from apps.worker.executor import erp_simulator_executor
 from erp_copilot.agent.graph import build_agent_graph
 from erp_copilot.agent.nodes.execute_steps import build_execute_steps_node
 from erp_copilot.agent.nodes.policy_check import build_policy_check_node
+from erp_copilot.agent.nodes.retrieve_context import build_retrieve_context_node
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.nodes.verify_results import build_verify_results_node
 from erp_copilot.agent.planner import build_deterministic_plan_node
-from erp_copilot.agent.state import AgentState
+from erp_copilot.agent.state import AgentState, RetrievedDocument
 from erp_copilot.memory.checkpoint import CheckpointSaver
 from erp_copilot.observability.metrics import METRICS
+from erp_copilot.retrieval.embedding import EmbeddingProvider
+from erp_copilot.retrieval.fts import keyword_search as _keyword_search
+from erp_copilot.retrieval.pipeline import DeterministicEmbeddingProvider
+from erp_copilot.retrieval.vector_store import search_similar as _search_similar
+from erp_copilot.security.injection_guard import (
+    InjectionGuard,
+    InjectionVerdict,
+    record_injection_event,
+)
 from erp_copilot.security.rbac import resolve_user_scopes
 from erp_copilot.tools.idempotency import IdempotencyStore
 
@@ -83,9 +93,59 @@ def _observe_phase(phase: str, node: Callable[..., Any]) -> Callable[..., Any]:
     return _sync_wrapped
 
 
+def build_worker_retrieve_node(
+    session: Session,
+    *,
+    run_id: str | None = None,
+    injection_guard: InjectionGuard | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> Callable[[AgentState], dict[str, Any]] | None:
+    """Bind the real retrieve_context node to *session*'s Postgres backends.
+
+    Wires pgvector ``search_similar`` and Postgres FTS ``keyword_search`` into
+    the L2 retrieve node and attaches the injection guard plus quarantine
+    recorder, so the worker and approve-resume paths run real hybrid retrieval
+    with knowledge-layer screening (task 5.4). The search SQL is Postgres-only
+    (``<=>`` / ``ts_rank``), so a non-PostgreSQL session — the SQLite unit
+    suite — returns ``None`` and the graph keeps its no-op retrieve node.
+    Embedding defaults to the deterministic provider so the execution hot path
+    stays offline and reproducible, mirroring the eval harness.
+    """
+    dialect = getattr(getattr(session, "bind", None), "dialect", None)
+    if dialect is None or getattr(dialect, "name", "") != "postgresql":
+        return None
+
+    provider = embedding_provider or DeterministicEmbeddingProvider()
+    guard = injection_guard or InjectionGuard()
+
+    def record_quarantine(doc: RetrievedDocument, verdict: InjectionVerdict) -> None:
+        record_injection_event(
+            session,
+            run_id=run_id,
+            text=doc.content,
+            verdict=verdict,
+            disposition="quarantined",
+        )
+
+    return build_retrieve_context_node(
+        embed=lambda text: provider.embed([text])[0],
+        vector_search=lambda embedding, top_k, tenant_id: _search_similar(
+            session, embedding, tenant_id, top_k=top_k
+        ),
+        keyword_search=lambda query, top_k, tenant_id: _keyword_search(
+            session, query, tenant_id, top_k=top_k
+        ),
+        injection_guard=guard,
+        record_quarantine=record_quarantine,
+    )
+
+
 def build_worker_graph(
     session: Session,
     checkpoint_saver: CheckpointSaver,
+    *,
+    retrieve_node: Callable[[AgentState], dict[str, Any]] | None = None,
+    run_id: str | None = None,
 ) -> CompiledStateGraph:
     """Build the worker graph with real nodes, write scope and idempotent writes.
 
@@ -94,8 +154,18 @@ def build_worker_graph(
     worker) or not (the API resume path). The plan/execute/verify phase nodes
     are wrapped by _observe_phase so the phase-latency histogram (task 6.4)
     feeds from both the worker and the API approve-resume path.
+
+    *retrieve_node* defaults to the session-bound real retrieval node
+    (build_worker_retrieve_node) and falls back to the graph's no-op retrieve
+    node on non-PostgreSQL sessions — keeping the SQLite unit suite on the
+    no-op without an explicit flag. *run_id* threads the run into the
+    quarantine recorder so flagged knowledge lands in security_events keyed to
+    the run.
     """
+    if retrieve_node is None:
+        retrieve_node = build_worker_retrieve_node(session, run_id=run_id)
     return build_agent_graph(
+        retrieve_node=retrieve_node,
         plan_node=_observe_phase("plan", build_deterministic_plan_node()),
         validate_node=build_validate_plan_node(tool_schemas=WORKER_TOOL_SCHEMAS),
         policy_node=build_policy_check_node(get_scopes=partial(resolve_user_scopes, session)),

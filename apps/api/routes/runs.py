@@ -196,7 +196,7 @@ async def approve_run(run_id: str, body: ApproveRunRequest, request: Request) ->
         decision = ApprovalStatus.APPROVED if body.decision == "APPROVE" else ApprovalStatus.DENIED
         saver = CheckpointSaver(session, event_sink=make_status_event_sink(session))
         decided, result = await decide_and_resume(
-            build_worker_graph(session, saver),
+            build_worker_graph(session, saver, run_id=run_id),
             saver,
             session,
             run_id=run_id,

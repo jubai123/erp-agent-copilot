@@ -553,3 +553,36 @@ class TestCrashBranchFailedMetric:
         session.refresh(run)
         assert run.status == "CANCELLED"
         assert _counter("erp_runs_failed_total") == failed_before
+
+
+class TestWorkerRetrieveWiring:
+    """v1.1 knowledge gap: execute_run hands the real retrieve node to the graph.
+
+    build_worker_retrieve_node returns None on the SQLite test session (the
+    pgvector/FTS backends only exist on PostgreSQL), so the graph would fall
+    back to the no-op — here it is patched to a spy to prove execute_run asks
+    for a retrieve node and the graph actually runs it during the invocation.
+    """
+
+    def test_execute_run_hands_a_retrieve_node_to_the_graph(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[AgentState] = []
+
+        def spy_node(state: AgentState) -> dict[str, object]:
+            calls.append(state)
+            return {}
+
+        monkeypatch.setattr(
+            "apps.worker.graph_builder.build_worker_retrieve_node",
+            lambda session, run_id=None: spy_node,
+        )
+        tenant = _make_tenant(session)
+        user_id = _make_reader_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
+
+        result = execute_run(run.id, "苹果", query="查询苹果的库存")
+
+        assert result["status"] == "COMPLETED"
+        assert len(calls) == 1
+        assert calls[0].run_id == run.id
