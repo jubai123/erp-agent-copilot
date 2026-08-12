@@ -1478,13 +1478,17 @@
 - `apps/api/main.py`（✅ include metrics 路由）
 - `tests/unit/observability/test_metrics.py`（✅ 已实现，9 用例）
 - `tests/unit/api/test_metrics_routes.py`（✅ 已实现，4 用例）
+- `apps/api/routes/runs.py`（✅ create_run 处 inc `runs_created`）
+- `src/erp_copilot/application/run_persistence.py`（✅ persist_run 处 inc `runs_completed`/`runs_failed`）
+- `apps/worker/graph_builder.py`（✅ `_observe_phase` 计时包装，plan/execute/verify 喂 `phase_latency`）
+- `tests/integration/test_metrics_lifecycle.py`（✅ 新增，4 用例）
 
 **验收标准**：
 - ✅ `GET /metrics` 返回 Prometheus 格式指标（`Response(content=generate_latest(), headers={"Content-Type": "text/plain; version=0.0.4; charset=utf-8"})`，body 为 `# HELP`/`# TYPE`/sample 三部分组成的文本直方图格式）
 - ✅ 包含：Run 创建数、完成数、失败数（三个 Counter：`erp_runs_created_total` / `_completed_total` / `_failed_total`）、各阶段延迟 P50/P95（Histogram `erp_phase_latency_seconds` 带 `phase` 标签，桶 0.1s~300s，P50/P95 由 Grafana PromQL `histogram_quantile(0.5/0.95, rate(...))` 服务端计算）
 - ✅ Worker 队列长度（Gauge `erp_worker_queue_length`，`set_worker_queue_length(n)` 供 worker 层接线）
 
-**落地细节**：依赖经用户批准新增 `prometheus-client==0.26.0`（uv.lock 锁定）。`metrics.py` 用工厂 `create_metrics()` 返回 frozen dataclass `Metrics`（`registry` + 3 Counter + 1 Histogram + 1 Gauge），每次调用建独立 `CollectorRegistry`——prometheus_client 拒绝同注册表重复注册同名指标，工厂模式让测试完全隔离（测试各自建新实例，绝无跨测试状态，呼应 6.1/6.2 的测试纪律）。生产走模块级单例 `METRICS`，`generate_latest(metrics=METRICS)` 序列化为文本。P50/P95 不在进程内算：直方图只输出 `_bucket/_sum/_count`，Grafana 用 `histogram_quantile` 计算——这是 Prometheus 标准做法，避免客户端与服务器两端维护分位数状态。桶值从默认 0.005s~10s 调到 0.1s~300s，覆盖 agent 阶段（LLM 调用链可达数分钟），否则 P95 在 >10s 段失真。计数器/Gauge 是进程内状态：多 worker 进程各自独立，Grafana 按 `sum()` 聚合（指标名已带 `_total` 便于 rate）。本任务只做采集与暴露；run 生命周期在各层接线（API/worker 的 inc、observe）留给后续任务，避免一次性改动过大。
+**落地细节**：依赖经用户批准新增 `prometheus-client==0.26.0`（uv.lock 锁定）。`metrics.py` 用工厂 `create_metrics()` 返回 frozen dataclass `Metrics`（`registry` + 3 Counter + 1 Histogram + 1 Gauge），每次调用建独立 `CollectorRegistry`——prometheus_client 拒绝同注册表重复注册同名指标，工厂模式让测试完全隔离（测试各自建新实例，绝无跨测试状态，呼应 6.1/6.2 的测试纪律）。生产走模块级单例 `METRICS`，`generate_latest(metrics=METRICS)` 序列化为文本。P50/P95 不在进程内算：直方图只输出 `_bucket/_sum/_count`，Grafana 用 `histogram_quantile` 计算——这是 Prometheus 标准做法，避免客户端与服务器两端维护分位数状态。桶值从默认 0.005s~10s 调到 0.1s~300s，覆盖 agent 阶段（LLM 调用链可达数分钟），否则 P95 在 >10s 段失真。计数器/Gauge 是进程内状态：多 worker 进程各自独立，Grafana 按 `sum()` 聚合（指标名已带 `_total` 便于 rate）。本任务原只做采集与暴露；run 生命周期接线（2026-08-12）已补齐：`create_run` 在 run 行 + RUN_CREATED 事件提交后 inc `runs_created`；`persist_run` 是 worker 与 approve-resume 两条路径共用的终态落库汇点，按终态 `COMPLETED→runs_completed`、`FAILED→runs_failed` 各计一次（WAITING_APPROVAL 暂停不算完成，CANCELLED 提前 return 不算）；`graph_builder` 用 `_observe_phase` 包装 plan/execute/verify 节点，镜像 `checkpointed` 的 async 检测，喂 `phase_latency` 直方图。计数断言用**增量法**（先读旧值→动作→断言 +1），因为 `METRICS` 是模块单例、跨测试累计。已知缺口：`execute_run` 的 `except Exception` 崩溃分支直接置 FAILED、绕过 `persist_run`，失败计数未接，留作后续任务。
 
 **教学要点**：
 | 概念 | 讲解内容 |
