@@ -20,6 +20,7 @@ adapter. Retry/idempotency semantics (Phase 5) compose around the executor.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -32,6 +33,8 @@ from erp_copilot.agent.state import (
     StepResult,
 )
 from erp_copilot.domain.enums import StepStatus
+from erp_copilot.domain.errors import IdempotencyConflictError
+from erp_copilot.tools.idempotency import IdempotencyStore
 from erp_copilot.tools.tool_result import ToolResult
 
 _USER_SOURCE = "user_query"
@@ -129,11 +132,93 @@ async def _run_step(
         )
 
 
+async def _run_step_idempotent(
+    step: PlanStep,
+    arguments: dict[str, Any],
+    executor: Executor,
+    store: IdempotencyStore,
+    tenant_id: str,
+    run_id: str,
+) -> tuple[PlanStep, ToolResult]:
+    """Run one WRITE step at-most-once through the idempotency store.
+
+    Records the execution intent (PENDING) before the tool runs, persists the
+    result on success, and replays a COMPLETED record's cached payload without
+    re-invoking the executor (a retry or crash-resume maps to the same key). The
+    store is synchronous, so the node drives begin/complete/fail around the
+    awaited async tool call instead of store.execute().
+    """
+    key = step.idempotency_key
+    assert key is not None  # dispatcher guarantees; guards mypy narrowing
+    try:
+        record = store.begin(
+            tenant_id=tenant_id,
+            idempotency_key=key,
+            request_payload=json.dumps(arguments, ensure_ascii=False, sort_keys=True),
+            run_id=run_id,
+            step_id=step.step_id,
+        )
+    except IdempotencyConflictError as exc:
+        return step, ToolResult.failure(
+            tool_version_id=step.tool_name,
+            error_code="IDEMPOTENCY_CONFLICT",
+            error_message=str(exc),
+            is_retryable=True,
+        )
+
+    if record.status == "COMPLETED" and record.result_payload is not None:
+        return step, ToolResult.success(
+            tool_version_id=step.tool_name,
+            data=json.loads(record.result_payload),
+        )
+
+    try:
+        result = await executor(step.tool_name, arguments)
+    except Exception as exc:
+        store.fail(record, str(exc))
+        return step, ToolResult.failure(
+            tool_version_id=step.tool_name,
+            error_code="EXECUTION_FAILED",
+            error_message=str(exc),
+        )
+    if result.status == "SUCCEEDED":
+        store.complete(record, json.dumps(result.data or {}, ensure_ascii=False))
+    else:
+        error = result.error
+        store.fail(record, error.error_message if error else "工具执行失败")
+    return step, result
+
+
+async def _run_one(
+    step: PlanStep,
+    arguments: dict[str, Any],
+    executor: Executor,
+    store: IdempotencyStore | None,
+    tenant_id: str,
+    run_id: str,
+) -> tuple[PlanStep, ToolResult]:
+    """Dispatch a step to the idempotent WRITE path or the plain runner.
+
+    Only steps that carry an idempotency key (the planner stamps WRITE/DANGEROUS
+    steps) go through the store; reads are naturally repeatable and stay on the
+    fast path.
+    """
+    if store is not None and step.idempotency_key is not None:
+        return await _run_step_idempotent(step, arguments, executor, store, tenant_id, run_id)
+    return await _run_step(step, arguments, executor)
+
+
 def build_execute_steps_node(
     *,
     executor: Executor,
+    idempotency_store: IdempotencyStore | None = None,
 ) -> Callable[[AgentState], Awaitable[dict[str, Any]]]:
-    """Build the execute_ready_steps LangGraph node with an injected executor."""
+    """Build the execute_ready_steps LangGraph node with an injected executor.
+
+    With an *idempotency_store* injected, WRITE steps execute at-most-once per
+    key against the DB ledger (docs/06 §7); without one the node is DB-free and
+    every step runs through the raw executor.
+    """
 
     async def execute_ready_steps_node(state: AgentState) -> dict[str, Any]:
         if state.plan is None or state.plan_validation is None:
@@ -185,7 +270,17 @@ def build_execute_steps_node(
                 continue
 
             outcomes = await asyncio.gather(
-                *(_run_step(step, arguments, executor) for step, arguments in prepared)
+                *(
+                    _run_one(
+                        step,
+                        arguments,
+                        executor,
+                        idempotency_store,
+                        state.tenant_id,
+                        state.run_id,
+                    )
+                    for step, arguments in prepared
+                )
             )
             for step, result in outcomes:
                 results[step.step_id] = _to_step_result(step, result)

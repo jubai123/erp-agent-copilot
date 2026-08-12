@@ -19,9 +19,18 @@ falls back to serial execution over topological_order.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
-from erp_copilot.agent.nodes.execute_steps import build_execute_steps_node, resolve_arguments
+import pytest
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.orm import Session
+
+from erp_copilot.agent.nodes.execute_steps import (
+    Executor,
+    build_execute_steps_node,
+    resolve_arguments,
+)
 from erp_copilot.agent.state import (
     AgentState,
     Plan,
@@ -31,7 +40,9 @@ from erp_copilot.agent.state import (
     StateError,
     StepResult,
 )
+from erp_copilot.domain.entities import IdempotencyRecord
 from erp_copilot.domain.enums import StepStatus, ToolRiskLevel
+from erp_copilot.tools.idempotency import IdempotencyStore
 from erp_copilot.tools.tool_result import ToolResult
 
 
@@ -585,3 +596,115 @@ class TestCreateWriteDag:
             assert order.quantity == 1
         finally:
             apple.quantity_in_stock = stock
+
+
+class TestIdempotencyStoreWiring:
+    """The node honors an injected DB-backed idempotency store for WRITE steps.
+
+    Task 3 (write-path enablement): with an IdempotencyStore injected, a WRITE
+    step records a PENDING intent before the tool runs and persists the result
+    on success, so a later attempt at the same key replays the cached result
+    without re-invoking the executor. Reads (no idempotency key) bypass the
+    store. Uses a self-created SQLite table (same pattern as
+    tests/unit/tools/test_idempotency.py) so the shared test DB is never touched.
+    """
+
+    @pytest.fixture()
+    def engine(self, tmp_path) -> Engine:
+        db = create_engine(f"sqlite:///{tmp_path / 'idempotency-wiring.db'}")
+        IdempotencyRecord.__table__.create(db)
+        return db
+
+    def _write_step(self, *, key: str = "w1") -> PlanStep:
+        return _step(
+            step_id="s1",
+            tool_name="createOrder",
+            risk_level=ToolRiskLevel.WRITE,
+            idempotency_key=key,
+            arguments={"quantity": 1, "idempotency_key": key},
+        )
+
+    def _node(
+        self,
+        executor: Executor,
+        engine: Engine,
+    ) -> Callable[[AgentState], Awaitable[dict[str, Any]]]:
+        return build_execute_steps_node(
+            executor=executor,
+            idempotency_store=IdempotencyStore(Session(engine)),
+        )
+
+    def _record(self, engine: Engine, key: str) -> IdempotencyRecord:
+        with Session(engine) as db:
+            return db.query(IdempotencyRecord).filter_by(idempotency_key=key).one()
+
+    def test_fresh_write_runs_once_and_records_completed(self, engine: Engine) -> None:
+        calls: list[str] = []
+
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            calls.append(tool_name)
+            return ToolResult.success(tool_version_id="createOrder", data={"order_id": "o1"})
+
+        state = _node_state(plan=Plan(steps=[self._write_step()]))
+        updates = _invoke(self._node(executor, engine), state)
+
+        assert calls == ["createOrder"]
+        assert updates["step_results"]["s1"].status == StepStatus.COMPLETED
+        record = self._record(engine, "w1")
+        assert record.status == "COMPLETED"
+        assert record.tenant_id == "t1"
+        assert record.run_id == "r1"
+        assert record.step_id == "s1"
+
+    def test_replay_skips_executor_and_returns_cached_data(self, engine: Engine) -> None:
+        async def first_executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            return ToolResult.success(tool_version_id="createOrder", data={"order_id": "o1"})
+
+        async def second_executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            return ToolResult.success(tool_version_id="createOrder", data={"order_id": "o-NEW"})
+
+        _invoke(
+            self._node(first_executor, engine),
+            _node_state(plan=Plan(steps=[self._write_step()])),
+        )
+        updates = _invoke(
+            self._node(second_executor, engine),
+            _node_state(plan=Plan(steps=[self._write_step()])),
+        )
+
+        result = updates["step_results"]["s1"]
+        assert result.status == StepStatus.COMPLETED
+        # Replayed from the cache (o1), not re-executed (o-NEW would mean a rerun).
+        assert result.data == {"order_id": "o1"}
+
+    def test_read_step_bypasses_store(self, engine: Engine) -> None:
+        calls: list[str] = []
+
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            calls.append(tool_name)
+            return ToolResult.success(tool_version_id="getProductById", data={"name": "苹果"})
+
+        state = _node_state(plan=Plan(steps=[_step(tool_name="getProductById")]))
+        _invoke(self._node(executor, engine), state)
+
+        assert calls == ["getProductById"]
+        with Session(engine) as db:
+            assert db.query(IdempotencyRecord).count() == 0
+
+    def test_failed_write_records_failed(self, engine: Engine) -> None:
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            return ToolResult.failure(
+                tool_version_id="createOrder",
+                error_code="INSUFFICIENT_STOCK",
+                error_message="stock low",
+            )
+
+        state = _node_state(plan=Plan(steps=[self._write_step()]))
+        updates = _invoke(self._node(executor, engine), state)
+
+        result = updates["step_results"]["s1"]
+        assert result.status == StepStatus.FAILED
+        assert result.error_code == "INSUFFICIENT_STOCK"
+        record = self._record(engine, "w1")
+        assert record.status == "FAILED"
+        assert record.error_message == "stock low"
