@@ -9,18 +9,23 @@ from fastapi import FastAPI
 
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.infrastructure.database import init_db
+from erp_copilot.observability.logging import setup_logging
+from erp_copilot.observability.tracing import setup_tracing
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Initialize the SQLAlchemy engine at startup (uvicorn fires this).
+    """Initialize DB engine and observability at startup (uvicorn fires this).
 
     ``create_engine`` is lazy, so a briefly-down database does not block
     startup; the first query surfaces the connection failure. TestClient does
     not fire lifespan events, so the unit/integration suites initialize the
     engine through their own conftest fixtures.
     """
-    init_db(Settings())
+    settings = Settings()
+    init_db(settings)
+    setup_logging(level=settings.log_level, service=settings.app_name)
+    setup_tracing(service_name=settings.app_name)
     yield
 
 
