@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.infrastructure.database import init_db
 from erp_copilot.observability.logging import setup_logging
-from erp_copilot.observability.tracing import setup_tracing
+from erp_copilot.observability.tracing import build_otlp_exporter, setup_tracing
 
 
 @asynccontextmanager
@@ -25,7 +25,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = Settings()
     init_db(settings)
     setup_logging(level=settings.log_level, service=settings.app_name)
-    setup_tracing(service_name=settings.app_name)
+    setup_tracing(
+        service_name=settings.app_name,
+        exporter=build_otlp_exporter(settings.otel_exporter_endpoint),
+    )
     yield
 
 

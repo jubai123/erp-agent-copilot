@@ -8,7 +8,7 @@ from celery.signals import worker_process_init
 from erp_copilot.infrastructure.celery_config import build_celery_config
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.observability.logging import setup_logging
-from erp_copilot.observability.tracing import setup_tracing
+from erp_copilot.observability.tracing import build_otlp_exporter, setup_tracing
 
 
 def create_celery_app() -> Celery:
@@ -34,4 +34,7 @@ def _setup_worker_observability(**kwargs: object) -> None:
     """
     settings = Settings()  # type: ignore[call-arg]
     setup_logging(level=settings.log_level, service=settings.app_name)
-    setup_tracing(service_name=settings.app_name)
+    setup_tracing(
+        service_name=settings.app_name,
+        exporter=build_otlp_exporter(settings.otel_exporter_endpoint),
+    )

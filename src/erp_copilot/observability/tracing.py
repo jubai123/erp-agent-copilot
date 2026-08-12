@@ -66,6 +66,18 @@ def setup_tracing(
     return provider
 
 
+def build_otlp_exporter(endpoint: str) -> SpanExporter:
+    """Build an OTLP gRPC span exporter pointed at *endpoint*.
+
+    The import is lazy so the gRPC dependency is only pulled in when an OTLP
+    exporter is actually built (the production entry points); unit tests inject
+    an :class:`InMemorySpanExporter` and never pay the gRPC import cost.
+    """
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+    return OTLPSpanExporter(endpoint=endpoint)
+
+
 def get_tracer() -> trace.Tracer:
     """Return the service tracer from the configured provider.
 

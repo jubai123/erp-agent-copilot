@@ -21,6 +21,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 import erp_copilot.observability.tracing as tracing_mod
 from erp_copilot.observability.logging import trace_context
 from erp_copilot.observability.tracing import (
+    build_otlp_exporter,
     extract_trace_context,
     get_tracer,
     inject_trace_headers,
@@ -53,6 +54,15 @@ class TestSetupTracing:
     def test_get_tracer_returns_service_tracer(self) -> None:
         _exporter()
         assert get_tracer().instrumentation_info.name == "svc"
+
+
+class TestBuildOtlpExporter:
+    def test_builds_grpc_exporter_for_endpoint(self) -> None:
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+        exporter = build_otlp_exporter("http://localhost:4317")
+
+        assert isinstance(exporter, OTLPSpanExporter)
 
 
 class TestSpan:

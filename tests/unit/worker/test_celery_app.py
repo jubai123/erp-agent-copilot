@@ -30,12 +30,14 @@ class TestWorkerObservabilityWiring:
     ) -> None:
         monkeypatch.setattr(worker_celery, "setup_logging", Mock())
         monkeypatch.setattr(worker_celery, "setup_tracing", Mock())
+        monkeypatch.setattr(worker_celery, "build_otlp_exporter", Mock(return_value="OTLP"))
 
         worker_celery._setup_worker_observability()
 
         worker_celery.setup_logging.assert_called_once_with(
             level="INFO", service="erp-agent-copilot"
         )
+        worker_celery.build_otlp_exporter.assert_called_once_with("http://localhost:4317")
         worker_celery.setup_tracing.assert_called_once_with(
-            service_name="erp-agent-copilot"
+            service_name="erp-agent-copilot", exporter="OTLP"
         )

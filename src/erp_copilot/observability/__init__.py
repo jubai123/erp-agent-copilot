@@ -9,6 +9,7 @@ from erp_copilot.observability.logging import (
     trace_context,
 )
 from erp_copilot.observability.tracing import (
+    build_otlp_exporter,
     extract_trace_context,
     get_tracer,
     inject_trace_headers,
@@ -21,6 +22,7 @@ __all__ = [
     "JsonFormatter",
     "LlmCall",
     "TraceContext",
+    "build_otlp_exporter",
     "estimate_cost",
     "extract_trace_context",
     "get_trace_context",

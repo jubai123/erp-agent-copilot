@@ -34,6 +34,7 @@ def _mock_observability(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr("apps.api.main.setup_logging", Mock())
     monkeypatch.setattr("apps.api.main.setup_tracing", Mock())
+    monkeypatch.setattr("apps.api.main.build_otlp_exporter", Mock(return_value="OTLP"))
 
 
 def _enter_lifespan(app: Any) -> None:
@@ -76,4 +77,7 @@ class TestAppLifespan:
         main.setup_logging.assert_called_once_with(
             level="INFO", service="erp-agent-copilot"
         )
-        main.setup_tracing.assert_called_once_with(service_name="erp-agent-copilot")
+        main.build_otlp_exporter.assert_called_once_with("http://localhost:4317")
+        main.setup_tracing.assert_called_once_with(
+            service_name="erp-agent-copilot", exporter="OTLP"
+        )
