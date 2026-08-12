@@ -20,6 +20,7 @@ from erp_copilot.domain.entities import Run, RunEvent
 from erp_copilot.domain.errors import CopilotError, NotFoundError
 from erp_copilot.infrastructure.database import get_session
 from erp_copilot.memory.checkpoint import CheckpointSaver
+from erp_copilot.observability.metrics import METRICS
 from erp_copilot.security.approval import decide_and_resume
 
 router = APIRouter(prefix="/v1/runs", tags=["runs"])
@@ -105,6 +106,7 @@ async def create_run(body: CreateRunRequest, response: Response) -> RunResponse:
         session.commit()
         append_run_event(session, run.id, "RUN_CREATED", {"status": AgentStatus.QUEUED.value})
         session.commit()
+        METRICS.runs_created.inc()
         from apps.worker.tasks import execute_run
 
         execute_run.delay(run.id, body.product_name, query=body.query)

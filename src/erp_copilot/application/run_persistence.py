@@ -23,6 +23,7 @@ from erp_copilot.application.events import append_run_event
 from erp_copilot.application.failure_queue import FailureQueue
 from erp_copilot.domain.entities import Run, RunStep
 from erp_copilot.domain.enums import StepStatus
+from erp_copilot.observability.metrics import METRICS
 
 # Runtime AgentStatus -> persisted Run.status. create_run and the pre-LangGraph
 # worker use uppercase strings; the checkpoint layer separately stores the
@@ -149,4 +150,11 @@ def persist_run(session: Session, run: Run, final: AgentState) -> str:
             )
         )
     session.commit()
+    # Only a terminal run counts: a run pausing at WAITING_APPROVAL is created
+    # but not yet settled, and a run cancelled while the graph ran returned
+    # early above, so neither reaches the counters here.
+    if run.status == "COMPLETED":
+        METRICS.runs_completed.inc()
+    elif run.status == "FAILED":
+        METRICS.runs_failed.inc()
     return run.status

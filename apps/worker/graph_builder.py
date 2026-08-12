@@ -14,6 +14,11 @@ load would bootstrap the broker/client eagerly.
 
 from __future__ import annotations
 
+import inspect
+import time
+from collections.abc import Callable
+from typing import Any
+
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.orm import Session
 
@@ -24,7 +29,9 @@ from erp_copilot.agent.nodes.policy_check import build_policy_check_node
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.nodes.verify_results import build_verify_results_node
 from erp_copilot.agent.planner import build_deterministic_plan_node
+from erp_copilot.agent.state import AgentState
 from erp_copilot.memory.checkpoint import CheckpointSaver
+from erp_copilot.observability.metrics import METRICS
 from erp_copilot.tools.idempotency import IdempotencyStore
 
 # Tool schemas the deterministic planner can emit (docs/05 simulator tools).
@@ -61,6 +68,33 @@ def resolve_worker_scopes(_tenant_id: str, _user_id: str) -> set[str]:
     return set(_WRITER_SCOPES)
 
 
+def _observe_phase(phase: str, node: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap one phase node so its wall-clock duration feeds the phase histogram.
+
+    Mirrors CheckpointSaver.checkpointed's sync/async detection so the async
+    execute node keeps its coroutine shape through the wrapper (LangGraph and
+    the checkpoint wrapper branch on iscoroutinefunction). The measured span is
+    the node body only — checkpoint persistence runs outside it.
+    """
+    if inspect.iscoroutinefunction(node):
+
+        async def _async_wrapped(state: AgentState) -> dict[str, Any]:
+            start = time.monotonic()
+            updates = await node(state)
+            METRICS.phase_latency.labels(phase=phase).observe(time.monotonic() - start)
+            return updates
+
+        return _async_wrapped
+
+    def _sync_wrapped(state: AgentState) -> dict[str, Any]:
+        start = time.monotonic()
+        updates = node(state)
+        METRICS.phase_latency.labels(phase=phase).observe(time.monotonic() - start)
+        return updates
+
+    return _sync_wrapped
+
+
 def build_worker_graph(
     session: Session,
     checkpoint_saver: CheckpointSaver,
@@ -69,16 +103,21 @@ def build_worker_graph(
 
     *session* feeds the IdempotencyStore (the executor's DB ledger); the
     checkpoint saver is passed in so the caller wires its event sink (the
-    worker) or not (the API resume path).
+    worker) or not (the API resume path). The plan/execute/verify phase nodes
+    are wrapped by _observe_phase so the phase-latency histogram (task 6.4)
+    feeds from both the worker and the API approve-resume path.
     """
     return build_agent_graph(
-        plan_node=build_deterministic_plan_node(),
+        plan_node=_observe_phase("plan", build_deterministic_plan_node()),
         validate_node=build_validate_plan_node(tool_schemas=WORKER_TOOL_SCHEMAS),
         policy_node=build_policy_check_node(get_scopes=resolve_worker_scopes),
-        execute_node=build_execute_steps_node(
-            executor=erp_simulator_executor,
-            idempotency_store=IdempotencyStore(session),
+        execute_node=_observe_phase(
+            "execute",
+            build_execute_steps_node(
+                executor=erp_simulator_executor,
+                idempotency_store=IdempotencyStore(session),
+            ),
         ),
-        verify_node=build_verify_results_node(),
+        verify_node=_observe_phase("verify", build_verify_results_node()),
         checkpoint_saver=checkpoint_saver,
     )
