@@ -22,6 +22,7 @@ from typing import Any
 from erp_copilot.agent.nodes.classify_intent import domain_keywords
 from erp_copilot.agent.state import AgentState, IntentClassification, RetrievedDocument
 from erp_copilot.retrieval.hybrid import rrf_fuse
+from erp_copilot.security.injection_guard import InjectionGuard, InjectionVerdict
 
 # Search backends receive (query/embedding, top_k, tenant_id) and must return
 # result dicts shaped like rrf_fuse expects (chunk_id/content/section_path/
@@ -63,8 +64,18 @@ def retrieve_l2_knowledge(
     vector_search: VectorSearch,
     keyword_search: KeywordSearch,
     top_k: int = 10,
+    injection_guard: InjectionGuard | None = None,
+    record_quarantine: Callable[[RetrievedDocument, InjectionVerdict], None] | None = None,
 ) -> list[RetrievedDocument]:
-    """Hybrid L2 retrieval scoped to *tenant_id*, mapped to citation docs."""
+    """Hybrid L2 retrieval scoped to *tenant_id*, mapped to citation docs.
+
+    With an *injection_guard* (task 5.4 knowledge layer) a retrieved chunk that
+    fails the check is quarantined — dropped from the returned context so
+    build_plan never injects poisoned knowledge — and reported through
+    *record_quarantine* (the caller wires it to record_injection_event with
+    disposition="quarantined"). No guard means no screening, keeping existing
+    callers unchanged.
+    """
     if not query.strip():
         return []
 
@@ -73,7 +84,18 @@ def retrieve_l2_knowledge(
         keyword_search(query, top_k, tenant_id),
         top_k=top_k,
     )
-    return [_to_retrieved_document(r) for r in fused if r.get("content", "").strip()]
+    docs = [_to_retrieved_document(r) for r in fused if r.get("content", "").strip()]
+    if injection_guard is None:
+        return docs
+    kept: list[RetrievedDocument] = []
+    for doc in docs:
+        verdict = injection_guard.check(doc.content)
+        if verdict.flagged:
+            if record_quarantine is not None:
+                record_quarantine(doc, verdict)
+            continue
+        kept.append(doc)
+    return kept
 
 
 def build_retrieve_context_node(
@@ -82,6 +104,8 @@ def build_retrieve_context_node(
     vector_search: VectorSearch,
     keyword_search: KeywordSearch,
     top_k: int = 10,
+    injection_guard: InjectionGuard | None = None,
+    record_quarantine: Callable[[RetrievedDocument, InjectionVerdict], None] | None = None,
 ) -> Callable[[AgentState], dict[str, Any]]:
     """Build the retrieve_context LangGraph node with injected backends."""
 
@@ -94,6 +118,8 @@ def build_retrieve_context_node(
                 vector_search=vector_search,
                 keyword_search=keyword_search,
                 top_k=top_k,
+                injection_guard=injection_guard,
+                record_quarantine=record_quarantine,
             )
         }
 
