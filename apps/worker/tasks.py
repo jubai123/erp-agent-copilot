@@ -145,7 +145,10 @@ def execute_run(
         session.rollback()
         try:
             run = session.query(Run).filter_by(id=run_id).first()
-            if run:
+            # A run settled (cancelled/completed) before the crash landed stays
+            # as-is, mirroring persist_run's fresh-status guard — flipping it to
+            # FAILED would clobber a user cancel and miscount it as a failure.
+            if run and run.status not in {"CANCELLED", "COMPLETED", "FAILED"}:
                 run.status = "FAILED"
                 run.completed_at = datetime.now(UTC)
                 session.commit()

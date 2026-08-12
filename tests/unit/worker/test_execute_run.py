@@ -506,7 +506,9 @@ class TestCrashBranchFailedMetric:
     """Session 18 known gap: a graph crash bypasses persist_run and marks the
     run FAILED directly in execute_run's except branch, so the failed counter
     must be bumped there too — the crash path is the only failure that never
-    reaches the persist_run counter."""
+    reaches the persist_run counter. The branch must mirror persist_run and
+    FailureQueue's settled-run guard: a run already CANCELLED/COMPLETED/FAILED
+    when the crash lands is never flipped to FAILED and never counted."""
 
     def test_graph_crash_marks_failed_and_increments_failed_counter(
         self, session: Session, monkeypatch: pytest.MonkeyPatch
@@ -526,3 +528,28 @@ class TestCrashBranchFailedMetric:
         assert run.status == "FAILED"
         assert run.completed_at is not None
         assert _counter("erp_runs_failed_total") == failed_before + 1
+
+    def test_crash_does_not_overwrite_cancelled_run_or_count_it(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Race: the run was mid-graph when the cancel endpoint landed CANCELLED
+        # (committed) and the graph then crashed. The crash branch must treat a
+        # settled run like persist_run/FailureQueue do — leave it alone.
+        def cancel_then_crash(*args: object, **kwargs: object) -> object:
+            row = session.query(Run).filter_by(id=run.id).first()
+            assert row is not None
+            row.status = "CANCELLED"
+            session.commit()
+            raise RuntimeError("simulated graph crash")
+
+        monkeypatch.setattr("apps.worker.tasks._invoke_graph", cancel_then_crash)
+        tenant = _make_tenant(session)
+        run = _make_run(session, tenant.id)
+        failed_before = _counter("erp_runs_failed_total")
+
+        with pytest.raises(RuntimeError, match="simulated graph crash"):
+            execute_run(run.id, "苹果")
+
+        session.refresh(run)
+        assert run.status == "CANCELLED"
+        assert _counter("erp_runs_failed_total") == failed_before
