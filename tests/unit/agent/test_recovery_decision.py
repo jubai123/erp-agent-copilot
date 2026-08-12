@@ -21,9 +21,9 @@ import pytest
 from apps.erp_simulator.data.products import PRODUCT_BY_NAME
 from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS
 from erp_copilot.agent.recovery_decision import (
-    RecoveryAction,
     _PRODUCT_STOCK,
     _REGION_SUPPLIER,
+    RecoveryAction,
     decide_recovery_action,
 )
 
@@ -55,7 +55,7 @@ def test_reject_detection(query: str, expected: RecoveryAction) -> None:
 
 
 def test_local_stock_catalog_mirrors_simulator_seed() -> None:
-    assert _PRODUCT_STOCK == {p.name: p.quantity_in_stock for p in PRODUCT_BY_NAME.values()}
+    assert {p.name: p.quantity_in_stock for p in PRODUCT_BY_NAME.values()} == _PRODUCT_STOCK
 
 
 def test_local_region_supplier_catalog_mirrors_simulator_seed() -> None:

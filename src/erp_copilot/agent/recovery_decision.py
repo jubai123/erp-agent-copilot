@@ -125,9 +125,7 @@ def _invalid_region(query: str) -> bool:
     return match.group(1) not in _REGIONS
 
 
-def _has_conflict(
-    intent: IntentClassification, domain: str, action: str, query: str
-) -> bool:
+def _has_conflict(intent: IntentClassification, domain: str, action: str, query: str) -> bool:
     """True when a business rule blocks the otherwise-complete request.
 
     Each branch is guarded by the parameters it needs, so an incomplete request
@@ -151,9 +149,12 @@ def _has_conflict(
         target = entities.get("status")
         match = _CURRENT_STATUS_RE.search(query)
         current = match.group(1) if match else None
-        if current in _ORDER_STATE_GRAPH and isinstance(target, str):
-            if target not in _ORDER_STATE_GRAPH[current]:
-                return True
+        if (
+            current in _ORDER_STATE_GRAPH
+            and isinstance(target, str)
+            and target not in _ORDER_STATE_GRAPH[current]
+        ):
+            return True
     elif (domain, action) == ("order", "cancel"):
         return "order_id" in entities
     elif (domain, action) == ("order", "modify"):
