@@ -112,6 +112,18 @@ class TestCheckpointSaver:
         assert restored is not None
         assert restored.status == AgentStatus.EXECUTING
 
+    def test_load_latest_breaks_created_at_ties_by_insertion_order(self, session: Session) -> None:
+        # Two saves sharing one clock tick used to tie-break on the v4-UUID id
+        # (random vs insertion order) and could return the stale row; the
+        # insertion-ordered sequence must win regardless of created_at.
+        at = datetime(2026, 8, 8, tzinfo=UTC)
+        saver = CheckpointSaver(session, clock=lambda: at)
+        saver.save("build_plan", _state(status=AgentStatus.PLANNING))
+        saver.save("execute_ready_steps", _state(status=AgentStatus.EXECUTING))
+        restored = saver.load_latest("r1", "t1")
+        assert restored is not None
+        assert restored.status == AgentStatus.EXECUTING
+
     def test_no_checkpoint_returns_none(self, session: Session) -> None:
         assert CheckpointSaver(session).load_latest("r1", "t1") is None
 

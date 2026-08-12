@@ -24,6 +24,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from erp_copilot.agent.state import AgentState, AgentStatus
@@ -88,11 +89,21 @@ class CheckpointSaver:
         When an *event_sink* is injected it runs before the commit, so the
         event it appends lands in the same transaction as the checkpoint.
         Default None keeps the saver a pure recovery primitive (task 4.12).
+
+        sequence is max+1 for the run, so it is strictly increasing across
+        savers and processes — the ordering key load_latest sorts on, since
+        created_at can tie when nodes save within the same clock tick.
         """
+        max_sequence = (
+            self._session.query(func.max(AgentCheckpoint.sequence))
+            .filter(AgentCheckpoint.run_id == state.run_id)
+            .scalar()
+        )
         self._session.add(
             AgentCheckpoint(
                 run_id=state.run_id,
                 tenant_id=state.tenant_id,
+                sequence=(max_sequence or 0) + 1,
                 node_name=node_name,
                 run_status=map_agent_status(state.status),
                 state_json=state.model_dump_json(),
@@ -106,6 +117,9 @@ class CheckpointSaver:
     def load_latest(self, run_id: str, tenant_id: str) -> AgentState | None:
         """Return the most recent checkpoint for *run_id*, or None.
 
+        Ordered by the insertion-ordered *sequence* (never created_at): nodes
+        in one graph pass can share a clock tick, and the v4-UUID id tiebreak
+        is random vs insertion order — either would return a stale snapshot.
         The tenant filter keeps recovery inside the tenant's data boundary —
         a worker must never resume another tenant's run.
         """
@@ -115,7 +129,7 @@ class CheckpointSaver:
                 AgentCheckpoint.run_id == run_id,
                 AgentCheckpoint.tenant_id == tenant_id,
             )
-            .order_by(AgentCheckpoint.created_at.desc(), AgentCheckpoint.id.desc())
+            .order_by(AgentCheckpoint.sequence.desc())
             .first()
         )
         if row is None:

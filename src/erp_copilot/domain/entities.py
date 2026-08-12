@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -213,12 +213,15 @@ class AgentCheckpoint(Base):
     Written by the CheckpointSaver after every graph node (task 4.12); the
     state_json column carries the full serialized AgentState so a crashed
     worker can resume from the latest row. run_status is the persistence view
-    (RunStatus) mapped from the runtime AgentStatus.
+    (RunStatus) mapped from the runtime AgentStatus. sequence is the
+    insertion-ordered key load_latest sorts on — created_at alone can tie when
+    nodes save within the same clock tick, and the v4-UUID id is random.
     """
 
     __tablename__ = "agent_checkpoints"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     run_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
     tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
     node_name: Mapped[str] = mapped_column(String(50), nullable=False)
