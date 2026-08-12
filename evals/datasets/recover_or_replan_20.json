@@ -1,0 +1,284 @@
+{
+  "description": "recover_or_replan 真实节点评测：20 条用例覆盖节点的全部决策分支（retry/replan/give-up 预算、写幂等安全、对账人工干预、no-op），每条 seed 直接映射 AgentState 在 recover_or_replan 输入端的快照，expected 断言终态 status/错误码/预算计数。节点硬接在生产图（graph.py），本数据集测的是生产真实恢复决策（docs/08 §2）。",
+  "version": "1.0",
+  "cases": [
+    {
+      "case_id": "rec-node-001",
+      "desc": "预算内 retryable 写失败（带幂等键）→ 重试",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [{"code": "TIMEOUT", "message": "request timed out", "step_id": "s1"}],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-001:s1"}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
+      },
+      "expected": {"status": "EXECUTING", "retry_count": 1, "replan_count": 0, "error_code": null, "errors_cleared": true}
+    },
+    {
+      "case_id": "rec-node-002",
+      "desc": "预算内 retryable 读失败（retry=1）→ 重试",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 1,
+        "replan_count": 0,
+        "errors": [{"code": "TIMEOUT", "message": "request timed out", "step_id": "s1"}],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "getProductById", "risk_level": "READ", "idempotency_key": null}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
+      },
+      "expected": {"status": "EXECUTING", "retry_count": 2, "replan_count": 0, "error_code": null, "errors_cleared": true}
+    },
+    {
+      "case_id": "rec-node-003",
+      "desc": "retry 预算耗尽（retry=2 = MAX_RETRIES）→ 放弃",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 2,
+        "replan_count": 0,
+        "errors": [{"code": "TIMEOUT", "message": "request timed out", "step_id": "s1"}],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-003:s1"}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
+      },
+      "expected": {"status": "FAILED", "retry_count": 2, "replan_count": 0, "error_code": "RETRY_BUDGET_EXHAUSTED", "errors_cleared": false}
+    },
+    {
+      "case_id": "rec-node-004",
+      "desc": "retry 预算超支守卫（retry=3）→ 仍放弃",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 3,
+        "replan_count": 0,
+        "errors": [{"code": "TIMEOUT", "message": "request timed out", "step_id": "s1"}],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-004:s1"}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
+      },
+      "expected": {"status": "FAILED", "retry_count": 3, "replan_count": 0, "error_code": "RETRY_BUDGET_EXHAUSTED", "errors_cleared": false}
+    },
+    {
+      "case_id": "rec-node-005",
+      "desc": "RETRYING 但无 plan → 放弃",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [{"code": "EXECUTION_FAILED", "message": "tool execution failed", "step_id": "s1"}],
+        "plan": null,
+        "step_results": []
+      },
+      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 0, "error_code": "RECOVERY_GIVE_UP", "errors_cleared": false}
+    },
+    {
+      "case_id": "rec-node-006",
+      "desc": "写步骤无幂等键 → 结果不确定，禁止自动重试",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [{"code": "TIMEOUT", "message": "request timed out", "step_id": "s1"}],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": null}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
+      },
+      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 0, "error_code": "WRITE_RETRY_UNSAFE", "errors_cleared": false}
+    },
+    {
+      "case_id": "rec-node-007",
+      "desc": "写步骤带幂等键 → at-most-once 安全，可重试",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [{"code": "TIMEOUT", "message": "request timed out", "step_id": "s1"}],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-007:s1"}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
+      },
+      "expected": {"status": "EXECUTING", "retry_count": 1, "replan_count": 0, "error_code": null, "errors_cleared": true}
+    },
+    {
+      "case_id": "rec-node-008",
+      "desc": "DANGEROUS 步骤无幂等键 → 同样禁止重试",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [{"code": "TIMEOUT", "message": "request timed out", "step_id": "s1"}],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "cancelOrder", "risk_level": "DANGEROUS", "idempotency_key": null}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
+      },
+      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 0, "error_code": "WRITE_RETRY_UNSAFE", "errors_cleared": false}
+    },
+    {
+      "case_id": "rec-node-009",
+      "desc": "写已完成 + 读失败 → 读可安全重试",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [{"code": "TIMEOUT", "message": "request timed out", "step_id": "s2"}],
+        "plan": {"steps": [
+          {"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-009:s1"},
+          {"step_id": "s2", "tool_name": "getOrderByOrderId", "risk_level": "READ", "idempotency_key": null}
+        ]},
+        "step_results": [
+          {"step_id": "s1", "status": "COMPLETED", "error_code": null, "is_retryable": false},
+          {"step_id": "s2", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}
+        ]
+      },
+      "expected": {"status": "EXECUTING", "retry_count": 1, "replan_count": 0, "error_code": null, "errors_cleared": true}
+    },
+    {
+      "case_id": "rec-node-010",
+      "desc": "replan 预算内（永久失败）→ 重规划",
+      "seed": {
+        "status": "REPLANNING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [{"code": "PERMISSION_DENIED", "message": "no scope", "step_id": "s1"}],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-010:s1"}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "PERMISSION_DENIED", "is_retryable": false}]
+      },
+      "expected": {"status": "PLANNING", "retry_count": 0, "replan_count": 1, "error_code": null, "errors_cleared": true}
+    },
+    {
+      "case_id": "rec-node-011",
+      "desc": "replan 预算耗尽（replan=1 = MAX_REPLANS）→ 放弃",
+      "seed": {
+        "status": "REPLANNING",
+        "retry_count": 0,
+        "replan_count": 1,
+        "errors": [{"code": "PERMISSION_DENIED", "message": "no scope", "step_id": "s1"}],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-011:s1"}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "PERMISSION_DENIED", "is_retryable": false}]
+      },
+      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 1, "error_code": "REPLAN_BUDGET_EXHAUSTED", "errors_cleared": false}
+    },
+    {
+      "case_id": "rec-node-012",
+      "desc": "validate 错误路由（PLANNING + UNKNOWN_TOOL）→ 重规划",
+      "seed": {
+        "status": "PLANNING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [{"code": "UNKNOWN_TOOL", "message": "tool not in registry", "step_id": "s1"}],
+        "plan": null,
+        "step_results": []
+      },
+      "expected": {"status": "PLANNING", "retry_count": 0, "replan_count": 1, "error_code": null, "errors_cleared": true}
+    },
+    {
+      "case_id": "rec-node-013",
+      "desc": "replan 保留已完成 step_results（resume guard 依赖）",
+      "seed": {
+        "status": "REPLANNING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [{"code": "PERMISSION_DENIED", "message": "no scope", "step_id": "s2"}],
+        "plan": {"steps": [
+          {"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-013:s1"},
+          {"step_id": "s2", "tool_name": "updateOrderStatus", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-013:s2"}
+        ]},
+        "step_results": [
+          {"step_id": "s1", "status": "COMPLETED", "error_code": null, "is_retryable": false},
+          {"step_id": "s2", "status": "FAILED", "error_code": "PERMISSION_DENIED", "is_retryable": false}
+        ]
+      },
+      "expected": {"status": "PLANNING", "retry_count": 0, "replan_count": 1, "error_code": null, "errors_cleared": true}
+    },
+    {
+      "case_id": "rec-node-014",
+      "desc": "对账冲突优先于 retry → 人工干预",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [
+          {"code": "RECOVERY_RECONCILIATION_REQUIRED", "message": "写步骤执行状态不确定（幂等记录 PENDING）", "step_id": "s1"},
+          {"code": "TIMEOUT", "message": "request timed out", "step_id": "s1"}
+        ],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-014:s1"}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
+      },
+      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 0, "error_code": "RECOVERY_REQUIRES_HUMAN", "errors_cleared": false}
+    },
+    {
+      "case_id": "rec-node-015",
+      "desc": "对账冲突优先于 replan → 人工干预",
+      "seed": {
+        "status": "PLANNING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [{"code": "RECOVERY_RECONCILIATION_REQUIRED", "message": "写步骤执行状态不确定（幂等记录 PENDING）", "step_id": "s1"}],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-015:s1"}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "PERMISSION_DENIED", "is_retryable": false}]
+      },
+      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 0, "error_code": "RECOVERY_REQUIRES_HUMAN", "errors_cleared": false}
+    },
+    {
+      "case_id": "rec-node-016",
+      "desc": "对账冲突 + retry 预算耗尽 → 对账优先（人工干预）",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 2,
+        "replan_count": 0,
+        "errors": [
+          {"code": "RECOVERY_RECONCILIATION_REQUIRED", "message": "写步骤执行状态不确定（幂等记录 PENDING）", "step_id": "s1"},
+          {"code": "TIMEOUT", "message": "request timed out", "step_id": "s1"}
+        ],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-016:s1"}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
+      },
+      "expected": {"status": "FAILED", "retry_count": 2, "replan_count": 0, "error_code": "RECOVERY_REQUIRES_HUMAN", "errors_cleared": false}
+    },
+    {
+      "case_id": "rec-node-017",
+      "desc": "no-op：SUCCEEDED 无 errors → 状态不变",
+      "seed": {
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [],
+        "plan": null,
+        "step_results": []
+      },
+      "expected": {"status": "SUCCEEDED", "retry_count": 0, "replan_count": 0, "error_code": null, "errors_cleared": true}
+    },
+    {
+      "case_id": "rec-node-018",
+      "desc": "no-op：EXECUTING 无 errors → 状态不变",
+      "seed": {
+        "status": "EXECUTING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [],
+        "plan": null,
+        "step_results": []
+      },
+      "expected": {"status": "EXECUTING", "retry_count": 0, "replan_count": 0, "error_code": null, "errors_cleared": true}
+    },
+    {
+      "case_id": "rec-node-019",
+      "desc": "仅 status 驱动：RETRYING 无 errors 有 plan → 重试",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 0,
+        "replan_count": 0,
+        "errors": [],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-019:s1"}]},
+        "step_results": []
+      },
+      "expected": {"status": "EXECUTING", "retry_count": 1, "replan_count": 0, "error_code": null, "errors_cleared": true}
+    },
+    {
+      "case_id": "rec-node-020",
+      "desc": "混合预算独立：RETRYING（replan=1）→ 重试只动 retry 计数",
+      "seed": {
+        "status": "RETRYING",
+        "retry_count": 0,
+        "replan_count": 1,
+        "errors": [{"code": "TIMEOUT", "message": "request timed out", "step_id": "s1"}],
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-020:s1"}]},
+        "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
+      },
+      "expected": {"status": "EXECUTING", "retry_count": 1, "replan_count": 1, "error_code": null, "errors_cleared": true}
+    }
+  ]
+}

@@ -1,6 +1,6 @@
-"""Validation tests for the 200-case evaluation dataset — task 6.5.
+"""Validation tests for the evaluation dataset files — task 6.5.
 
-Six category files in evals/datasets/ total 200 independently executable
+Five category files in evals/datasets/ total 175 independently executable
 cases (docs/08 section 2). These tests assert the count, per-category
 schema, enumerated values, and grounding of every case against the
 authoritative sources: V6_TOOL_NAMES / DOMAIN_TOOL_MAP
@@ -26,9 +26,8 @@ EXPECTED_COUNTS: dict[str, int] = {
     "tool_retrieval_40.json": 40,
     "knowledge_rag_40.json": 40,
     "planning_50.json": 50,
-    "recovery_25.json": 25,
+    "recover_or_replan_20.json": 20,
     "security_25.json": 25,
-    "failure_20.json": 20,
 }
 
 REGIONS = {"上海", "南京", "北京", "天津", "广州", "深圳", "成都", "重庆", "西安", "兰州"}
@@ -54,7 +53,7 @@ def _case_ids(filename: str) -> list[str]:
 
 
 class TestAggregate:
-    def test_all_six_files_exist(self) -> None:
+    def test_all_five_files_exist(self) -> None:
         for filename in EXPECTED_COUNTS:
             assert (DATASETS / filename).exists(), filename
 
@@ -64,9 +63,9 @@ class TestAggregate:
             assert data["description"]
             assert data["version"]
 
-    def test_six_categories_total_200(self) -> None:
+    def test_five_categories_total_175(self) -> None:
         total = sum(len(_load(f)["cases"]) for f in EXPECTED_COUNTS)
-        assert total == 200
+        assert total == 175
 
     def test_per_file_counts(self) -> None:
         for filename, expected in EXPECTED_COUNTS.items():
@@ -243,6 +242,100 @@ class TestFailure:
         for case in _load("failure_20.json")["cases"]:
             if case["scenario"] == "worker_crash":
                 assert case["expected_duplicate_writes"] == 0, case["case_id"]
+
+
+class TestRecoverOrReplan:
+    _STATUSES = {
+        "QUEUED",
+        "PLANNING",
+        "WAITING_APPROVAL",
+        "EXECUTING",
+        "VERIFYING",
+        "RETRYING",
+        "REPLANNING",
+        "SUCCEEDED",
+        "FAILED",
+        "CANCELLED",
+        "EXPIRED",
+    }
+    _RISK_LEVELS = {"READ", "WRITE", "DANGEROUS"}
+    _STEP_STATUSES = {"COMPLETED", "FAILED"}
+    _GIVE_UP_CODES = {
+        "RECOVERY_REQUIRES_HUMAN",
+        "RECOVERY_GIVE_UP",
+        "WRITE_RETRY_UNSAFE",
+        "RETRY_BUDGET_EXHAUSTED",
+        "REPLAN_BUDGET_EXHAUSTED",
+    }
+
+    def test_seed_and_expected_schema(self) -> None:
+        for case in _load("recover_or_replan_20.json")["cases"]:
+            seed = case["seed"]
+            required_seed = {"status", "retry_count", "replan_count", "errors"}
+            assert required_seed <= set(seed), case["case_id"]
+            assert set(seed) - required_seed <= {"plan", "step_results"}
+            assert seed["status"] in self._STATUSES, case["case_id"]
+            assert isinstance(seed["retry_count"], int) and seed["retry_count"] >= 0
+            assert isinstance(seed["replan_count"], int) and seed["replan_count"] >= 0
+            assert isinstance(seed["errors"], list)
+            for err in seed["errors"]:
+                assert err["code"] and err["message"]
+            if seed["plan"] is not None:
+                for step in seed["plan"]["steps"]:
+                    assert step["step_id"] and step["tool_name"]
+                    assert step["risk_level"] in self._RISK_LEVELS
+            for sr in seed.get("step_results", []):
+                assert sr["step_id"]
+                assert sr["status"] in self._STEP_STATUSES
+
+            expected = case["expected"]
+            assert set(expected) == {
+                "status",
+                "retry_count",
+                "replan_count",
+                "error_code",
+                "errors_cleared",
+            }, case["case_id"]
+            assert expected["status"] in self._STATUSES, case["case_id"]
+            assert isinstance(expected["errors_cleared"], bool)
+            assert expected["error_code"] is None or expected["error_code"] in self._GIVE_UP_CODES
+
+    def test_step_results_reference_plan_steps(self) -> None:
+        """recover_or_replan looks up a plan step's result by step_id
+        (_failed_write_lacks_idempotency), so every result must map to a plan step."""
+        for case in _load("recover_or_replan_20.json")["cases"]:
+            seed = case["seed"]
+            if seed["plan"] is None or not seed.get("step_results"):
+                continue
+            plan_ids = {s["step_id"] for s in seed["plan"]["steps"]}
+            result_ids = {sr["step_id"] for sr in seed["step_results"]}
+            assert plan_ids == result_ids, case["case_id"]
+
+    def test_every_give_up_code_covered(self) -> None:
+        codes = {
+            c["expected"]["error_code"]
+            for c in _load("recover_or_replan_20.json")["cases"]
+            if c["expected"]["error_code"] is not None
+        }
+        assert codes == self._GIVE_UP_CODES
+
+    def test_every_continuation_branch_covered(self) -> None:
+        cases = _load("recover_or_replan_20.json")["cases"]
+        retried = any(
+            c["seed"]["status"] == "RETRYING" and c["expected"]["status"] == "EXECUTING"
+            for c in cases
+        )
+        replanned = any(
+            c["seed"]["status"] in {"REPLANNING", "PLANNING"}
+            and c["expected"]["status"] == "PLANNING"
+            for c in cases
+        )
+        noop = any(
+            c["seed"]["status"] not in {"RETRYING", "REPLANNING", "PLANNING"}
+            and c["expected"]["status"] == c["seed"]["status"]
+            for c in cases
+        )
+        assert retried and replanned and noop
 
 
 class TestSecurity:

@@ -10,10 +10,8 @@ what it is not:
   tool_retrieval uses candidate_filter's first-level DOMAIN_TOOL_MAP filter;
   security uses the real guards with faked DNS resolution; planning runs the
   real classify → build_plan → validate_plan node chain with the worker's
-  tool schemas; recovery runs the real recovery-action decision
-  (src/erp_copilot/agent/recovery_decision.py) on each query; failure runs the
-  real failure-behavior decision plus the idempotency write observer
-  (src/erp_copilot/agent/failure_decision.py).
+  tool schemas; recover_or_replan runs the real recover_or_replan node
+  (hard-wired in build_agent_graph) on each seeded AgentState snapshot.
 - ``retrieval_pipeline`` — the real RAG chain (embed → vector → FTS → RRF →
   rerank) against the dedicated test database, using deterministic providers
   so it stays offline and reproducible. Requires a local pgvector database;
@@ -34,10 +32,9 @@ from pathlib import Path
 
 import yaml
 
-from erp_copilot.agent.failure_decision import decide_failure_behavior, observe_duplicates
-from erp_copilot.agent.recovery_decision import decide_recovery_action
 from erp_copilot.tools.candidate_filter import filter_candidates
 from evals.harness import RunnerFn, RunnerOutput, format_report, run_all, write_report
+from evals.recover_or_replan_eval import evaluate_cases as evaluate_recover_or_replan
 from evals.scorers.retrieval_scorer import score_retrieved
 from evals.scripts.run_security_eval import Guards, evaluate_cases, summarize
 
@@ -378,80 +375,14 @@ def _planning(cases: list[dict]) -> RunnerOutput:
     }
 
 
-def _recovery(cases: list[dict]) -> RunnerOutput:
-    """Deterministic: run the real recovery-action decision on each query."""
-    per_case: list[dict] = []
-    for case in cases:
-        expected = case["expected_action"]
-        actual = decide_recovery_action(case["query"])
-        passed = actual == expected
-        per_case.append(
-            {
-                "case_id": case["case_id"],
-                "passed": passed,
-                "expected": expected,
-                "actual": actual,
-                "detail": "" if passed else f"decision={actual!r}, expected {expected!r}",
-            }
-        )
-    n = len(per_case)
-    accuracy = sum(1 for pc in per_case if pc["passed"]) / n if n else 0.0
-    return {
-        "mode": "deterministic",
-        "primary_score": accuracy,
-        "metrics": {"action_accuracy": accuracy},
-        "per_case": per_case,
-    }
+def _recover_or_replan(cases: list[dict]) -> RunnerOutput:
+    """Deterministic: run the real recover_or_replan node on each seeded state.
 
-
-def _failure(cases: list[dict]) -> RunnerOutput:
-    """Deterministic: real failure-behavior decision + idempotency write observer."""
-    per_case: list[dict] = []
-    violations = 0
-    for case in cases:
-        expected_behavior = case["expected_behavior"]
-        expected_duplicates = case["expected_duplicate_writes"]
-        observed_behavior = decide_failure_behavior(case["query"])
-        observed_duplicates = observe_duplicates(case["scenario"])
-        behavior_ok = observed_behavior == expected_behavior
-        dup_ok = observed_duplicates == expected_duplicates
-        passed = behavior_ok and dup_ok
-        if not dup_ok:
-            violations += 1
-        per_case.append(
-            {
-                "case_id": case["case_id"],
-                "passed": passed,
-                "expected": {
-                    "behavior": expected_behavior,
-                    "duplicate_writes": expected_duplicates,
-                },
-                "actual": {
-                    "behavior": observed_behavior,
-                    "duplicate_writes": observed_duplicates,
-                },
-                "detail": (
-                    ""
-                    if passed
-                    else (
-                        f"behavior={observed_behavior!r}, expected {expected_behavior!r}"
-                        if not behavior_ok
-                        else f"duplicate writes {observed_duplicates} != {expected_duplicates}"
-                    )
-                ),
-            }
-        )
-    n = len(per_case)
-    accuracy = sum(1 for pc in per_case if pc["passed"]) / n if n else 0.0
-    return {
-        "mode": "deterministic",
-        "primary_score": accuracy,
-        "metrics": {
-            "behavior_accuracy": accuracy,
-            "duplicate_write_violations": violations,
-        },
-        "per_case": per_case,
-    }
+    Delegates to evals/recover_or_replan_eval.py, which maps each case's seed
+    onto an AgentState snapshot and calls recover_or_replan — the recovery node
+    hard-wired in build_agent_graph — asserting the terminal state.
+    """
+    return evaluate_recover_or_replan(cases)
 
 
 def _security(cases: list[dict]) -> RunnerOutput:
@@ -493,9 +424,8 @@ CATEGORY_RUNNERS: dict[str, RunnerFn] = {
     "tool_retrieval": _tool_retrieval,
     "knowledge_rag": _knowledge_rag,
     "planning": _planning,
-    "recovery": _recovery,
+    "recover_or_replan": _recover_or_replan,
     "security": _security,
-    "failure": _failure,
 }
 
 

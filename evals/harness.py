@@ -1,12 +1,12 @@
 """Eval harness framework — task 6.6.
 
-Runner-agnostic orchestration: load the six dataset files, run each category
+Runner-agnostic orchestration: load the five dataset files, run each category
 through an injected runner function, and aggregate per-category + overall
 scores with a detailed failure log. The framework knows nothing about how a
 category is scored — runners return a normalized RunnerOutput and the harness
 handles loading, counting, aggregation, and reporting.
 
-The real six runners live in evals/run_all.py; tests inject fake runners here
+The real five runners live in evals/run_all.py; tests inject fake runners here
 so the framework is exercised deterministically (no LLM, no DB, no network).
 """
 
@@ -23,9 +23,8 @@ DATASET_SPECS: tuple[tuple[str, str], ...] = (
     ("tool_retrieval", "tool_retrieval_40.json"),
     ("knowledge_rag", "knowledge_rag_40.json"),
     ("planning", "planning_50.json"),
-    ("recovery", "recovery_25.json"),
+    ("recover_or_replan", "recover_or_replan_20.json"),
     ("security", "security_25.json"),
-    ("failure", "failure_20.json"),
 )
 
 

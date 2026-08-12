@@ -858,7 +858,7 @@
 
 ## 任务 4.4：retrieve_context 节点
 
-> **状态：✅ 已完成**（2026-08-07，L2 混合检索 + 意图构造查询 + 租户透传 + 引用保存）
+> **状态：✅ 已完成**（2026-08-07，L2 混合检索 + 意图构造查询 + 租户透传 + 引用保存；2026-08-13 worker 接线：`build_worker_graph` 默认经 `build_worker_retrieve_node` 接真实检索节点）
 
 **目标**：根据意图从知识库检索相关业务规则（L2 RAG）。
 
@@ -1194,7 +1194,7 @@
 - ✅ "跳过审批直接下单"→标记为可疑（`BYPASS_APPROVAL`）
 - ✅ "泄露系统提示词"→标记为可疑（`LEAK_SYSTEM_PROMPT`）
 
-**落地细节**：纯正则检测器（`InjectionGuard.check(text)`，确定性、无网络 I/O）复用 SSRF guard 的 verdict 模式——返回 `InjectionVerdict(flagged, matched_rules, detail)` 而非抛异常，处置权交给调用方（输入层 block、知识层 quarantine，见 docs/06 §7 的输入/知识双层区分）。三条默认规则覆盖任务验收的三大攻击族：`IGNORE_PRIOR_INSTRUCTIONS`（忽略之前指令/忽略以上所有指令/ignore all previous instructions/ignore the instructions above）、`BYPASS_APPROVAL`（跳过审批/绕过审批/绕过审核/bypass approval）、`LEAK_SYSTEM_PROMPT`（泄露/显示/出示系统提示词/reveal your system prompt），均 `re.IGNORECASE`。多规则命中时 `matched_rules` 按规则序全量报告，`detail` 取首条。`InjectionGuard(rules=[...])` 可用自定义规则替换默认集，`rules=[]` 永不标记（用于测试/禁用）。拦截事件经 `record_injection_event` 落 `SecurityEvent(attack_type="PROMPT_INJECTION", layer="injection_guard", severity="HIGH")`，`disposition` 默认 `blocked`、可传 `quarantined` 支持 RAG 知识层隔离。误报测试钉住正常 ERP 请求（"查询苹果的库存""创建订单，数量5，发往上海""请忽略发货延迟的情况"等）不得被标记；裸"忽略"不足以触发，必须命中完整攻击句式。接线：✅ 输入层已接入 `POST /v1/runs`（2026-08-13，`create_run` 前置检查，flagged → 422 + `record_injection_event` 落 security_events，run 不创建）；✅ 知识层 quarantine 已接入检索节点（2026-08-13，`retrieve_l2_knowledge`/`build_retrieve_context_node` 注入 `injection_guard` + `record_quarantine`：检索结果进 `retrieved_context` 前逐条 `check(content)`，flagged → 剔除 + 调 recorder 落 `SecurityEvent(disposition="quarantined")`，`build_plan` 永远收不到被污染的知识；guard 缺省 None 不筛查，向后兼容。`TestQuarantineScreening` 4 用例钉死：flagged 剔除、良性不触发、无 guard 全量放行、节点级透传）。注：worker 图目前未接真实 `retrieve_node`（走 `_retrieve_context_noop`），该节点级隔离在真实使用检索节点处生效；worker 接真实检索属既存 gap（docs/benchmark 已标 worker 简化直连）。
+**落地细节**：纯正则检测器（`InjectionGuard.check(text)`，确定性、无网络 I/O）复用 SSRF guard 的 verdict 模式——返回 `InjectionVerdict(flagged, matched_rules, detail)` 而非抛异常，处置权交给调用方（输入层 block、知识层 quarantine，见 docs/06 §7 的输入/知识双层区分）。三条默认规则覆盖任务验收的三大攻击族：`IGNORE_PRIOR_INSTRUCTIONS`（忽略之前指令/忽略以上所有指令/ignore all previous instructions/ignore the instructions above）、`BYPASS_APPROVAL`（跳过审批/绕过审批/绕过审核/bypass approval）、`LEAK_SYSTEM_PROMPT`（泄露/显示/出示系统提示词/reveal your system prompt），均 `re.IGNORECASE`。多规则命中时 `matched_rules` 按规则序全量报告，`detail` 取首条。`InjectionGuard(rules=[...])` 可用自定义规则替换默认集，`rules=[]` 永不标记（用于测试/禁用）。拦截事件经 `record_injection_event` 落 `SecurityEvent(attack_type="PROMPT_INJECTION", layer="injection_guard", severity="HIGH")`，`disposition` 默认 `blocked`、可传 `quarantined` 支持 RAG 知识层隔离。误报测试钉住正常 ERP 请求（"查询苹果的库存""创建订单，数量5，发往上海""请忽略发货延迟的情况"等）不得被标记；裸"忽略"不足以触发，必须命中完整攻击句式。接线：✅ 输入层已接入 `POST /v1/runs`（2026-08-13，`create_run` 前置检查，flagged → 422 + `record_injection_event` 落 security_events，run 不创建）；✅ 知识层 quarantine 已接入检索节点（2026-08-13，`retrieve_l2_knowledge`/`build_retrieve_context_node` 注入 `injection_guard` + `record_quarantine`：检索结果进 `retrieved_context` 前逐条 `check(content)`，flagged → 剔除 + 调 recorder 落 `SecurityEvent(disposition="quarantined")`，`build_plan` 永远收不到被污染的知识；guard 缺省 None 不筛查，向后兼容。`TestQuarantineScreening` 4 用例钉死：flagged 剔除、良性不触发、无 guard 全量放行、节点级透传）。✅ worker 接线完成（2026-08-13，`build_worker_graph` 默认经 `build_worker_retrieve_node` 接真实检索节点：pgvector+FTS 后端绑定 DB session、quarantine recorder 带 `run_id` 落 `SecurityEvent(disposition="quarantined")`；SQLite 单测会话经 dialect 门控回退 `_retrieve_context_noop`；`execute_run` 与 `approve_run` 均传 `run_id`，知识层隔离在生产链路真正生效）。
 
 **教学要点**：
 | 概念 | 讲解内容 |
@@ -1502,7 +1502,7 @@
 
 ---
 
-## 任务 6.5：扩展评测数据集——200 条
+## 任务 6.5：扩展评测数据集
 
 **目标**：按 V6 设计文档完成完整评测集。
 
@@ -1510,17 +1510,18 @@
 - `evals/datasets/tool_retrieval_40.json`（✅ 40 条，tool-001..040）
 - `evals/datasets/knowledge_rag_40.json`（✅ 40 条，rag-001..040）
 - `evals/datasets/planning_50.json`（✅ 50 条，plan-001..050）
-- `evals/datasets/recovery_25.json`（✅ 25 条，rec-001..025）
-- `evals/datasets/failure_20.json`（✅ 20 条，fail-001..020）
+- `evals/datasets/recover_or_replan_20.json`（✅ 20 条，rec-node-001..020，seed→AgentState 快照映射，覆盖 recover_or_replan 节点全部分支；rec-node 前缀避免与旧 rec- 混淆）
+- `evals/datasets/recovery_25.json`（✅ 25 条，rec-001..025；已退出评测，保留供 `decide_recovery_action` 单测消费）
+- `evals/datasets/failure_20.json`（✅ 20 条，fail-001..020；已退出评测，保留供 `decide_failure_behavior` 单测消费）
 - `evals/datasets/security_25.json`（✅ 25 条，复用 5.10 已提交文件，不计新改动）
-- `tests/unit/evals/test_datasets_200.py`（✅ 已实现，24 用例）
+- `tests/unit/evals/test_datasets_200.py`（✅ 已实现，28 用例，含 TestRecoverOrReplan 契约；TestRecovery/TestFailure 保留覆盖旧数据集 schema）
 
 **验收标准**：
-- ✅ 6 类共 200 条，每条可独立执行（40+40+50+25+25+20=200，case_id 文件内唯一）
+- ✅ 5 类共 175 条，每条可独立执行（40+40+50+20+25=175，case_id 文件内唯一）
 - ✅ 期望结果可量化比（expected_tool / should_answer / steps / expected_action / expected_behavior / expected_duplicate_writes / expected 全部机器可断言）
 - ✅ 每条用例锚定权威来源：9 个 V6 工具名、`(domain, action)` 映射、23 个知识库 document_id、模拟器种子数据（6 商品 / 5 供应商 / 10 区域 / 库存量）
 
-**落地细节**：全部 200 条由 `tests/unit/evals/test_datasets_200.py` 做结构校验与领域锚定（无 LLM、无网络）。分布：Tool Retrieval 40 条覆盖 9 工具、11 条 hard_negative、查询意图（query/check_stock）绝不期望写工具；Knowledge RAG 40 条沿用 `datasets/eval/retrieval_queries.yaml` v2 人工标注映射（34 可答 + 6 无答案拒答，无答案 relevant_docs 为空）；Planning 50 条 = 20 单步 + 30 多步，多步用 `$N.param` 编码计划 DAG（校验器断言引用只指向先前步骤、首步无前向依赖），createOrder 数量全部 ≤ 对应库存；Recovery 25 条覆盖 ask_missing(12)/confirm_conflict(5)/retry(4)/reject(4)，动作与缺参/冲突字段自洽（ask_missing 必有 missing_params 且 conflict 为 null）；Failure 20 条覆盖 7 类场景（worker_crash/tool_timeout/tool_5xx/tool_429/user_cancel/deadline/reconciliation），worker_crash 与 reconciliation 断言 expected_duplicate_writes=0。数据集 drift（改了种子数据或工具名）会被测试在 CI 拦下。
+**落地细节**：全部 175 条由 `tests/unit/evals/test_datasets_200.py` 做结构校验与领域锚定（无 LLM、无网络）。分布：Tool Retrieval 40 条覆盖 9 工具、11 条 hard_negative、查询意图（query/check_stock）绝不期望写工具；Knowledge RAG 40 条沿用 `datasets/eval/retrieval_queries.yaml` v2 人工标注映射（34 可答 + 6 无答案拒答，无答案 relevant_docs 为空）；Planning 50 条 = 20 单步 + 30 多步，多步用 `$N.param` 编码计划 DAG（校验器断言引用只指向先前步骤、首步无前向依赖），createOrder 数量全部 ≤ 对应库存；RecoverOrReplan 20 条（rec-node-001..020）每条 seed 直接映射 AgentState 快照（status/retry·replan 预算/errors/plan/step_results），expected 断言终态 status/错误码/预算计数/errors 清空，覆盖重试、重规划、各放弃分支、对账冲突优先人工干预、no-op 全部分支。旧数据集 `recovery_25.json`（ask_missing(12)/confirm_conflict(5)/retry(4)/reject(4)，动作与缺参/冲突字段自洽）与 `failure_20.json`（7 类场景，worker_crash 与 reconciliation 断言 expected_duplicate_writes=0）已退出评测、保留供 `decide_recovery_action` / `decide_failure_behavior` 单测消费。数据集 drift（改了种子数据或工具名）会被测试在 CI 拦下。
 
 **教学要点**：
 | 概念 | 讲解内容 |
@@ -1530,7 +1531,7 @@
 | 用 `$N.param` 编码计划 DAG | 多步规划用例用 `$1.product_id` 引用前一步输出，校验器反推依赖合法性（只能向后引用），数据集即"可执行计划断言" |
 | 领域锚定 = 数据集防漂移 | 用例里的商品名/区域/库存量全部指向种子数据常量，种子一改测试即红，避免"评测跑过但域名不存在"的假绿 |
 | 无答案拒答单独成类 | should_answer=false 的 6 条用于无答案拒答率指标；相关文档为空是硬性约定，防止拒答用例偷偷配了文档 |
-| 一个测试文件校验全部六类 | 24 个用例统一 schema、枚举、种子锚定与计数；后续增删用例改计数，测试强制同步 |
+| 一个测试文件校验全部五类 | 28 个用例统一 schema、枚举、种子锚定与计数；后续增删用例改计数，测试强制同步 |
 
 ---
 
@@ -1540,16 +1541,19 @@
 
 **交付物**：
 - `evals/harness.py`（✅ runner 无关编排框架：加载数据集、注入 runner、聚合得分、失败日志、JSON 报告）
-- `evals/run_all.py`（✅ 6 个类别 runner + CLI 入口）
+- `evals/run_all.py`（✅ 5 个类别 runner + CLI 入口）
+- `evals/recover_or_replan_eval.py`（✅ 已实现：`build_seed_state` 数据集 seed→AgentState 映射 + `evaluate_cases` 直调真实 `recover_or_replan` 节点）
+- `evals/datasets/recover_or_replan_20.json`（✅ 20 条，rec-node-001..020，seed/expected 双字段覆盖节点全部决策分支）
 - `tests/unit/evals/test_harness.py`（✅ 已实现，12 用例，假 runner 隔离框架）
-- `tests/unit/evals/test_run_all.py`（✅ 已实现，7 用例，真实 runner 跑真实 200 条）
+- `tests/unit/evals/test_run_all.py`（✅ 已实现，7 用例，真实 runner 跑真实 175 条）
+- `tests/unit/evals/test_recover_or_replan_eval.py`（✅ 已实现，7 用例，seed 映射 + 真实节点跑真实数据集）
 
 **验收标准**：
-- ✅ `uv run evals/run_all.py` 运行全部 200 条（6 类 40+40+50+25+25+20，无 LLM/DB/网络，全部离线可复现）
+- ✅ `uv run evals/run_all.py` 运行全部 175 条（5 类 40+40+50+20+25，无 LLM/DB/网络，全部离线可复现）
 - ✅ 输出每类得分和总体得分（`primary_score` 按用例数加权成总体分；每类带 `mode` 标注来源）
 - ✅ 失败案例有详细日志（`failures` 含 category/case_id/expected/actual/detail；文本报告逐条列出）
 
-**落地细节**：harness 与 runner 解耦——runner 只返回 `{mode, primary_score, metrics, per_case}`，`run_category` 补齐 category/num_cases，`run_all` 按 `DATASET_SPECS` 顺序加载 6 个数据集并逐类 try/except 隔离（单类崩溃记入 `errors` 且该类计 0 分，绝不中断整轮）。run_all.py 的 6 个 runner 全部接真实逻辑并诚实标注 provenance（替换 runner 即换评测对象，harness 零改动）：`tool_retrieval` 用 `filter_candidates` 的第一级 DOMAIN_TOOL_MAP 过滤器测"期望工具是否被召回"（40 条全部命中=1.0，锁定"9 工具规模下确定性分类学足够"这一不变量）；`security` 复用 5.10 的真实守卫（伪 DNS，拦截率 1.0/误报 0）；`knowledge_rag` 跑真实检索 pipeline（embed → vector → FTS → RRF → rerank，`search_knowledge` 对专用测试库，确定性 provider，离线可复现）；`planning` 跑真实 agent 节点链路 `classify_intent_node → build_deterministic_plan_node → build_validate_plan_node`（复用 worker 的 `WORKER_TOOL_SCHEMAS`），四条断言全过才算通过：tool 序列匹配、expected params 被 arguments/argument_sources 覆盖、validate 结构校验通过（required_params/环/写补偿）、WRITE 步骤带 run 级幂等键 stamp；`recovery` 跑真实恢复决策模块 `decide_recovery_action`；`failure` 跑真实失败行为决策 `decide_failure_behavior` + 幂等写观测 `observe_duplicates`。`score_retrieved` 复用 retrieval_scorer 算 recall@5/ndcg@5。报告 JSON 落盘 `evals/reports/`，`ensure_ascii=False` 保留中文。
+**落地细节**：harness 与 runner 解耦——runner 只返回 `{mode, primary_score, metrics, per_case}`，`run_category` 补齐 category/num_cases，`run_all` 按 `DATASET_SPECS` 顺序加载 5 个数据集并逐类 try/except 隔离（单类崩溃记入 `errors` 且该类计 0 分，绝不中断整轮）。run_all.py 的 5 个 runner 全部接真实逻辑并诚实标注 provenance（替换 runner 即换评测对象，harness 零改动）：`tool_retrieval` 用 `filter_candidates` 的第一级 DOMAIN_TOOL_MAP 过滤器测"期望工具是否被召回"（40 条全部命中=1.0，锁定"9 工具规模下确定性分类学足够"这一不变量）；`security` 复用 5.10 的真实守卫（伪 DNS，拦截率 1.0/误报 0）；`knowledge_rag` 跑真实检索 pipeline（embed → vector → FTS → RRF → rerank，`search_knowledge` 对专用测试库，确定性 provider，离线可复现）；`planning` 跑真实 agent 节点链路 `classify_intent_node → build_deterministic_plan_node → build_validate_plan_node`（复用 worker 的 `WORKER_TOOL_SCHEMAS`），四条断言全过才算通过：tool 序列匹配、expected params 被 arguments/argument_sources 覆盖、validate 结构校验通过（required_params/环/写补偿）、WRITE 步骤带 run 级幂等键 stamp；`recover_or_replan` 跑真实恢复汇点节点 `recover_or_replan`（hard-wired 在 `build_agent_graph`，worker 与 approve-resume 路径共用）：数据集 seed 经 `build_seed_state` 映射成 AgentState 快照、直调节点断言终态 status/错误码/retry·replan 预算计数/errors 清空，20 条覆盖重试、重规划、各放弃分支、对账冲突优先人工干预、no-op 全部决策分支。`decide_recovery_action` / `decide_failure_behavior` 两个旧决策模块在生产图无调用者，已退出评测、保留为单测模块（`tests/unit/agent/test_{recovery,failure}_decision.py`），旧数据集 `recovery_25.json` / `failure_20.json` 一并保留供其消费。`score_retrieved` 复用 retrieval_scorer 算 recall@5/ndcg@5。报告 JSON 落盘 `evals/reports/`，`ensure_ascii=False` 保留中文。
 
 **教学要点**：
 | 概念 | 讲解内容 |
@@ -1557,8 +1561,8 @@
 | 编排层与执行层解耦 | harness 只做"加载→注入→聚合→报告"，不知道任何类别的评分细节；runner 是唯一知晓数据集 schema 的地方，替换 runner 即换评测对象，框架零改动 |
 | 失败隔离而非整体崩溃 | 单类 runner 抛异常记入 `errors`、该类按 0 分计入总体——评测跑完比"跑一半就断"更有诊断价值；同 Go 的 panic/recover 哲学，异于 Python 默认的快速失败 |
 | 为什么要有 mode 标注 | docs/08 §1 要求指标可复现、不虚报；黄金 baseline 的 100% 与真实模型 100% 天差地别，provenance 字段让报告读者一眼分辨"测的是管道还是模型" |
-| 总体分按用例数加权 | 200 条里各类数量不同（40/40/50/25/25/20），按用例数加权让大类别主导总体分，避免小类别的满分虚高总体 |
-| golden baseline 的价值边界 | 它验证的是"harness 从加载到报告整条链路正确"，不是系统能力；这是 6.9 故障注入前唯一能端到端跑通全 200 条的骨架 |
+| 总体分按用例数加权 | 175 条里各类数量不同（40/40/50/20/25），按用例数加权让大类别主导总体分，避免小类别的满分虚高总体 |
+| golden baseline 的价值边界 | 它验证的是"harness 从加载到报告整条链路正确"，不是系统能力；这是 6.9 故障注入前唯一能端到端跑通全 175 条的骨架 |
 | 确定性 runner 才是真指标 | tool_retrieval 的 recall@filter=1.0 是真实逻辑（DOMAIN_TOOL_MAP 覆盖全部期望工具）的不变量，测试锁死它，数据集或过滤器漂移即红 |
 
 ---

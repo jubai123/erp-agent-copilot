@@ -1,11 +1,11 @@
-"""Unit tests for the real six-category runners — task 6.6.
+"""Unit tests for the real five-category runners — task 6.6.
 
-Runs the actual run_all.py wiring against the real 200-case datasets. No LLM,
+Runs the actual run_all.py wiring against the real 175-case datasets. No LLM,
 no network: tool_retrieval uses the deterministic candidate_filter, security
 uses the real guards with faked DNS, planning runs the real classify →
-build_plan → validate_plan node chain with the worker's tool schemas,
-recovery runs the real recovery-action decision module, and failure runs the
-real failure-behavior decision plus the idempotency write observer.
+build_plan → validate_plan node chain with the worker's tool schemas, and
+recover_or_replan runs the real recover_or_replan node (hard-wired in
+build_agent_graph) on each seeded AgentState snapshot.
 knowledge_rag is a real retrieval runner that needs a pgvector database, so
 the unit suite injects a fake for that category (the real runner is exercised
 by tests/integration/test_retrieval_pipeline.py and
@@ -23,9 +23,8 @@ EXPECTED_COUNTS = {
     "tool_retrieval": 40,
     "knowledge_rag": 40,
     "planning": 50,
-    "recovery": 25,
+    "recover_or_replan": 20,
     "security": 25,
-    "failure": 20,
 }
 
 
@@ -55,10 +54,10 @@ def runners() -> dict[str, RunnerFn]:
 
 
 class TestRealRunners:
-    def test_run_all_covers_200(self, runners: dict[str, RunnerFn]) -> None:
+    def test_run_all_covers_175(self, runners: dict[str, RunnerFn]) -> None:
         report = run_all(runners)
-        assert report["summary"]["total_cases"] == 200
-        assert report["summary"]["categories"] == 6
+        assert report["summary"]["total_cases"] == sum(EXPECTED_COUNTS.values())
+        assert report["summary"]["categories"] == 5
         assert report["errors"] == {}
 
     def test_per_category_counts(self, runners: dict[str, RunnerFn]) -> None:
@@ -103,19 +102,12 @@ class TestRealRunners:
         assert result["metrics"]["write_steps_with_idempotency_key"] > 0
         assert all(pc["passed"] for pc in result["per_case"])
 
-    def test_recovery_runs_real_decision_module(self, runners: dict[str, RunnerFn]) -> None:
+    def test_recover_or_replan_runs_real_node(self, runners: dict[str, RunnerFn]) -> None:
         report = run_all(runners)
-        result = report["categories"]["recovery"]
+        result = report["categories"]["recover_or_replan"]
         assert result["mode"] == "deterministic"
+        # The real recover_or_replan node (hard-wired in build_agent_graph)
+        # returns the dataset's expected terminal state for every seeded case.
         assert result["primary_score"] == 1.0
-        assert result["metrics"]["action_accuracy"] == 1.0
-        assert all(pc["passed"] for pc in result["per_case"])
-
-    def test_failure_runs_real_decision_module(self, runners: dict[str, RunnerFn]) -> None:
-        report = run_all(runners)
-        result = report["categories"]["failure"]
-        assert result["mode"] == "deterministic"
-        assert result["primary_score"] == 1.0
-        assert result["metrics"]["behavior_accuracy"] == 1.0
-        assert result["metrics"]["duplicate_write_violations"] == 0
+        assert result["metrics"]["decision_accuracy"] == 1.0
         assert all(pc["passed"] for pc in result["per_case"])

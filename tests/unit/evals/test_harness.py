@@ -1,10 +1,10 @@
 """Unit tests for the eval harness framework — task 6.6.
 
 The harness (evals/harness.py) is the runner-agnostic orchestration layer:
-load the six dataset files, run each category through an injected runner,
+load the five dataset files, run each category through an injected runner,
 and aggregate per-category + overall scores with a detailed failure log.
 These tests drive the framework with deterministic fake runners (no LLM, no
-DB, no network); the real six runners are exercised in test_run_all.py.
+DB, no network); the real five runners are exercised in test_run_all.py.
 """
 
 from __future__ import annotations
@@ -29,9 +29,8 @@ SPEC_COUNTS = {
     "tool_retrieval": 40,
     "knowledge_rag": 40,
     "planning": 50,
-    "recovery": 25,
+    "recover_or_replan": 20,
     "security": 25,
-    "failure": 20,
 }
 
 
@@ -60,18 +59,18 @@ def _fake_runner(primary: float, fails: int = 0) -> RunnerFn:
 
 
 class TestDatasets:
-    def test_specs_cover_six_files(self) -> None:
-        assert len(DATASET_SPECS) == 6
+    def test_specs_cover_five_files(self) -> None:
+        assert len(DATASET_SPECS) == 5
         assert dict(DATASET_SPECS).keys() == set(SPEC_COUNTS)
 
     def test_load_cases_loads_spec_file(self) -> None:
-        filename = dict(DATASET_SPECS)["recovery"]
+        filename = dict(DATASET_SPECS)["recover_or_replan"]
         cases = load_cases(filename)
-        assert len(cases) == SPEC_COUNTS["recovery"]
+        assert len(cases) == SPEC_COUNTS["recover_or_replan"]
 
-    def test_total_cases_is_200(self) -> None:
+    def test_total_cases_is_175(self) -> None:
         total = sum(len(load_cases(filename)) for _, filename in DATASET_SPECS)
-        assert total == 200
+        assert total == 175
 
 
 class TestRunCategory:
@@ -99,24 +98,24 @@ class TestRunCategory:
 
 
 class TestRunAll:
-    def test_runs_all_six_categories(self) -> None:
+    def test_runs_all_five_categories(self) -> None:
         runners = {category: _fake_runner(0.8) for category, _ in DATASET_SPECS}
         report = run_all(runners)
         assert set(report["categories"]) == {category for category, _ in DATASET_SPECS}
-        assert report["summary"]["total_cases"] == 200
-        assert report["summary"]["categories"] == 6
+        assert report["summary"]["total_cases"] == 175
+        assert report["summary"]["categories"] == 5
 
     def test_runner_error_is_isolated(self) -> None:
         def boom(cases: list[dict]) -> None:
             raise RuntimeError("kaboom")
 
         runners = {category: _fake_runner(0.9) for category, _ in DATASET_SPECS}
-        runners["failure"] = boom
+        runners["recover_or_replan"] = boom
         report = run_all(runners)
-        assert report["categories"]["failure"]["mode"] == "error"
-        assert report["errors"] == {"failure": "RuntimeError: kaboom"}
-        # Other five categories still score; the errored category counts as 0.
-        assert report["summary"]["overall_score"] == pytest.approx(0.9 * 180 / 200)
+        assert report["categories"]["recover_or_replan"]["mode"] == "error"
+        assert report["errors"] == {"recover_or_replan": "RuntimeError: kaboom"}
+        # Other four categories still score; the errored category counts as 0.
+        assert report["summary"]["overall_score"] == pytest.approx(0.9 * 155 / 175)
 
     def test_overall_weighted_by_case_count(self) -> None:
         categories = {

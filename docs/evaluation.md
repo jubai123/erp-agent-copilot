@@ -25,7 +25,7 @@ uv run evals/run_all.py --report evals/reports/report.json
 
 ## 2. 数据集与 Runner 来源（诚实标注）
 
-`harness.py` 的 `DATASET_SPECS` 装配 6 个分类 = **200 条**（7 个数据文件共 220 条，其中 `skill_follow_20.json` 未接入 run_all，由 skill_scorer 单独使用）。每个分类的 runner **标注来源**，一个数字绝不会被误认作它本不是的东西：
+`harness.py` 的 `DATASET_SPECS` 装配 5 个分类 = **175 条**（旧 `recovery_25.json` / `failure_20.json` 已退出评测、保留供 `decide_recovery_action` / `decide_failure_behavior` 单测消费；`skill_follow_20.json` 未接入 run_all，由 skill_scorer 单独使用）。每个分类的 runner **标注来源**，一个数字绝不会被误认作它本不是的东西：
 
 | 分类 | 文件 | 条数 | Runner 模式 | 说明 |
 |---|---|---|---|---|
@@ -33,10 +33,9 @@ uv run evals/run_all.py --report evals/reports/report.json
 | security | security_25.json | 25 | `deterministic` | **真实安全守卫**（注入/SSRF/Redaction），SSRF 用伪造 DNS，逐位复现 |
 | knowledge_rag | knowledge_rag_40.json | 40 | `retrieval_pipeline` | **真实检索链路**：embed→vector→FTS→RRF→rerank，对专用测试库、确定性 provider，离线可复现 |
 | planning | planning_50.json | 50 | `deterministic` | **真实生产逻辑**：`classify_intent → build_plan_from_intent` 9 工具 DAG 派发，离线可复现 |
-| recovery | recovery_25.json | 25 | `deterministic` | **真实恢复动作判定**：`src/erp_copilot/agent/recovery_decision.py` 有序规则，离线可复现 |
-| failure | failure_20.json | 20 | `deterministic` | **真实故障行为判定 + 幂等写观测**：`src/erp_copilot/agent/failure_decision.py`，离线可复现 |
+| recover_or_replan | recover_or_replan_20.json | 20 | `deterministic` | **真实恢复汇点节点**：`src/erp_copilot/agent/nodes/recover_or_replan.py`（hard-wired 在 `build_agent_graph`），seed 映射成 AgentState 快照后直调，离线可复现 |
 
-> **结论**：六个分类全部跑真实逻辑——五类 `deterministic`（确定性生产代码）+ 一类 `retrieval_pipeline`（真实检索管线，需本地 pgvector 测试库）。**不再有 golden baseline**；每个分数都代表被测系统的真实能力，可逐位复现。
+> **结论**：五个分类全部跑真实逻辑——四类 `deterministic`（确定性生产代码）+ 一类 `retrieval_pipeline`（真实检索管线，需本地 pgvector 测试库）。**不再有 golden baseline**；每个分数都代表被测系统的真实能力，可逐位复现。
 
 ### Runner 模式说明
 
@@ -102,7 +101,7 @@ uv run python evals/scripts/run_security_eval.py --report report.json
 ## 7. 复现与验证命令
 
 ```bash
-uv run evals/run_all.py                 # 200 条六大分类评测
+uv run evals/run_all.py                 # 175 条五大分类评测
 uv run python evals/scripts/run_security_eval.py   # 25 条安全守卫评测
 uv run python evals/scripts/run_ablation.py        # 42 条检索消融
 uv run pytest tests/unit                # 单元测试（1063 条通过）
