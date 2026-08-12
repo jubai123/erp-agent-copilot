@@ -12,6 +12,10 @@ class CreateRunRequest(BaseModel):
     tenant_id: str
     title: str = ""
     product_name: str = "苹果"
+    # Natural-language query the planner operates on. Without it the worker
+    # falls back to "查询{product_name}库存", which can only ever produce READ
+    # plans — a WRITE query ("下一单…") must be passed here to reach approval.
+    query: str | None = None
 
 
 class RunResponse(BaseModel):

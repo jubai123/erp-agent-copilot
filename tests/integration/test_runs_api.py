@@ -6,6 +6,8 @@ import json
 
 from fastapi.testclient import TestClient
 
+from apps.erp_simulator.data.orders import get_by_idempotency_key
+from apps.erp_simulator.data.products import PRODUCT_BY_NAME
 from erp_copilot.agent.state import (
     AgentState,
     AgentStatus,
@@ -14,7 +16,7 @@ from erp_copilot.agent.state import (
     PlanStep,
     PolicyDecision,
 )
-from erp_copilot.domain.entities import Run, RunEvent, Tenant
+from erp_copilot.domain.entities import IdempotencyRecord, Run, RunEvent, Tenant
 from erp_copilot.domain.enums import ToolRiskLevel
 from erp_copilot.infrastructure.database import get_session
 from erp_copilot.memory.checkpoint import CheckpointSaver
@@ -147,6 +149,61 @@ class TestCreateRun:
         data = response.json()
         assert data["run_id"]
         assert data["status"] == "COMPLETED"
+
+    def test_create_run_write_query_pauses_then_approve_completes(self) -> None:
+        from apps.api.main import create_app
+
+        # A WRITE query ("下一单") can only pause for approval if create_run
+        # actually threads the query through to the worker — before the query
+        # field existed, POST /v1/runs could only ever emit product reads and
+        # the write path was unreachable from the API. Approving s3 resumes the
+        # graph and the order lands exactly once.
+        tenant_id = _create_tenant("Write Query", "write-query")
+        product = PRODUCT_BY_NAME["苹果"]
+        original_stock = product.quantity_in_stock
+        client = TestClient(create_app())
+        try:
+            create_resp = client.post(
+                "/v1/runs",
+                json={
+                    "tenant_id": tenant_id,
+                    "title": "下单",
+                    "query": "帮我在上海下一单 1 KG 苹果",
+                },
+            )
+
+            assert create_resp.status_code == 202
+            run_id = create_resp.json()["run_id"]
+            assert create_resp.json()["status"] == "WAITING_APPROVAL"
+
+            approve_resp = client.post(
+                f"/v1/runs/{run_id}/approve",
+                json={"step_id": "s3", "decision": "APPROVE", "decided_by": "manager"},
+            )
+            assert approve_resp.status_code == 200
+            assert approve_resp.json()["run_status"] == "succeeded"
+
+            session = get_session()
+            try:
+                run = session.query(Run).filter_by(id=run_id).first()
+                assert run is not None
+                assert run.status == "COMPLETED"
+                record = (
+                    session.query(IdempotencyRecord)
+                    .filter_by(idempotency_key=f"{run_id}:s3")
+                    .first()
+                )
+                assert record is not None
+                assert record.status == "COMPLETED"
+            finally:
+                session.close()
+
+            order = get_by_idempotency_key(f"{run_id}:s3")
+            assert order is not None
+            assert order.status == "CREATED"
+            assert order.quantity == 1
+        finally:
+            product.quantity_in_stock = original_stock
 
 
 class TestGetRun:

@@ -107,7 +107,7 @@ async def create_run(body: CreateRunRequest, response: Response) -> RunResponse:
         session.commit()
         from apps.worker.tasks import execute_run
 
-        execute_run.delay(run.id, body.product_name)
+        execute_run.delay(run.id, body.product_name, query=body.query)
         session.refresh(run)
 
         response.status_code = 202
