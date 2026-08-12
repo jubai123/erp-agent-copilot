@@ -1168,7 +1168,7 @@
 - ✅ 请求非白名单域名→拦截（预注册 `allowed_hosts` 或 `host:port`；`HOST_NOT_ALLOWED`）
 - ✅ 拦截事件写入 security_events（`record_security_event` 落 `SecurityEvent(attack_type="SSRF", layer="ssrf_guard", severity="HIGH", disposition="blocked")`）
 
-**落地细节**：纯函数前置检查（`SSRFGuard.check`，不发连接）按序：scheme 白名单（仅 https）→ 拒绝 URL 凭证 → 端口白名单（默认 443，显式端口或 scheme 默认）→ host 白名单 → 解析后逐个地址检查（注入的 resolver 可确定性模拟 DNS rebinding；任一地址为内网即拦截；IP 字面量跳过 DNS；空解析 `RESOLUTION_FAILED` 失败关闭）。`trusted_internal_hosts` 显式授权合法内网端点（如 ERP simulator），但仍须在 allowed_hosts（纵深防御）。`check_redirect` 只允许同 host 重定向并逐跳复检。测试：33 用例覆盖 IPv4/IPv6 内外网、scheme、白名单粒度（裸 host vs host:port）、端口、DNS rebinding、重定向、凭证、非法 URL、trusted_internal。已知限制：TOCTOU——检查时解析与后续连接时的解析可能不一致（需 executor 直接连已校验地址才能闭合，超出本任务）；guard 到 executor/MCP gateway 的接线待续。
+**落地细节**：纯函数前置检查（`SSRFGuard.check`，不发连接）按序：scheme 白名单（仅 https）→ 拒绝 URL 凭证 → 端口白名单（默认 443，显式端口或 scheme 默认）→ host 白名单 → 解析后逐个地址检查（注入的 resolver 可确定性模拟 DNS rebinding；任一地址为内网即拦截；IP 字面量跳过 DNS；空解析 `RESOLUTION_FAILED` 失败关闭）。`trusted_internal_hosts` 显式授权合法内网端点（如 ERP simulator），但仍须在 allowed_hosts（纵深防御）。`check_redirect` 只允许同 host 重定向并逐跳复检。测试：33 用例覆盖 IPv4/IPv6 内外网、scheme、白名单粒度（裸 host vs host:port）、端口、DNS rebinding、重定向、凭证、非法 URL、trusted_internal。已知限制：TOCTOU——检查时解析与后续连接时的解析可能不一致（需 executor 直接连已校验地址才能闭合，超出本任务）；**接线待续**（2026-08-13 评估：当前 executor 为 in-process 内存数据、`MCPGatewayConnection` 无真实注册/连接调用点，即无真实出站 HTTP URL 攻击面，SSRFGuard 接线应随 MCP gateway 真实 server 接线一并接入；gateway 进程不连 DB，`record_security_event` 落库需另定通道）。
 
 **教学要点**：
 | 概念 | 讲解内容 |
@@ -1194,7 +1194,7 @@
 - ✅ "跳过审批直接下单"→标记为可疑（`BYPASS_APPROVAL`）
 - ✅ "泄露系统提示词"→标记为可疑（`LEAK_SYSTEM_PROMPT`）
 
-**落地细节**：纯正则检测器（`InjectionGuard.check(text)`，确定性、无网络 I/O）复用 SSRF guard 的 verdict 模式——返回 `InjectionVerdict(flagged, matched_rules, detail)` 而非抛异常，处置权交给调用方（输入层 block、知识层 quarantine，见 docs/06 §7 的输入/知识双层区分）。三条默认规则覆盖任务验收的三大攻击族：`IGNORE_PRIOR_INSTRUCTIONS`（忽略之前指令/忽略以上所有指令/ignore all previous instructions/ignore the instructions above）、`BYPASS_APPROVAL`（跳过审批/绕过审批/绕过审核/bypass approval）、`LEAK_SYSTEM_PROMPT`（泄露/显示/出示系统提示词/reveal your system prompt），均 `re.IGNORECASE`。多规则命中时 `matched_rules` 按规则序全量报告，`detail` 取首条。`InjectionGuard(rules=[...])` 可用自定义规则替换默认集，`rules=[]` 永不标记（用于测试/禁用）。拦截事件经 `record_injection_event` 落 `SecurityEvent(attack_type="PROMPT_INJECTION", layer="injection_guard", severity="HIGH")`，`disposition` 默认 `blocked`、可传 `quarantined` 支持 RAG 知识层隔离。误报测试钉住正常 ERP 请求（"查询苹果的库存""创建订单，数量5，发往上海""请忽略发货延迟的情况"等）不得被标记；裸"忽略"不足以触发，必须命中完整攻击句式。guard 到 executor/MCP gateway 的接线待续。
+**落地细节**：纯正则检测器（`InjectionGuard.check(text)`，确定性、无网络 I/O）复用 SSRF guard 的 verdict 模式——返回 `InjectionVerdict(flagged, matched_rules, detail)` 而非抛异常，处置权交给调用方（输入层 block、知识层 quarantine，见 docs/06 §7 的输入/知识双层区分）。三条默认规则覆盖任务验收的三大攻击族：`IGNORE_PRIOR_INSTRUCTIONS`（忽略之前指令/忽略以上所有指令/ignore all previous instructions/ignore the instructions above）、`BYPASS_APPROVAL`（跳过审批/绕过审批/绕过审核/bypass approval）、`LEAK_SYSTEM_PROMPT`（泄露/显示/出示系统提示词/reveal your system prompt），均 `re.IGNORECASE`。多规则命中时 `matched_rules` 按规则序全量报告，`detail` 取首条。`InjectionGuard(rules=[...])` 可用自定义规则替换默认集，`rules=[]` 永不标记（用于测试/禁用）。拦截事件经 `record_injection_event` 落 `SecurityEvent(attack_type="PROMPT_INJECTION", layer="injection_guard", severity="HIGH")`，`disposition` 默认 `blocked`、可传 `quarantined` 支持 RAG 知识层隔离。误报测试钉住正常 ERP 请求（"查询苹果的库存""创建订单，数量5，发往上海""请忽略发货延迟的情况"等）不得被标记；裸"忽略"不足以触发，必须命中完整攻击句式。接线：✅ 输入层已接入 `POST /v1/runs`（2026-08-13，`create_run` 前置检查，flagged → 422 + `record_injection_event` 落 security_events，run 不创建）；知识层（RAG quarantine）接线待续。
 
 **教学要点**：
 | 概念 | 讲解内容 |
@@ -1220,7 +1220,7 @@
 - ✅ 手机号/身份证号→部分隐藏（`CN_MOBILE` 保前3后4、`CN_ID_CARD` 保前6后4，中间 `*`）
 - ✅ 不影响正常的业务数据（座机、订单号、SKU、17 位编号等误报用例全部原样通过）
 
-**落地细节**：纯确定性输出转换器（`Redactor.redact(text)`，无网络、无 DB），与 SSRF/Injection guard 的关键区别是**它是 transformer 而非拦截器**——每次出站回答都会跑，原地改写文本，结果只带 `RedactionResult(redacted, count, matched_rules)` 交给调用方决定是否记录，因此模块框架无关、单测极简。规则沿用 `RedactionRule(name, pattern, replace)` 可注入模式：`replace` 是 `Callable[[re.Match[str]], str]`，API Key 用常量替换，PII 用 `_mask_keep_edges` 掩码。规则链式处理（每规则在上一规则输出上跑，避免二次掩码）；数字边界断言 `(?<!\d)...(?!\d)` 保证 17 位编号不误判为 18 位身份证、12 位订单号不误判为 11 位手机号。座机 `010-`（非 `1[3-9]` 开头）故意不隐藏，展示精确性。`Redactor(rules=[...])` 替换默认集，`rules=[]` 纯透传。Redaction 事件落库（记录"本次输出命中了哪些敏感类型"）留待安全事件审计任务，本任务不引入 DB 依赖。
+**落地细节**：纯确定性输出转换器（`Redactor.redact(text)`，无网络、无 DB），与 SSRF/Injection guard 的关键区别是**它是 transformer 而非拦截器**——每次出站回答都会跑，原地改写文本，结果只带 `RedactionResult(redacted, count, matched_rules)` 交给调用方决定是否记录，因此模块框架无关、单测极简。规则沿用 `RedactionRule(name, pattern, replace)` 可注入模式：`replace` 是 `Callable[[re.Match[str]], str]`，API Key 用常量替换，PII 用 `_mask_keep_edges` 掩码。规则链式处理（每规则在上一规则输出上跑，避免二次掩码）；数字边界断言 `(?<!\d)...(?!\d)` 保证 17 位编号不误判为 18 位身份证、12 位订单号不误判为 11 位手机号。座机 `010-`（非 `1[3-9]` 开头）故意不隐藏，展示精确性。`Redactor(rules=[...])` 替换默认集，`rules=[]` 纯透传。接线：✅ 输出层已接入 SSE 事件流（2026-08-13，`GET /v1/runs/{id}/events` 每个 payload 出站前过 `Redactor.redact`）。Redaction 事件落库（记录"本次输出命中了哪些敏感类型"）留待安全事件审计任务，本任务不引入 DB 依赖。
 
 **教学要点**：
 | 概念 | 讲解内容 |
