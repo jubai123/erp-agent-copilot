@@ -332,9 +332,7 @@ def _planning(cases: list[dict]) -> RunnerOutput:
                 if missing:
                     failures.append(f"step {act_step.step_id} missing params {missing!r}")
         if state.plan_validation is not None and not state.plan_validation.is_valid:
-            failures.append(
-                "validate: " + ", ".join(e.code for e in state.plan_validation.errors)
-            )
+            failures.append("validate: " + ", ".join(e.code for e in state.plan_validation.errors))
         if state.plan is not None:
             stamped += sum(
                 1

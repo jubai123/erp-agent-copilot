@@ -56,9 +56,7 @@ def _make_user(session: Session, tenant: Tenant, *, active: bool = True) -> User
     return user
 
 
-def _make_role(
-    session: Session, tenant: Tenant, name: str, scopes: list[tuple[str, str]]
-) -> Role:
+def _make_role(session: Session, tenant: Tenant, name: str, scopes: list[tuple[str, str]]) -> Role:
     role = Role(tenant_id=tenant.id, name=name)
     session.add(role)
     session.flush()

@@ -112,9 +112,7 @@ def create_gateway_app(guard: SSRFGuard | None = None) -> FastAPI:
             raise HTTPException(status_code=500, detail="SSRF guard not configured")
         verdict = ssrf_guard.check(body.url)
         if not verdict.allowed:
-            record_security_event(
-                get_session(), run_id=None, url=body.url, verdict=verdict
-            )
+            record_security_event(get_session(), run_id=None, url=body.url, verdict=verdict)
             raise HTTPException(
                 status_code=422,
                 detail=f"URL blocked by egress policy: {verdict.reason} ({verdict.detail})",

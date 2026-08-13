@@ -112,9 +112,7 @@ async def create_run(body: CreateRunRequest, response: Response) -> RunResponse:
         # cannot roll the audit row back.
         verdict = _INJECTION_GUARD.check(body.query or "")
         if verdict.flagged:
-            record_injection_event(
-                session, run_id=None, text=body.query or "", verdict=verdict
-            )
+            record_injection_event(session, run_id=None, text=body.query or "", verdict=verdict)
             raise HTTPException(
                 status_code=422,
                 detail=f"Query blocked by security policy: {verdict.detail}",
@@ -132,8 +130,7 @@ async def create_run(body: CreateRunRequest, response: Response) -> RunResponse:
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        f"Unknown or inactive user '{body.user_id}' "
-                        f"in tenant '{body.tenant_id}'"
+                        f"Unknown or inactive user '{body.user_id}' in tenant '{body.tenant_id}'"
                     ),
                 )
         run = Run(

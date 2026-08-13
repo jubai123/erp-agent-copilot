@@ -22,11 +22,7 @@ def resolve_user_scopes(session: Session, tenant_id: str, user_id: str) -> set[s
     The user_id never escapes the tenant boundary: the lookup keys on both
     id and tenant_id, so a cross-tenant id resolves nothing.
     """
-    user = (
-        session.query(User)
-        .filter_by(id=user_id, tenant_id=tenant_id, is_active=True)
-        .first()
-    )
+    user = session.query(User).filter_by(id=user_id, tenant_id=tenant_id, is_active=True).first()
     if user is None:
         return set()
     return {f"{scope.resource}:{scope.action}" for role in user.roles for scope in role.scopes}

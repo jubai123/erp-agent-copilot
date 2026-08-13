@@ -66,6 +66,7 @@ WORKER_TOOL_SCHEMAS: dict[str, ToolSpec] = {
     "cancelOrder": ToolSpec(name="cancelOrder", required_params=["order_id"]),
 }
 
+
 def _observe_phase(phase: str, node: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap one phase node so its wall-clock duration feeds the phase histogram.
 

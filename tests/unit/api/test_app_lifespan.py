@@ -74,9 +74,7 @@ class TestAppLifespan:
         app = create_app()
         _enter_lifespan(app)
 
-        main.setup_logging.assert_called_once_with(
-            level="INFO", service="erp-agent-copilot"
-        )
+        main.setup_logging.assert_called_once_with(level="INFO", service="erp-agent-copilot")
         main.build_otlp_exporter.assert_called_once_with("http://localhost:4317")
         main.setup_tracing.assert_called_once_with(
             service_name="erp-agent-copilot", exporter="OTLP"
