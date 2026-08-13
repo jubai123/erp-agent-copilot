@@ -69,6 +69,24 @@ def _ensure_tenant(session, tenant_id: str) -> None:
     session.flush()
 
 
+def _make_knowledge_user(session, tenant_id: str) -> str:
+    """Create an active user holding knowledge:erp:read in *tenant_id*."""
+    from erp_copilot.domain.entities import Role, RoleScope, User, UserRole
+
+    role = Role(tenant_id=tenant_id, name=f"role-{tenant_id}")
+    session.add(role)
+    session.flush()
+    session.add(RoleScope(role_id=role.id, resource="knowledge", action="erp:read"))
+    user = User(
+        tenant_id=tenant_id, email=f"k-{tenant_id}@example.com", hashed_password="x", is_active=True
+    )
+    session.add(user)
+    session.flush()
+    session.add(UserRole(user_id=user.id, role_id=role.id))
+    session.commit()
+    return user.id
+
+
 def _ingest_doc(session, tenant_id: str, source: str, content: str) -> str:
     """Insert a knowledge document with chunks and embeddings (full pipeline)."""
     from erp_copilot.domain.entities import KnowledgeDocument
@@ -255,11 +273,14 @@ DELIVERED 状态不可取消，应引导用户走退货流程。
         return TestClient(create_app())
 
     def test_search_returns_ingested_chunks(self, session, client) -> None:
+        _ensure_tenant(session, "tenant-e2e")
+        user_id = _make_knowledge_user(session, "tenant-e2e")
         _ingest_doc(session, "tenant-e2e", "order-lifecycle.md", self.SAMPLE_DOC)
 
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "订单状态", "tenant_id": "tenant-e2e"},
+            headers={"X-Tenant-ID": "tenant-e2e", "X-User-ID": user_id},
         )
 
         assert response.status_code == 200
@@ -270,21 +291,29 @@ DELIVERED 状态不可取消，应引导用户走退货流程。
         assert "参考资料" in body["citations"]
 
     def test_search_respects_tenant_isolation(self, session, client) -> None:
+        _ensure_tenant(session, "tenant-a")
+        _ensure_tenant(session, "tenant-b")
+        user_a = _make_knowledge_user(session, "tenant-a")
         _ingest_doc(session, "tenant-a", "rules-a.md", "# 规则A\n\n内容A")
         _ingest_doc(session, "tenant-b", "rules-b.md", "# 规则B\n\n内容B")
 
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "规则", "tenant_id": "tenant-a"},
+            headers={"X-Tenant-ID": "tenant-a", "X-User-ID": user_a},
         )
 
+        assert response.status_code == 200
         sources = {r["source"] for r in response.json()["results"]}
         assert sources == {"rules-a.md"}
 
     def test_empty_knowledge_base_returns_empty(self, session, client) -> None:
+        _ensure_tenant(session, "tenant-empty")
+        user_id = _make_knowledge_user(session, "tenant-empty")
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "订单", "tenant_id": "tenant-empty"},
+            headers={"X-Tenant-ID": "tenant-empty", "X-User-ID": user_id},
         )
 
         assert response.status_code == 200

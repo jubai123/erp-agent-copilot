@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from apps.api.schemas.tools import ImportOpenAPIResponse, ToolResponse
 from erp_copilot.application.tool_service import ToolService
 from erp_copilot.domain.errors import ValidationError
+from erp_copilot.security.dependencies import Actor, require_scope
 from erp_copilot.tools.registry import ToolRegistry
 
 router = APIRouter(prefix="/v1/tools", tags=["tools"])
+
+# Managing the tool catalog is an admin operation (docs/06 §4); the tenant
+# comes from the auth context, never from the body (docs/07 §10).
+_REQUIRED_SCOPE = require_scope("admin:tool")
 
 
 def _tool_to_response(tool) -> ToolResponse:
@@ -25,8 +30,16 @@ def _tool_to_response(tool) -> ToolResponse:
 
 
 @router.post("/import/openapi", response_model=ImportOpenAPIResponse)
-async def import_openapi(body: dict) -> ImportOpenAPIResponse:
-    """Import tools from an OpenAPI 3.x specification."""
+async def import_openapi(
+    body: dict,
+    actor: Actor = Depends(_REQUIRED_SCOPE),
+) -> ImportOpenAPIResponse:
+    """Import tools from an OpenAPI 3.x specification.
+
+    The actor must hold the ``admin:tool`` scope and the body tenant must
+    match the authenticated identity — a body that names another tenant is a
+    cross-tenant attempt (docs/07 §10).
+    """
     spec = body.get("spec")
     tenant_id = body.get("tenant_id")
 
@@ -34,6 +47,13 @@ async def import_openapi(body: dict) -> ImportOpenAPIResponse:
         raise HTTPException(status_code=422, detail="'spec' must be an OpenAPI JSON object")
     if not isinstance(tenant_id, str) or not tenant_id.strip():
         raise HTTPException(status_code=422, detail="'tenant_id' is required")
+    if tenant_id != actor.tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Body tenant '{tenant_id}' does not match authenticated tenant '{actor.tenant_id}'"
+            ),
+        )
 
     service = ToolService(ToolRegistry())
 
@@ -48,8 +68,23 @@ async def import_openapi(body: dict) -> ImportOpenAPIResponse:
 
 
 @router.get("", response_model=list[ToolResponse])
-async def list_tools(tenant_id: str = Query(..., description="Tenant ID")) -> list[ToolResponse]:
-    """List all tools for a tenant."""
+async def list_tools(
+    tenant_id: str = Query(..., description="Tenant ID"),
+    actor: Actor = Depends(_REQUIRED_SCOPE),
+) -> list[ToolResponse]:
+    """List all tools for the actor's tenant.
+
+    The query tenant must match the authenticated identity — a query that
+    names another tenant is a cross-tenant attempt (docs/07 §10).
+    """
+    if tenant_id != actor.tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Query tenant '{tenant_id}' does not match "
+                f"authenticated tenant '{actor.tenant_id}'"
+            ),
+        )
     registry = ToolRegistry()
     tools = registry.list_by_tenant(tenant_id)
     return [_tool_to_response(t) for t in tools]

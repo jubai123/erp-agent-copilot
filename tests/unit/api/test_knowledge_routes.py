@@ -1,9 +1,13 @@
 """Tests for knowledge search API routes (Phase 3.11, v1.1 pipeline 接线).
 
-The endpoint wires the real retrieval pipeline runner. Unit tests isolate
-the endpoint's orchestration — request validation, provider construction,
-schema mapping — by injecting a fake search_knowledge and a fake session;
-the real retrieval chain is exercised in the integration suite
+The endpoint wires the real retrieval pipeline runner and now requires an
+authenticated actor holding the ``knowledge:erp:read`` scope (docs/06 §4),
+with the body tenant checked against the header identity (docs/07 §10).
+
+Unit tests isolate the endpoint's orchestration — request validation, provider
+construction, schema mapping — by injecting a fake search_knowledge and fake
+sessions for both the route and the security dependency; the real retrieval
+chain is exercised in the integration suite
 (tests/integration/test_retrieval_pipeline.py).
 """
 
@@ -28,13 +32,28 @@ def _fake_result(chunk_id: str = "c1", score: float = 0.9) -> dict:
     }
 
 
+def _headers(tenant_id: str) -> dict[str, str]:
+    return {"X-Tenant-ID": tenant_id, "X-User-ID": "user-1"}
+
+
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """App with DB and provider construction isolated from the unit env."""
+    """App with DB and provider construction isolated from the unit env.
+
+    Both the route (knowledge.get_session) and the security dependency
+    (dependencies.get_session / resolve_user_scopes) are stubbed, so an
+    actor holding ``knowledge:erp:read`` passes the scope gate without
+    touching a real database.
+    """
     session = MagicMock()
 
     monkeypatch.setattr("apps.api.routes.knowledge.get_session", lambda: session)
     monkeypatch.setattr("apps.api.routes.knowledge._build_providers", lambda: (None, None))
+    monkeypatch.setattr("erp_copilot.security.dependencies.get_session", lambda: session)
+    monkeypatch.setattr(
+        "erp_copilot.security.dependencies.resolve_user_scopes",
+        lambda session, tenant_id, user_id: {"knowledge:erp:read"},
+    )
     return TestClient(create_app())
 
 
@@ -57,6 +76,7 @@ class TestKnowledgeSearch:
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "如何创建订单", "tenant_id": "test-tenant"},
+            headers=_headers("test-tenant"),
         )
         assert response.status_code == 200
 
@@ -65,6 +85,7 @@ class TestKnowledgeSearch:
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "如何创建订单", "tenant_id": "test-tenant"},
+            headers=_headers("test-tenant"),
         )
         body = response.json()
         assert "results" in body
@@ -76,6 +97,7 @@ class TestKnowledgeSearch:
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "如何创建订单", "tenant_id": "test-tenant"},
+            headers=_headers("test-tenant"),
         )
         item = response.json()["results"][0]
         assert item["chunk_id"] == "c1"
@@ -88,6 +110,7 @@ class TestKnowledgeSearch:
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "如何创建订单", "tenant_id": "test-tenant"},
+            headers=_headers("test-tenant"),
         )
         citations = response.json()["citations"]
         assert "参考资料" in citations
@@ -98,6 +121,7 @@ class TestKnowledgeSearch:
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "汇率是多少", "tenant_id": "test-tenant"},
+            headers=_headers("test-tenant"),
         )
         body = response.json()
         assert body["results"] == []
@@ -108,6 +132,7 @@ class TestKnowledgeSearch:
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "test", "tenant_id": "t1", "top_k": 3},
+            headers=_headers("t1"),
         )
         assert response.status_code == 200
         body = response.json()
@@ -117,6 +142,7 @@ class TestKnowledgeSearch:
         response = client.post(
             "/v1/knowledge/search",
             json={"tenant_id": "test"},
+            headers=_headers("test"),
         )
         assert response.status_code == 422
 
@@ -124,6 +150,7 @@ class TestKnowledgeSearch:
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "test"},
+            headers=_headers("test"),
         )
         assert response.status_code == 422
 
@@ -131,6 +158,7 @@ class TestKnowledgeSearch:
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "", "tenant_id": "test-tenant"},
+            headers=_headers("test-tenant"),
         )
         assert response.status_code == 422
 
@@ -138,6 +166,7 @@ class TestKnowledgeSearch:
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "test", "tenant_id": ""},
+            headers=_headers("test"),
         )
         assert response.status_code == 422
 
@@ -145,5 +174,37 @@ class TestKnowledgeSearch:
         response = client.post(
             "/v1/knowledge/search",
             json={"query": "test", "tenant_id": "t1", "top_k": 999},
+            headers=_headers("t1"),
         )
         assert response.status_code == 422
+
+
+class TestKnowledgeSearchScope:
+    """The search endpoint requires an authenticated knowledge:erp:read actor."""
+
+    def test_missing_tenant_header_is_401(self, client) -> None:
+        response = client.post(
+            "/v1/knowledge/search",
+            json={"query": "如何创建订单", "tenant_id": "test-tenant"},
+        )
+        assert response.status_code == 401
+
+    def test_without_knowledge_scope_is_403(self, client, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "erp_copilot.security.dependencies.resolve_user_scopes",
+            lambda session, tenant_id, user_id: {"product:read"},
+        )
+        response = client.post(
+            "/v1/knowledge/search",
+            json={"query": "如何创建订单", "tenant_id": "test-tenant"},
+            headers=_headers("test-tenant"),
+        )
+        assert response.status_code == 403
+
+    def test_cross_tenant_body_is_403(self, client) -> None:
+        response = client.post(
+            "/v1/knowledge/search",
+            json={"query": "如何创建订单", "tenant_id": "other-tenant"},
+            headers=_headers("test-tenant"),
+        )
+        assert response.status_code == 403
