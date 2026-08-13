@@ -31,7 +31,7 @@ def _build_providers() -> tuple[EmbeddingProvider, Reranker]:
     A configured API key uses the live service; otherwise the deterministic
     implementations keep the endpoint usable offline (tests, local demos).
     """
-    settings = Settings()
+    settings = Settings()  # type: ignore[call-arg]
     return build_embedding_provider(settings), build_reranker(settings)
 
 

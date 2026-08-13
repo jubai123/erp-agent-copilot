@@ -61,6 +61,12 @@ async def erp_simulator_executor(tool_name: str, arguments: dict[str, Any]) -> T
 
 def _get_product(arguments: dict[str, Any]) -> ToolResult:
     name = arguments.get("name")
+    if not isinstance(name, str):
+        return ToolResult.failure(
+            tool_version_id="getProductByName",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"name 必须为字符串，got {name!r}",
+        )
     product = PRODUCT_BY_NAME.get(name)
     if product is None:
         return ToolResult.failure(
@@ -140,7 +146,14 @@ def _create_order(arguments: dict[str, Any]) -> ToolResult:
     if existing is not None:
         return ToolResult.success(tool_version_id="createOrder", data=_order_to_dict(existing))
 
-    product = PRODUCT_BY_ID.get(arguments.get("product_id"))
+    product_id = arguments.get("product_id")
+    if not isinstance(product_id, int):
+        return ToolResult.failure(
+            tool_version_id="createOrder",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"product_id 必须为整数，got {product_id!r}",
+        )
+    product = PRODUCT_BY_ID.get(product_id)
     if product is None:
         return ToolResult.failure(
             tool_version_id="createOrder",
@@ -166,13 +179,22 @@ def _create_order(arguments: dict[str, Any]) -> ToolResult:
             ),
         )
 
+    supplier_id = arguments.get("supplier_id")
+    region = arguments.get("region")
+    if not isinstance(supplier_id, int) or not isinstance(region, str):
+        return ToolResult.failure(
+            tool_version_id="createOrder",
+            error_code="INVALID_ARGUMENT",
+            error_message="supplier_id 必须为整数且 region 必须为字符串",
+        )
+
     product.quantity_in_stock -= quantity
     order = create_order(
         product_id=product.product_id,
         product_name=product.name,
         quantity=quantity,
-        supplier_id=arguments.get("supplier_id"),
-        region=arguments.get("region"),
+        supplier_id=supplier_id,
+        region=region,
         unit_price=product.price,
         idempotency_key=idempotency_key,
     )
@@ -181,6 +203,12 @@ def _create_order(arguments: dict[str, Any]) -> ToolResult:
 
 def _get_order(arguments: dict[str, Any]) -> ToolResult:
     order_id = arguments.get("order_id")
+    if not isinstance(order_id, str):
+        return ToolResult.failure(
+            tool_version_id="getOrderByOrderId",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"order_id 必须为字符串，got {order_id!r}",
+        )
     order = get_by_id(order_id)
     if order is None:
         return ToolResult.failure(

@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     not fire lifespan events, so the unit/integration suites initialize the
     engine through their own conftest fixtures.
     """
-    settings = Settings()
+    settings = Settings()  # type: ignore[call-arg]
     init_db(settings)
     setup_logging(level=settings.log_level, service=settings.app_name)
     setup_tracing(

@@ -81,6 +81,8 @@ def _observe_phase(phase: str, node: Callable[..., Any]) -> Callable[..., Any]:
             start = time.monotonic()
             updates = await node(state)
             METRICS.phase_latency.labels(phase=phase).observe(time.monotonic() - start)
+            if not isinstance(updates, dict):
+                raise TypeError(f"phase node returned {type(updates).__name__}, expected dict")
             return updates
 
         return _async_wrapped
@@ -89,6 +91,8 @@ def _observe_phase(phase: str, node: Callable[..., Any]) -> Callable[..., Any]:
         start = time.monotonic()
         updates = node(state)
         METRICS.phase_latency.labels(phase=phase).observe(time.monotonic() - start)
+        if not isinstance(updates, dict):
+            raise TypeError(f"phase node returned {type(updates).__name__}, expected dict")
         return updates
 
     return _sync_wrapped

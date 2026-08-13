@@ -183,3 +183,53 @@ class TestErrorMapping:
         assert result.status == "FAILED"
         assert result.error is not None
         assert result.error.error_code == "UNKNOWN_TOOL"
+
+
+class TestRequiredArgumentValidation:
+    """Tools fail closed (INVALID_ARGUMENT) when a required argument is missing.
+
+    Arguments come from planner-generated tool calls (LLM output, untrusted), so
+    a missing key must be rejected instead of being passed down as None into the
+    simulator data layer.
+    """
+
+    def test_get_product_missing_name(self) -> None:
+        result = _run("getProductByName", {})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+    def test_create_order_missing_product_id(self) -> None:
+        args = _create_args()
+        del args["product_id"]
+        result = _run("createOrder", args)
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+    def test_create_order_missing_supplier_id(self) -> None:
+        args = _create_args()
+        del args["supplier_id"]
+        result = _run("createOrder", args)
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+    def test_create_order_missing_region(self) -> None:
+        args = _create_args()
+        del args["region"]
+        result = _run("createOrder", args)
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+    def test_get_order_missing_order_id(self) -> None:
+        result = _run("getOrderByOrderId", {})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"

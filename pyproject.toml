@@ -87,9 +87,10 @@ explicit_package_bases = true
 mypy_path = ["src", "."]
 
 # Third-party packages that ship no stubs and expose no py.typed marker.
-# jieba: no community stub package exists; yaml: types-PyYAML not vendored.
+# jieba: no community stub package exists; yaml: types-PyYAML not vendored;
+# celery: ships no stubs, and the prefork signal/logger submodules are untyped.
 [[tool.mypy.overrides]]
-module = ["jieba", "yaml"]
+module = ["jieba", "yaml", "celery", "celery.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
