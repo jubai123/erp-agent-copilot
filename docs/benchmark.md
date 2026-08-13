@@ -6,7 +6,7 @@
 
 | 项 | 结果 | 证据 |
 |---|---|---|
-| 单元测试 | 1207 通过 | `uv run pytest tests/ -q` |
+| 单元测试 | 1261 通过 | `uv run pytest tests/ -q` |
 | 类型检查 | 65 个 src 文件 mypy 干净 | `uv run mypy src` |
 | 静态检查 | ruff check / format 通过 | `uv run ruff check .` / `uv run ruff format --check` |
 | 故障注入 | 3/3 场景 PASS | `uv run python tests/performance/fault_injection.py` |
