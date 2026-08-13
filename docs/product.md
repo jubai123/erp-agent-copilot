@@ -26,7 +26,7 @@ ERP Agent Copilot 面向需要跨库存、物流供应商和订单系统办理�
 - **多步编排**：强类型 `AgentState` + LangGraph 状态机、Plan DAG 校验、只读步骤并行、写步骤串行。
 - **安全与审批**：RBAC + Tool Scope、`policy_check` 门控、写操作人工审批、SSRF 出口控制、Prompt Injection 检测、输出 Redaction。
 - **恢复与一致性**：Checkpoint 持久化、幂等键 at-most-once、指数退避重试、Worker 崩溃后对账恢复。
-- **评测与可观测性**：200 条离线 Eval、Record/Replay 确定性回归、OpenTelemetry Trace、Prometheus 指标。
+- **评测与可观测性**：175 条离线 Eval、Record/Replay 确定性回归、OpenTelemetry Trace、Prometheus 指标。
 
 ## 4. 非目标（范围控制）
 
