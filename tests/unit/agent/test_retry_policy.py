@@ -10,7 +10,9 @@ bounded by the step's max_retries budget.
 
 from __future__ import annotations
 
-from erp_copilot.agent.retry_policy import RetryExecutor, RetryPolicy
+import asyncio
+
+from erp_copilot.agent.retry_policy import AsyncRetryExecutor, RetryExecutor, RetryPolicy
 from erp_copilot.tools.tool_result import ToolResult
 
 
@@ -164,3 +166,87 @@ class TestRetryExecutor:
         result = RetryExecutor(sleep=sleep).execute(transient, max_retries=2)
         assert result.status == "SUCCEEDED"
         assert sleep.calls == [1.0]
+
+
+class _AsyncFakeSleep:
+    """Records every delay passed to it; a coroutine so the async executor
+    awaits it exactly where it would otherwise asyncio.sleep."""
+
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+
+
+class TestAsyncRetryExecutor:
+    """Async sibling of RetryExecutor for the async agent executor path.
+
+    Mirrors the sync behaviour (same backoff sequence, same retryability
+    gates) but awaits the tool call and sleeps via an injectable coroutine so
+    the node's asyncio.gather never blocks on time.sleep.
+    """
+
+    def test_retries_transient_until_success_with_backoff(self) -> None:
+        sleep = _AsyncFakeSleep()
+        attempts: list[int] = []
+
+        async def flaky() -> ToolResult:
+            attempts.append(len(attempts) + 1)
+            return _failed(retryable=True) if len(attempts) < 3 else _succeeded()
+
+        result = asyncio.run(AsyncRetryExecutor(sleep=sleep).execute(flaky, max_retries=3))
+
+        assert result.status == "SUCCEEDED"
+        assert len(attempts) == 3
+        assert sleep.calls == [1.0, 2.0]
+
+    def test_permanent_failure_is_not_retried(self) -> None:
+        sleep = _AsyncFakeSleep()
+        calls: list[int] = []
+
+        async def permanent() -> ToolResult:
+            calls.append(1)
+            return _failed(retryable=False)
+
+        result = asyncio.run(AsyncRetryExecutor(sleep=sleep).execute(permanent, max_retries=5))
+
+        assert result.status == "FAILED"
+        assert len(calls) == 1
+        assert sleep.calls == []
+
+    def test_retries_bounded_by_max_retries(self) -> None:
+        sleep = _AsyncFakeSleep()
+        calls: list[int] = []
+
+        async def always_fails() -> ToolResult:
+            calls.append(1)
+            return _failed(retryable=True)
+
+        result = asyncio.run(AsyncRetryExecutor(sleep=sleep).execute(always_fails, max_retries=2))
+
+        assert result.status == "FAILED"
+        assert len(calls) == 3  # initial attempt + 2 retries
+        assert sleep.calls == [1.0, 2.0]
+
+    def test_max_retries_zero_single_attempt(self) -> None:
+        sleep = _AsyncFakeSleep()
+        calls: list[int] = []
+
+        async def fails() -> ToolResult:
+            calls.append(1)
+            return _failed(retryable=True)
+
+        asyncio.run(AsyncRetryExecutor(sleep=sleep).execute(fails, max_retries=0))
+        assert len(calls) == 1
+        assert sleep.calls == []
+
+    def test_immediate_success_no_sleep(self) -> None:
+        sleep = _AsyncFakeSleep()
+
+        async def ok() -> ToolResult:
+            return _succeeded()
+
+        result = asyncio.run(AsyncRetryExecutor(sleep=sleep).execute(ok, max_retries=5))
+        assert result.status == "SUCCEEDED"
+        assert sleep.calls == []

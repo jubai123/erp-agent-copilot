@@ -31,6 +31,7 @@ from erp_copilot.agent.nodes.retrieve_context import build_retrieve_context_node
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.nodes.verify_results import build_verify_results_node
 from erp_copilot.agent.planner import build_deterministic_plan_node
+from erp_copilot.agent.retry_policy import AsyncRetryExecutor
 from erp_copilot.agent.state import AgentState, RetrievedDocument
 from erp_copilot.memory.checkpoint import CheckpointSaver
 from erp_copilot.observability.metrics import METRICS
@@ -179,6 +180,7 @@ def build_worker_graph(
             build_execute_steps_node(
                 executor=erp_simulator_executor,
                 idempotency_store=IdempotencyStore(session),
+                retry_executor=AsyncRetryExecutor(),
             ),
         ),
         verify_node=_observe_phase("verify", build_verify_results_node()),

@@ -14,7 +14,10 @@ topological_order.
 
 The executor is an async (tool_name, arguments) → Awaitable[ToolResult]
 callable — the real MCP Gateway is async and is injected directly, no sync
-adapter. Retry/idempotency semantics (Phase 5) compose around the executor.
+adapter. Idempotency (task 5.6) and per-step backoff retry (task 5.7) compose
+around the executor: WRITE steps run at-most-once through an injected
+IdempotencyStore, and transient failures are retried within the step's
+max_retries budget via an injected AsyncRetryExecutor.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from erp_copilot.agent.retry_policy import AsyncRetryExecutor
 from erp_copilot.agent.state import (
     AgentState,
     AgentStatus,
@@ -115,21 +119,45 @@ def _skipped(step_id: str) -> StepResult:
     return StepResult(step_id=step_id, status=StepStatus.SKIPPED)
 
 
+def _make_call(
+    step: PlanStep,
+    arguments: dict[str, Any],
+    executor: Executor,
+) -> Callable[[], Awaitable[ToolResult]]:
+    """Wrap one executor invocation as a callable for the retry executor.
+
+    A raised executor exception becomes a failed (non-retryable) ToolResult, so
+    one bad step cannot kill its wave's gather or loop forever on a retry.
+    """
+
+    async def call() -> ToolResult:
+        try:
+            return await executor(step.tool_name, arguments)
+        except Exception as exc:
+            return ToolResult.failure(
+                tool_version_id=step.tool_name,
+                error_code="EXECUTION_FAILED",
+                error_message=str(exc),
+            )
+
+    return call
+
+
 async def _run_step(
     step: PlanStep,
     arguments: dict[str, Any],
     executor: Executor,
+    retry_executor: AsyncRetryExecutor | None,
 ) -> tuple[PlanStep, ToolResult]:
-    """Await one tool call; a raised executor exception becomes a failed
-    ToolResult so one bad step cannot kill its wave's gather."""
-    try:
-        return step, await executor(step.tool_name, arguments)
-    except Exception as exc:
-        return step, ToolResult.failure(
-            tool_version_id=step.tool_name,
-            error_code="EXECUTION_FAILED",
-            error_message=str(exc),
-        )
+    """Run a READ step, retrying transient failures within the step budget.
+
+    Without an injected *retry_executor* the step runs exactly once (the
+    pre-retry-wiring behaviour).
+    """
+    call = _make_call(step, arguments, executor)
+    if retry_executor is None:
+        return step, await call()
+    return step, await retry_executor.execute(call, max_retries=step.max_retries)
 
 
 async def _run_step_idempotent(
@@ -139,6 +167,7 @@ async def _run_step_idempotent(
     store: IdempotencyStore,
     tenant_id: str,
     run_id: str,
+    retry_executor: AsyncRetryExecutor | None,
 ) -> tuple[PlanStep, ToolResult]:
     """Run one WRITE step at-most-once through the idempotency store.
 
@@ -147,6 +176,12 @@ async def _run_step_idempotent(
     re-invoking the executor (a retry or crash-resume maps to the same key). The
     store is synchronous, so the node drives begin/complete/fail around the
     awaited async tool call instead of store.execute().
+
+    Transient failures are retried within the step's max_retries budget via the
+    injected retry executor. The intent record stays PENDING across retries and
+    is finalized only once — COMPLETED on success, FAILED when the budget is
+    exhausted — so a crash mid-retry is reconciled by recovery (task 5.8)
+    rather than blindly re-run.
     """
     key = step.idempotency_key
     assert key is not None  # dispatcher guarantees; guards mypy narrowing
@@ -172,15 +207,11 @@ async def _run_step_idempotent(
             data=json.loads(record.result_payload),
         )
 
-    try:
-        result = await executor(step.tool_name, arguments)
-    except Exception as exc:
-        store.fail(record, str(exc))
-        return step, ToolResult.failure(
-            tool_version_id=step.tool_name,
-            error_code="EXECUTION_FAILED",
-            error_message=str(exc),
-        )
+    call = _make_call(step, arguments, executor)
+    if retry_executor is None:
+        result = await call()
+    else:
+        result = await retry_executor.execute(call, max_retries=step.max_retries)
     if result.status == "SUCCEEDED":
         store.complete(record, json.dumps(result.data or {}, ensure_ascii=False))
     else:
@@ -196,6 +227,7 @@ async def _run_one(
     store: IdempotencyStore | None,
     tenant_id: str,
     run_id: str,
+    retry_executor: AsyncRetryExecutor | None,
 ) -> tuple[PlanStep, ToolResult]:
     """Dispatch a step to the idempotent WRITE path or the plain runner.
 
@@ -204,20 +236,25 @@ async def _run_one(
     fast path.
     """
     if store is not None and step.idempotency_key is not None:
-        return await _run_step_idempotent(step, arguments, executor, store, tenant_id, run_id)
-    return await _run_step(step, arguments, executor)
+        return await _run_step_idempotent(
+            step, arguments, executor, store, tenant_id, run_id, retry_executor
+        )
+    return await _run_step(step, arguments, executor, retry_executor)
 
 
 def build_execute_steps_node(
     *,
     executor: Executor,
     idempotency_store: IdempotencyStore | None = None,
+    retry_executor: AsyncRetryExecutor | None = None,
 ) -> Callable[[AgentState], Awaitable[dict[str, Any]]]:
     """Build the execute_ready_steps LangGraph node with an injected executor.
 
     With an *idempotency_store* injected, WRITE steps execute at-most-once per
     key against the DB ledger (docs/06 §7); without one the node is DB-free and
-    every step runs through the raw executor.
+    every step runs through the raw executor. With a *retry_executor* injected,
+    transient failures are retried within each step's max_retries budget with
+    exponential backoff; without one the executor runs each step exactly once.
     """
 
     async def execute_ready_steps_node(state: AgentState) -> dict[str, Any]:
@@ -278,6 +315,7 @@ def build_execute_steps_node(
                         idempotency_store,
                         state.tenant_id,
                         state.run_id,
+                        retry_executor,
                     )
                     for step, arguments in prepared
                 )

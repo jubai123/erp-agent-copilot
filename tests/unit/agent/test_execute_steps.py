@@ -31,6 +31,7 @@ from erp_copilot.agent.nodes.execute_steps import (
     build_execute_steps_node,
     resolve_arguments,
 )
+from erp_copilot.agent.retry_policy import AsyncRetryExecutor
 from erp_copilot.agent.state import (
     AgentState,
     Plan,
@@ -708,3 +709,181 @@ class TestIdempotencyStoreWiring:
         record = self._record(engine, "w1")
         assert record.status == "FAILED"
         assert record.error_message == "stock low"
+
+
+class _AsyncSleepSpy:
+    """Records backoff delays instead of sleeping; a coroutine so the retry
+    executor's await works where it would otherwise asyncio.sleep."""
+
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+
+
+class TestStepRetryWiring:
+    """The node drives per-step backoff retries through an injected
+    AsyncRetryExecutor (task 5.7 wiring).
+
+    A transient failure is retried within the step's max_retries budget with
+    exponential backoff; permanent failures and max_retries=0 run exactly once.
+    WRITE steps keep the idempotency ledger's at-most-once contract: the intent
+    stays PENDING across in-pass retries and is finalized once (COMPLETED on
+    success, FAILED only when the budget is exhausted), so a crash mid-retry is
+    still reconciled by task 5.8 rather than blindly re-run.
+    """
+
+    @pytest.fixture()
+    def engine(self, tmp_path) -> Engine:
+        db = create_engine(f"sqlite:///{tmp_path / 'retry-wiring.db'}")
+        IdempotencyRecord.__table__.create(db)
+        return db
+
+    def _read_step(self, *, max_retries: int = 1) -> PlanStep:
+        return _step(step_id="s1", tool_name="getProductById", max_retries=max_retries)
+
+    def _write_step(self, *, key: str = "w1", max_retries: int = 2) -> PlanStep:
+        return _step(
+            step_id="s1",
+            tool_name="createOrder",
+            risk_level=ToolRiskLevel.WRITE,
+            idempotency_key=key,
+            max_retries=max_retries,
+            arguments={"quantity": 1, "idempotency_key": key},
+        )
+
+    def _node(
+        self,
+        executor: Executor,
+        sleep_spy: _AsyncSleepSpy,
+        engine: Engine | None = None,
+    ) -> Callable[[AgentState], Awaitable[dict[str, Any]]]:
+        return build_execute_steps_node(
+            executor=executor,
+            idempotency_store=IdempotencyStore(Session(engine)) if engine is not None else None,
+            retry_executor=AsyncRetryExecutor(sleep=sleep_spy),
+        )
+
+    def test_read_step_retries_transient_failure_with_backoff(self) -> None:
+        sleep = _AsyncSleepSpy()
+        calls: list[int] = []
+
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            calls.append(len(calls) + 1)
+            if len(calls) < 2:
+                return ToolResult.failure(
+                    tool_version_id="v1",
+                    error_code="TIMEOUT",
+                    error_message="gateway timeout",
+                    is_retryable=True,
+                )
+            return ToolResult.success(tool_version_id="v1", data={"name": "苹果"})
+
+        node = self._node(executor, sleep)
+        updates = _invoke(node, _node_state(plan=Plan(steps=[self._read_step()])))
+
+        result = updates["step_results"]["s1"]
+        assert result.status == StepStatus.COMPLETED
+        assert result.data == {"name": "苹果"}
+        assert len(calls) == 2  # initial attempt + one backoff retry
+        assert sleep.calls == [1.0]
+        assert updates.get("errors", []) == []
+
+    def test_permanent_failure_is_not_retried(self) -> None:
+        sleep = _AsyncSleepSpy()
+        calls: list[int] = []
+
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            calls.append(len(calls) + 1)
+            return ToolResult.failure(
+                tool_version_id="v1",
+                error_code="PRODUCT_NOT_FOUND",
+                error_message="missing",
+            )
+
+        node = self._node(executor, sleep)
+        updates = _invoke(
+            node,
+            _node_state(plan=Plan(steps=[self._read_step(max_retries=2)])),
+        )
+
+        assert len(calls) == 1
+        assert sleep.calls == []
+        result = updates["step_results"]["s1"]
+        assert result.status == StepStatus.FAILED
+        assert result.error_code == "PRODUCT_NOT_FOUND"
+        assert [e.code for e in updates["errors"]] == ["PRODUCT_NOT_FOUND"]
+
+    def test_max_retries_zero_runs_once(self) -> None:
+        sleep = _AsyncSleepSpy()
+        calls: list[int] = []
+
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            calls.append(len(calls) + 1)
+            return ToolResult.failure(
+                tool_version_id="v1",
+                error_code="TIMEOUT",
+                error_message="gateway timeout",
+                is_retryable=True,
+            )
+
+        node = self._node(executor, sleep)
+        updates = _invoke(node, _node_state(plan=Plan(steps=[self._read_step(max_retries=0)])))
+
+        assert len(calls) == 1
+        assert sleep.calls == []
+        assert updates["step_results"]["s1"].status == StepStatus.FAILED
+
+    def test_write_step_retries_and_finalizes_once(self, engine: Engine) -> None:
+        sleep = _AsyncSleepSpy()
+        calls: list[int] = []
+
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            calls.append(len(calls) + 1)
+            if len(calls) < 3:
+                return ToolResult.failure(
+                    tool_version_id="createOrder",
+                    error_code="TIMEOUT",
+                    error_message="gateway timeout",
+                    is_retryable=True,
+                )
+            return ToolResult.success(tool_version_id="createOrder", data={"order_id": "o1"})
+
+        node = self._node(executor, sleep, engine=engine)
+        updates = _invoke(node, _node_state(plan=Plan(steps=[self._write_step()])))
+
+        assert len(calls) == 3  # initial + two backoff retries
+        assert sleep.calls == [1.0, 2.0]
+        result = updates["step_results"]["s1"]
+        assert result.status == StepStatus.COMPLETED
+        assert result.data == {"order_id": "o1"}
+        with Session(engine) as db:
+            record = db.query(IdempotencyRecord).filter_by(idempotency_key="w1").one()
+            assert record.status == "COMPLETED"
+
+    def test_write_step_budget_exhausted_records_failed(self, engine: Engine) -> None:
+        sleep = _AsyncSleepSpy()
+        calls: list[int] = []
+
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            calls.append(len(calls) + 1)
+            return ToolResult.failure(
+                tool_version_id="createOrder",
+                error_code="TIMEOUT",
+                error_message="gateway timeout",
+                is_retryable=True,
+            )
+
+        node = self._node(executor, sleep, engine=engine)
+        updates = _invoke(node, _node_state(plan=Plan(steps=[self._write_step(max_retries=2)])))
+
+        assert len(calls) == 3  # initial + two backoff retries
+        assert sleep.calls == [1.0, 2.0]
+        result = updates["step_results"]["s1"]
+        assert result.status == StepStatus.FAILED
+        assert result.is_retryable is True
+        with Session(engine) as db:
+            record = db.query(IdempotencyRecord).filter_by(idempotency_key="w1").one()
+            assert record.status == "FAILED"
+            assert record.error_message == "gateway timeout"

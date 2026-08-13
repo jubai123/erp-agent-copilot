@@ -7,16 +7,20 @@ executor drives a tool call returning a :class:`ToolResult`, sleeping an
 exponential backoff between attempts (1s, 2s, 4s, ...), bounded by the step's
 ``max_retries`` budget and a cap on the per-attempt delay.
 
-The executor stays synchronous and pure: ``sleep`` is injected (default
-``time.sleep``) so tests drive the exact backoff sequence, and it returns the
-final ``ToolResult`` instead of raising — one transient failure must not kill
-the run, and the verifier already branches on ``result.error.is_retryable``.
+Two siblings share one :class:`RetryPolicy`: the synchronous
+:class:`RetryExecutor` (``sleep`` defaults to ``time.sleep``) and the async
+:class:`AsyncRetryExecutor` used by the agent's execute node, which awaits an
+async tool call and sleeps via ``asyncio.sleep`` so the node's ``asyncio.gather``
+never blocks the event loop. Both return the final ``ToolResult`` instead of
+raising — one transient failure must not kill the run, and the verifier already
+branches on ``result.error.is_retryable``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from erp_copilot.tools.tool_result import ToolResult
@@ -77,6 +81,50 @@ class RetryExecutor:
             if attempt >= max_retries or not self._retryable(result):
                 return result
             self._sleep(self._policy.delay_before_attempt(attempt))
+            attempt += 1
+
+    def _retryable(self, result: ToolResult) -> bool:
+        return result.error is not None and result.error.is_retryable
+
+
+class AsyncRetryExecutor:
+    """Async sibling of RetryExecutor for the agent's async execute node.
+
+    Drives an async tool call with the same backoff schedule and retryability
+    gates as :class:`RetryExecutor`, but sleeps via an injected async callable
+    (default ``asyncio.sleep``) so a retry inside ``asyncio.gather`` yields the
+    event loop instead of blocking it.
+    """
+
+    def __init__(
+        self,
+        policy: RetryPolicy | None = None,
+        *,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+    ) -> None:
+        self._policy = policy if policy is not None else RetryPolicy()
+        self._sleep = sleep if sleep is not None else asyncio.sleep
+
+    async def execute(
+        self,
+        fn: Callable[[], Awaitable[ToolResult]],
+        *,
+        max_retries: int,
+    ) -> ToolResult:
+        """Return the first successful result, or the final failed result.
+
+        *max_retries* is the step's budget (``PlanStep.max_retries``): the tool
+        runs once, then up to *max_retries* more times with backoff. A
+        non-retryable failure returns immediately, never re-running.
+        """
+        attempt = 0
+        while True:
+            result = await fn()
+            if result.status == "SUCCEEDED":
+                return result
+            if attempt >= max_retries or not self._retryable(result):
+                return result
+            await self._sleep(self._policy.delay_before_attempt(attempt))
             attempt += 1
 
     def _retryable(self, result: ToolResult) -> bool:
