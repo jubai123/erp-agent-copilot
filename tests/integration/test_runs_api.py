@@ -57,12 +57,17 @@ class TestRunEvents:
         from apps.api.main import create_app
 
         tenant_id = _create_tenant("Events", "events-test")
+        user_id = _make_reader_user(tenant_id)
         client = TestClient(create_app())
-        run_id = client.post("/v1/runs", json={"tenant_id": tenant_id, "title": "events"}).json()[
-            "run_id"
-        ]
+        run_id = client.post(
+            "/v1/runs",
+            json={"tenant_id": tenant_id, "title": "events"},
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
+        ).json()["run_id"]
 
-        with client.stream("GET", f"/v1/runs/{run_id}/events") as response:
+        with client.stream(
+            "GET", f"/v1/runs/{run_id}/events", headers={"X-Tenant-ID": tenant_id}
+        ) as response:
             assert response.status_code == 200
             assert response.headers["content-type"].startswith("text/event-stream")
             body = "".join(response.iter_text())
@@ -84,19 +89,26 @@ class TestRunEvents:
         from apps.api.main import create_app
 
         tenant_id = _create_tenant("Events Resume", "events-resume")
+        user_id = _make_reader_user(tenant_id)
         client = TestClient(create_app())
-        run_id = client.post("/v1/runs", json={"tenant_id": tenant_id, "title": "resume"}).json()[
-            "run_id"
-        ]
+        run_id = client.post(
+            "/v1/runs",
+            json={"tenant_id": tenant_id, "title": "resume"},
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
+        ).json()["run_id"]
 
-        with client.stream("GET", f"/v1/runs/{run_id}/events") as response:
+        with client.stream(
+            "GET",
+            f"/v1/runs/{run_id}/events",
+            headers={"X-Tenant-ID": tenant_id},
+        ) as response:
             first = _parse_sse("".join(response.iter_text()))
         created_id = next(frame["id"] for frame in first if frame["event"] == "RUN_CREATED")
 
         with client.stream(
             "GET",
             f"/v1/runs/{run_id}/events",
-            headers={"Last-Event-ID": created_id},
+            headers={"X-Tenant-ID": tenant_id, "Last-Event-ID": created_id},
         ) as response:
             resumed = _parse_sse("".join(response.iter_text()))
 
@@ -108,7 +120,7 @@ class TestRunEvents:
         from apps.api.main import create_app
 
         client = TestClient(create_app())
-        response = client.get("/v1/runs/ghost/events")
+        response = client.get("/v1/runs/ghost/events", headers={"X-Tenant-ID": "ghost-tenant"})
         assert response.status_code == 404
 
 
@@ -157,6 +169,30 @@ def _make_writer_user(tenant_id: str) -> str:
         session.close()
 
 
+def _make_reader_user(tenant_id: str) -> str:
+    """Create an active user holding the READ scopes a read query requires."""
+    session = get_session()
+    try:
+        role = Role(tenant_id=tenant_id, name="reader")
+        session.add(role)
+        session.flush()
+        for resource, action in [("product", "read"), ("supplier", "read")]:
+            session.add(RoleScope(role_id=role.id, resource=resource, action=action))
+        user = User(
+            tenant_id=tenant_id,
+            email="reader@example.com",
+            hashed_password="x",
+            is_active=True,
+        )
+        session.add(user)
+        session.flush()
+        session.add(UserRole(user_id=user.id, role_id=role.id))
+        session.commit()
+        return user.id
+    finally:
+        session.close()
+
+
 class TestCreateRun:
     """Acceptance: POST /v1/runs creates a new Run."""
 
@@ -164,11 +200,13 @@ class TestCreateRun:
         from apps.api.main import create_app
 
         tenant_id = _create_tenant("Run Test", "run-test")
+        user_id = _make_reader_user(tenant_id)
         client = TestClient(create_app())
 
         response = client.post(
             "/v1/runs",
             json={"tenant_id": tenant_id, "title": "Test run"},
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
 
         assert response.status_code == 202
@@ -180,11 +218,13 @@ class TestCreateRun:
         from apps.api.main import create_app
 
         tenant_id = _create_tenant("Run Default", "run-default")
+        user_id = _make_reader_user(tenant_id)
         client = TestClient(create_app())
 
         response = client.post(
             "/v1/runs",
             json={"tenant_id": tenant_id},
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
 
         assert response.status_code == 202
@@ -192,20 +232,23 @@ class TestCreateRun:
         assert data["run_id"]
         assert data["status"] == "COMPLETED"
 
-    def test_create_run_with_unknown_user_returns_422(self) -> None:
+    def test_create_run_with_unknown_user_header_is_403(self) -> None:
         from apps.api.main import create_app
 
-        # Scopes resolve from the role graph by user_id, so an unknown/inactive
-        # user would silently run as no-scope — the boundary rejects it instead.
+        # Identity comes from the X-User-ID header; scopes resolve from the role
+        # graph, so an unknown user resolves to no scopes and any query is
+        # rejected with 403 at the boundary instead of silently running as a
+        # no-scope run.
         tenant_id = _create_tenant("Unknown User", "unknown-user")
         client = TestClient(create_app())
 
         response = client.post(
             "/v1/runs",
-            json={"tenant_id": tenant_id, "title": "x", "user_id": "ghost-user"},
+            json={"tenant_id": tenant_id, "title": "x", "query": "查询苹果的库存"},
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": "ghost-user"},
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 403
 
     def test_create_run_write_query_pauses_then_approve_completes(self) -> None:
         from apps.api.main import create_app
@@ -227,8 +270,8 @@ class TestCreateRun:
                     "tenant_id": tenant_id,
                     "title": "下单",
                     "query": "帮我在上海下一单 1 KG 苹果",
-                    "user_id": user_id,
                 },
+                headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
             )
 
             assert create_resp.status_code == 202
@@ -238,6 +281,7 @@ class TestCreateRun:
             approve_resp = client.post(
                 f"/v1/runs/{run_id}/approve",
                 json={"step_id": "s3", "decision": "APPROVE", "decided_by": "manager"},
+                headers={"X-Tenant-ID": tenant_id},
             )
             assert approve_resp.status_code == 200
             assert approve_resp.json()["run_status"] == "succeeded"
@@ -272,15 +316,17 @@ class TestGetRun:
         from apps.api.main import create_app
 
         tenant_id = _create_tenant("Get Run", "get-run")
+        user_id = _make_reader_user(tenant_id)
         client = TestClient(create_app())
 
         create_resp = client.post(
             "/v1/runs",
             json={"tenant_id": tenant_id, "title": "My run"},
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
         run_id = create_resp.json()["run_id"]
 
-        response = client.get(f"/v1/runs/{run_id}")
+        response = client.get(f"/v1/runs/{run_id}", headers={"X-Tenant-ID": tenant_id})
 
         assert response.status_code == 200
         data = response.json()
@@ -293,7 +339,7 @@ class TestGetRun:
 
         client = TestClient(create_app())
 
-        response = client.get("/v1/runs/nonexistent-id")
+        response = client.get("/v1/runs/nonexistent-id", headers={"X-Tenant-ID": "ghost-tenant"})
 
         assert response.status_code == 404
         assert "detail" in response.json()
@@ -309,7 +355,7 @@ class TestCancelRun:
         run_id = _create_queued_run(tenant_id)
         client = TestClient(create_app())
 
-        response = client.post(f"/v1/runs/{run_id}/cancel")
+        response = client.post(f"/v1/runs/{run_id}/cancel", headers={"X-Tenant-ID": tenant_id})
 
         assert response.status_code == 200
         assert response.json()["status"] == "CANCELLED"
@@ -329,11 +375,16 @@ class TestCancelRun:
         from apps.api.main import create_app
 
         tenant_id = _create_tenant("Cancel Done", "cancel-done")
+        user_id = _make_reader_user(tenant_id)
         client = TestClient(create_app())
-        create_resp = client.post("/v1/runs", json={"tenant_id": tenant_id, "title": "done"})
+        create_resp = client.post(
+            "/v1/runs",
+            json={"tenant_id": tenant_id, "title": "done"},
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
+        )
         run_id = create_resp.json()["run_id"]
 
-        response = client.post(f"/v1/runs/{run_id}/cancel")
+        response = client.post(f"/v1/runs/{run_id}/cancel", headers={"X-Tenant-ID": tenant_id})
 
         assert response.status_code == 409
 
@@ -342,7 +393,7 @@ class TestCancelRun:
 
         client = TestClient(create_app())
 
-        response = client.post("/v1/runs/ghost/cancel")
+        response = client.post("/v1/runs/ghost/cancel", headers={"X-Tenant-ID": "ghost-tenant"})
 
         assert response.status_code == 404
 
@@ -353,7 +404,7 @@ class TestCancelRun:
         run_id = _create_paused_run(tenant_id)
         client = TestClient(create_app())
 
-        cancel_resp = client.post(f"/v1/runs/{run_id}/cancel")
+        cancel_resp = client.post(f"/v1/runs/{run_id}/cancel", headers={"X-Tenant-ID": tenant_id})
         assert cancel_resp.status_code == 200
 
         # The CANCELLED checkpoint supersedes the paused state, so a late
@@ -361,6 +412,7 @@ class TestCancelRun:
         approve_resp = client.post(
             f"/v1/runs/{run_id}/approve",
             json={"step_id": "s1", "decision": "APPROVE", "decided_by": "manager"},
+            headers={"X-Tenant-ID": tenant_id},
         )
         assert approve_resp.status_code == 409
 

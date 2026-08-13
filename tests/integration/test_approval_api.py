@@ -176,6 +176,7 @@ class TestApproveRun:
                     "decided_by": "manager",
                     "reason": "已核对产品与数量",
                 },
+                headers={"X-Tenant-ID": tenant_id},
             )
 
             assert response.status_code == 200
@@ -241,6 +242,7 @@ class TestApproveRun:
                 "decided_by": "risk",
                 "reason": "风控拒绝",
             },
+            headers={"X-Tenant-ID": tenant_id},
         )
 
         assert response.status_code == 200
@@ -283,6 +285,7 @@ class TestApproveRun:
         response = client.post(
             f"/v1/runs/{run_id}/approve",
             json={"step_id": "s1", "decision": "APPROVE", "decided_by": "manager"},
+            headers={"X-Tenant-ID": tenant_id},
         )
 
         assert response.status_code == 200
@@ -315,6 +318,7 @@ class TestApproveRun:
         response = client.post(
             "/v1/runs/ghost/approve",
             json={"step_id": "s1", "decision": "APPROVE", "decided_by": "manager"},
+            headers={"X-Tenant-ID": "ghost-tenant"},
         )
         assert response.status_code == 404
 
@@ -329,5 +333,6 @@ class TestApproveRun:
         response = client.post(
             f"/v1/runs/{run_id}/approve",
             json={"step_id": "s3", "decision": "APPROVE", "decided_by": "manager"},
+            headers={"X-Tenant-ID": tenant_id},
         )
         assert response.status_code == 409

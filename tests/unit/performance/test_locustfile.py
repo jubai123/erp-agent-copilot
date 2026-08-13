@@ -12,7 +12,9 @@ from __future__ import annotations
 from tests.performance.load_scenario import (
     DEFAULT_HOST,
     DEFAULT_TENANT_ID,
+    DEFAULT_USER_ID,
     RUN_PATH,
+    build_run_headers,
     build_run_payload,
     submit_run,
 )
@@ -36,7 +38,7 @@ class _FakeResponse:
 class _FakeClient:
     def __init__(self, status_code: int = 202) -> None:
         self.status_code = status_code
-        self.calls: list[tuple[str, dict[str, str], str]] = []
+        self.calls: list[tuple[str, dict[str, str], dict[str, str], str]] = []
         self.last_response: _FakeResponse | None = None
 
     def post(
@@ -44,10 +46,11 @@ class _FakeClient:
         path: str,
         *,
         json: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
         name: str | None = None,
         catch_response: bool = False,
     ) -> _FakeResponse:
-        self.calls.append((path, json or {}, name or ""))
+        self.calls.append((path, json or {}, headers or {}, name or ""))
         self.last_response = _FakeResponse(self.status_code)
         return self.last_response
 
@@ -87,15 +90,35 @@ class TestBuildRunPayload:
         assert build_run_payload(title="special")["title"] == "special"
 
 
+class TestBuildRunHeaders:
+    def test_default_headers(self) -> None:
+        assert build_run_headers() == {
+            "X-Tenant-ID": DEFAULT_TENANT_ID,
+            "X-User-ID": DEFAULT_USER_ID,
+        }
+
+    def test_custom_tenant_and_user(self) -> None:
+        assert build_run_headers("custom-tenant", "custom-user") == {
+            "X-Tenant-ID": "custom-tenant",
+            "X-User-ID": "custom-user",
+        }
+
+    def test_user_from_env(self, monkeypatch) -> None:
+        monkeypatch.setenv("LOAD_TEST_USER_ID", "env-user")
+        assert build_run_headers()["X-User-ID"] == "env-user"
+
+
 class TestSubmitRun:
     def test_posts_to_runs_endpoint(self) -> None:
         client = _FakeClient()
         submit_run(client)
         assert len(client.calls) == 1
-        path, payload, name = client.calls[0]
+        path, payload, headers, name = client.calls[0]
         assert path == RUN_PATH
         assert name == "POST /v1/runs"
         assert payload["product_name"] == "苹果"
+        assert headers["X-Tenant-ID"] == DEFAULT_TENANT_ID
+        assert headers["X-User-ID"] == DEFAULT_USER_ID
 
     def test_202_is_success(self) -> None:
         client = _FakeClient(status_code=202)

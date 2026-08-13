@@ -94,7 +94,8 @@ class TestRunLifecycleMetrics:
 
         response = client.post(
             "/v1/runs",
-            json={"tenant_id": tenant_id, "title": "metrics-read", "user_id": user_id},
+            json={"tenant_id": tenant_id, "title": "metrics-read"},
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
 
         assert response.status_code == 202
@@ -114,7 +115,8 @@ class TestRunLifecycleMetrics:
 
         response = client.post(
             "/v1/runs",
-            json={"tenant_id": tenant_id, "title": "metrics-phases", "user_id": user_id},
+            json={"tenant_id": tenant_id, "title": "metrics-phases"},
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
 
         assert response.status_code == 202
@@ -140,8 +142,8 @@ class TestRunLifecycleMetrics:
                 "tenant_id": tenant_id,
                 "title": "metrics-pause",
                 "query": "帮我在上海下一单 1 KG 苹果",
-                "user_id": user_id,
             },
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
 
         assert response.status_code == 202
@@ -153,6 +155,7 @@ class TestRunLifecycleMetrics:
         from apps.api.main import create_app
 
         tenant_id = _create_tenant("Metrics Fail", "metrics-fail")
+        user_id = _make_user(tenant_id, [("product", "read")])
         client = TestClient(create_app())
         failed_before = _counter("erp_runs_failed_total")
 
@@ -161,6 +164,7 @@ class TestRunLifecycleMetrics:
         response = client.post(
             "/v1/runs",
             json={"tenant_id": tenant_id, "title": "metrics-fail", "query": "查询库存"},
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
 
         assert response.status_code == 202

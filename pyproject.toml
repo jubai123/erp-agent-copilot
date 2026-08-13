@@ -71,6 +71,12 @@ select = [
     "SIM",   # flake8-simplify
 ]
 
+# B008: Depends(...) in argument defaults is FastAPI's idiomatic DI pattern,
+# not a function-call-in-default bug.
+[tool.ruff.lint.per-file-ignores]
+"apps/api/routes/runs.py" = ["B008"]
+"src/erp_copilot/security/dependencies.py" = ["B008"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["erp_copilot"]
 

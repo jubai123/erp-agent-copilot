@@ -1114,16 +1114,20 @@
 
 ## 任务 5.1：RBAC 和 Tool Scope
 
+> **状态：✅ 已完成**（2026-08-13，`dependencies.py` + header 身份 + create_run scope 前置 + 跨租户守卫全部落地）
+
 **目标**：实现基于角色的工具权限控制。
 
 **交付物**：
-- `src/erp_copilot/security/rbac.py`
-- `src/erp_copilot/security/dependencies.py`（FastAPI 依赖注入）
+- `src/erp_copilot/security/rbac.py`（✅ 已实现，DB 驱动 scope 解析，6 条单测）
+- `src/erp_copilot/security/dependencies.py`（✅ 已实现，FastAPI 依赖注入：`Actor`/`get_actor`/`require_scope`/`require_run_tenant`，7 条单测）
 
 **验收标准**：
-- 用户有 `supplier:read` Scope→可查询供应商
-- 用户无 `order:write` Scope→创建订单被拒绝（403）
-- 跨租户访问→403
+- ✅ 用户有 `supplier:read` Scope→可查询供应商（create_run 读查询按 `classify_intent` 映射 `supplier:read` 前置放行）
+- ✅ 用户无 `order:write` Scope→创建订单被拒绝（403，写意图前置检查）
+- ✅ 跨租户访问→403（create_run body 租户≠header 租户 + get/cancel/approve/events 的 `require_run_tenant`）
+
+**2026-08-13 增量**：身份从 body 迁移到认证头 `X-Tenant-ID`/`X-User-ID`（docs/07 §10）；`CreateRunRequest` 移除 `user_id`；create_run 依据 `classify_intent` 判定读写并对 `_REQUIRED_SCOPE` 前置检查（缺失 403）；get/cancel/approve/events 加跨租户守卫；既有 run 端点测试补认证头，`tests/performance/load_scenario.py` 增 `build_run_headers`。worker 的 `policy_check` 仍是权威 plan-time scope 门。
 
 ---
 

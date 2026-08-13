@@ -68,8 +68,8 @@ class TestHappyPath:
                 "tenant_id": tenant_id,
                 "title": "Query product 苹果",
                 "product_name": "苹果",
-                "user_id": user_id,
             },
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
 
         assert response.status_code == 202
@@ -77,7 +77,7 @@ class TestHappyPath:
         assert data["status"] == "COMPLETED"
         assert data["run_id"]
 
-        get_resp = client.get(f"/v1/runs/{data['run_id']}")
+        get_resp = client.get(f"/v1/runs/{data['run_id']}", headers={"X-Tenant-ID": tenant_id})
         assert get_resp.status_code == 200
         assert get_resp.json()["status"] == "COMPLETED"
 
@@ -90,7 +90,8 @@ class TestHappyPath:
 
         response = client.post(
             "/v1/runs",
-            json={"tenant_id": tenant_id, "user_id": user_id},
+            json={"tenant_id": tenant_id},
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
 
         assert response.status_code == 202
@@ -116,15 +117,15 @@ class TestTimeoutScenario:
             json={
                 "tenant_id": tenant_id,
                 "title": "Should timeout",
-                "user_id": user_id,
             },
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
 
         assert response.status_code == 202
         data = response.json()
         assert data["status"] == "FAILED"
 
-        get_resp = client.get(f"/v1/runs/{data['run_id']}")
+        get_resp = client.get(f"/v1/runs/{data['run_id']}", headers={"X-Tenant-ID": tenant_id})
         assert get_resp.status_code == 200
         assert get_resp.json()["status"] == "FAILED"
 
@@ -148,8 +149,8 @@ class TestStockInsufficientScenario:
                 "tenant_id": tenant_id,
                 "title": "Check stock",
                 "product_name": "苹果",
-                "user_id": user_id,
             },
+            headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
 
         assert response.status_code == 202
