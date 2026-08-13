@@ -151,6 +151,17 @@ class Settings(BaseSettings):
         ),
     )
 
+    # -- ERP Simulator service-to-service auth --------------------------------
+
+    simulator_shared_secret: str = Field(
+        default="",
+        description=(
+            "Shared secret for ERP Simulator service-to-service auth "
+            "(X-Simulator-Token). Empty disables the gate; any HTTP caller of "
+            "a directly-exposed simulator must send this secret."
+        ),
+    )
+
     # -- Observability --------------------------------------------------------
 
     otel_exporter_endpoint: str = Field(

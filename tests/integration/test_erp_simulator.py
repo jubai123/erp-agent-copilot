@@ -363,3 +363,74 @@ class TestScenarioControl:
             },
         )
         assert order_resp.status_code == 201
+
+
+class TestSimulatorTokenGate:
+    """X-Simulator-Token shared-secret gate (service-to-service auth).
+
+    The gate is fail-closed only when a secret is configured; with no secret
+    the simulator stays an open test double (default app, backwards compatible).
+    """
+
+    _SECRET = "test-secret"
+
+    def _secured_client(self, secret: str = _SECRET) -> TestClient:
+        from apps.erp_simulator.simulator import create_simulator_app
+
+        return TestClient(create_simulator_app(simulator_shared_secret=secret))
+
+    def test_missing_token_returns_401(self) -> None:
+        client = self._secured_client()
+
+        response = client.get("/products/苹果")
+
+        assert response.status_code == 401
+
+    def test_wrong_token_returns_401(self) -> None:
+        client = self._secured_client()
+
+        response = client.get("/products/苹果", headers={"X-Simulator-Token": "wrong-secret"})
+
+        assert response.status_code == 401
+
+    def test_correct_token_allows_read(self) -> None:
+        client = self._secured_client()
+
+        response = client.get("/products/苹果", headers={"X-Simulator-Token": self._SECRET})
+
+        assert response.status_code == 200
+        assert response.json()["name"] == "苹果"
+
+    def test_correct_token_allows_write(self) -> None:
+        client = self._secured_client()
+
+        response = client.post(
+            "/orders",
+            json={
+                "product_id": 1,
+                "quantity": 5,
+                "supplier_id": 3,
+                "region": "上海",
+                "idempotency_key": "key-gate-001",
+            },
+            headers={"X-Simulator-Token": self._SECRET},
+        )
+
+        assert response.status_code == 201
+        assert response.json()["status"] == "CREATED"
+
+    def test_health_open_without_token(self) -> None:
+        client = self._secured_client()
+
+        response = client.get("/health")
+
+        assert response.status_code == 200
+
+    def test_default_app_has_gate_disabled(self) -> None:
+        from apps.erp_simulator.simulator import create_simulator_app
+
+        client = TestClient(create_simulator_app())
+
+        response = client.get("/products/苹果")
+
+        assert response.status_code == 200
