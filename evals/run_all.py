@@ -42,23 +42,47 @@ REPORT_DIR = Path(__file__).resolve().parent / "reports"
 
 
 def _tool_retrieval(cases: list[dict]) -> RunnerOutput:
-    """Deterministic: does the first-level DOMAIN_TOOL_MAP filter surface the expected tool?"""
+    """Deterministic: does the first-level DOMAIN_TOOL_MAP filter surface the
+    expected tool, and do hard-negative traps stay unrouted to their confusion
+    tool?
+
+    A ``hard_negative`` case passes only when its expected tool is surfaced AND
+    its ``confusion_tool`` (the tool a surface-similar misroute would select) is
+    not the expected tool — a trap mislabeled so that confusion == expected is a
+    data error and fails the case. Co-candidates are legitimate in V6's design
+    (e.g. createOrder sits in order/cancel for 改单=取消重下), so a confusion
+    tool that is co-surfaced is *observed* via confusion_surfaced metrics, not
+    failed.
+    """
     per_case: list[dict] = []
+    confusion_surfaced = 0
+    hard_negative_n = 0
     for case in cases:
         retrieved = filter_candidates(case["domain"], case["action"])
         expected = case["expected_tool"]
         passed = expected in retrieved
-        per_case.append(
-            {
-                "case_id": case["case_id"],
-                "passed": passed,
-                "expected": expected,
-                "actual": retrieved,
-                "detail": (
-                    "" if passed else f"expected {expected!r} not in filter output {retrieved!r}"
-                ),
-            }
-        )
+        detail = "" if passed else f"expected {expected!r} not in filter output {retrieved!r}"
+        if case["hard_negative"]:
+            hard_negative_n += 1
+            confusion = case["confusion_tool"]
+            if passed and confusion == expected:
+                passed = False
+                detail = (
+                    f"hard-negative trap mislabeled: confusion_tool == expected_tool {confusion!r}"
+                )
+            if confusion in retrieved:
+                confusion_surfaced += 1
+        item: dict = {
+            "case_id": case["case_id"],
+            "passed": passed,
+            "expected": expected,
+            "actual": retrieved,
+            "detail": detail,
+        }
+        if case["hard_negative"]:
+            item["confusion_tool"] = case["confusion_tool"]
+            item["confusion_surfaced"] = case["confusion_tool"] in retrieved
+        per_case.append(item)
     n = len(per_case)
     recall = sum(1 for pc in per_case if pc["passed"]) / n if n else 0.0
     return {
@@ -67,6 +91,10 @@ def _tool_retrieval(cases: list[dict]) -> RunnerOutput:
         "metrics": {
             "recall_at_filter": recall,
             "avg_candidates": round(sum(len(pc["actual"]) for pc in per_case) / n, 2) if n else 0.0,
+            "confusion_surfaced_count": confusion_surfaced,
+            "confusion_surfaced_rate": (
+                confusion_surfaced / hard_negative_n if hard_negative_n else 0.0
+            ),
         },
         "per_case": per_case,
     }

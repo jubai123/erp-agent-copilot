@@ -16,7 +16,11 @@ from pathlib import Path
 
 from apps.erp_simulator.data.products import SEED_PRODUCTS
 from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS
-from erp_copilot.tools.candidate_filter import DOMAIN_TOOL_MAP, V6_TOOL_NAMES
+from erp_copilot.tools.candidate_filter import (
+    DOMAIN_TOOL_MAP,
+    V6_TOOL_NAMES,
+    filter_candidates,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DATASETS = PROJECT_ROOT / "evals" / "datasets"
@@ -78,6 +82,8 @@ class TestAggregate:
 
 
 class TestToolRetrieval:
+    _WRITE_TOOLS = {"createOrder", "updateOrderStatus", "cancelOrder"}
+
     def test_schema_and_grounding(self) -> None:
         known = DOMAIN_TOOL_MAP
         for case in _load("tool_retrieval_40.json")["cases"]:
@@ -91,7 +97,7 @@ class TestToolRetrieval:
                 "hard_negative",
             }
             assert required <= set(case), case["case_id"]
-            assert set(case) - required <= {"note"}
+            assert set(case) - required <= {"note", "confusion_tool"}
             assert case["expected_tool"] in V6_TOOL_NAMES, case["case_id"]
             assert set(case["candidate_tools"]) <= V6_TOOL_NAMES, case["case_id"]
             assert case["expected_tool"] in case["candidate_tools"], case["case_id"]
@@ -105,6 +111,47 @@ class TestToolRetrieval:
         cases = _load("tool_retrieval_40.json")["cases"]
         hard = [c for c in cases if c["hard_negative"]]
         assert len(hard) >= 8
+
+    def test_hard_negative_cases_name_confusion_tool(self) -> None:
+        """Every trap names the tool it would be misrouted to; non-trap cases
+        carry no confusion_tool."""
+        for case in _load("tool_retrieval_40.json")["cases"]:
+            if case["hard_negative"]:
+                assert case.get("confusion_tool"), case["case_id"]
+            else:
+                assert "confusion_tool" not in case, case["case_id"]
+
+    def test_confusion_tool_registered_and_distinct(self) -> None:
+        for case in _load("tool_retrieval_40.json")["cases"]:
+            if not case["hard_negative"]:
+                continue
+            confusion = case["confusion_tool"]
+            assert confusion in V6_TOOL_NAMES, case["case_id"]
+            assert confusion != case["expected_tool"], case["case_id"]
+
+    def test_confusion_tool_grounded_in_cross_intent(self) -> None:
+        """The trap must be real: some OTHER (domain, action) intent surfaces the
+        confusion tool, so a misroute would actually select it."""
+        for case in _load("tool_retrieval_40.json")["cases"]:
+            if not case["hard_negative"]:
+                continue
+            confusion = case["confusion_tool"]
+            others = [
+                filter_candidates(domain, action)
+                for (domain, action) in DOMAIN_TOOL_MAP
+                if (domain, action) != (case["domain"], case["action"])
+            ]
+            assert any(confusion in cands for cands in others), (
+                f"{case['case_id']}: confusion {confusion} reachable only from "
+                "the case's own intent"
+            )
+
+    def test_read_hard_negative_confusion_is_write_tool(self) -> None:
+        """A read-intent (query/check_stock) trap asserts the query is NOT routed
+        to a write tool — so its confusion_tool must be a write tool."""
+        for case in _load("tool_retrieval_40.json")["cases"]:
+            if case["hard_negative"] and case["action"] in {"query", "check_stock"}:
+                assert case["confusion_tool"] in self._WRITE_TOOLS, case["case_id"]
 
     def test_read_intents_never_expect_write_tool(self) -> None:
         """A read intent (query/check_stock) must not have a write tool as

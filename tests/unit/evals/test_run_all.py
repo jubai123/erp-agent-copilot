@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from evals.harness import RunnerFn, RunnerOutput, run_all
-from evals.run_all import CATEGORY_RUNNERS
+from evals.run_all import CATEGORY_RUNNERS, _tool_retrieval
 
 EXPECTED_COUNTS = {
     "tool_retrieval": 40,
@@ -111,3 +111,57 @@ class TestRealRunners:
         assert result["primary_score"] == 1.0
         assert result["metrics"]["decision_accuracy"] == 1.0
         assert all(pc["passed"] for pc in result["per_case"])
+
+
+def _tool_case(**overrides: object) -> dict:
+    base: dict = {
+        "case_id": "tool-ut",
+        "query": "q",
+        "domain": "product",
+        "action": "query",
+        "expected_tool": "getProductByName",
+        "candidate_tools": ["getProductByName", "getProductById", "getProductSubstitutesByName"],
+        "hard_negative": True,
+        "confusion_tool": "createOrder",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestToolRetrievalHardNegative:
+    def test_mislabeled_trap_fails(self) -> None:
+        """A trap whose confusion_tool equals its expected_tool is data error —
+        the runner must fail it rather than accept a meaningless hard negative."""
+        case = _tool_case(expected_tool="getProductByName", confusion_tool="getProductByName")
+        out = _tool_retrieval([case])
+        assert not out["per_case"][0]["passed"]
+
+    def test_distinct_confusion_passes(self) -> None:
+        """Correct routing with a distinct confusion tool passes even when the
+        confusion tool is co-surfaced (a legitimate V6 co-candidate)."""
+        case = _tool_case(
+            domain="order",
+            action="cancel",
+            expected_tool="cancelOrder",
+            confusion_tool="createOrder",
+        )
+        out = _tool_retrieval([case])
+        assert out["per_case"][0]["passed"]
+
+    def test_expected_tool_missing_still_fails(self) -> None:
+        case = _tool_case(domain="order", action="create", expected_tool="cancelOrder")
+        out = _tool_retrieval([case])
+        assert not out["per_case"][0]["passed"]
+
+    def test_confusion_surfaced_metric_counts_co_candidates(self) -> None:
+        """order/cancel's filter includes createOrder, so a cancel trap pointing
+        at createOrder is counted in confusion_surfaced without failing."""
+        case = _tool_case(
+            domain="order",
+            action="cancel",
+            expected_tool="cancelOrder",
+            confusion_tool="createOrder",
+        )
+        out = _tool_retrieval([case])
+        assert out["metrics"]["confusion_surfaced_count"] == 1
+        assert out["metrics"]["confusion_surfaced_rate"] == 1.0
