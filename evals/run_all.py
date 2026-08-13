@@ -173,6 +173,13 @@ def _retrieve_sources(session, query: str, tenant_id: str, provider, reranker) -
     return sources
 
 
+def _hard_negative_failed(
+    retrieved: list[str], relevant: list[str], hard_negative: list[str]
+) -> bool:
+    """True 表示检索结果命中了硬负例（混淆失败），无论相关文档是否同时命中。"""
+    return bool(set(hard_negative) & set(retrieved))
+
+
 def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
     """Real retrieval pipeline against the dedicated test database.
 
@@ -227,12 +234,27 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
         answerable: list[dict] = []
         total_refusals = 0
         refused = 0
+        hard_hits = 0
         for case in cases:
             query = case["query"]
             retrieved = _retrieve_sources(session, query, tenant_id, provider, reranker)
             if case["should_answer"]:
                 expected = case["relevant_docs"]
-                passed = any(doc in retrieved for doc in expected)
+                hard_negative = case["hard_negative_docs"]
+                hit_relevant = any(doc in retrieved for doc in expected)
+                confused = _hard_negative_failed(retrieved, expected, hard_negative)
+                if confused:
+                    hard_hits += 1
+                passed = hit_relevant and not confused
+                detail = (
+                    ""
+                    if passed
+                    else (
+                        f"hit hard_negative {[h for h in hard_negative if h in retrieved]!r}"
+                        if confused
+                        else f"no relevant doc in {retrieved!r}"
+                    )
+                )
                 answerable.append(score_retrieved(retrieved, expected, k=5))
                 per_case.append(
                     {
@@ -240,7 +262,7 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
                         "passed": passed,
                         "expected": expected,
                         "actual": retrieved,
-                        "detail": "" if passed else f"no relevant doc in {retrieved!r}",
+                        "detail": detail,
                     }
                 )
             else:
@@ -272,6 +294,7 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
             "recall@5": round(recall, 4),
             "ndcg@5": round(ndcg, 4),
             "answerable_cases": answerable_n,
+            "hard_negative_hit_rate": hard_hits / answerable_n if answerable_n else 0.0,
             "refusal_accuracy": refused / total_refusals if total_refusals else 0.0,
         },
         "per_case": per_case,

@@ -748,7 +748,7 @@
 
 **验收标准**（落地核对）：
 - ✅ 每条数据有 query、relevant_docs（相关文档 ID 为 `source` 字段值，与消融报告的 doc 级评测口径一致）
-- ⚠️ 混淆负向：42 条查询未显式标注 negative 字段；消融逐查询分析中混淆度靠相关文档集覆盖（如"苹果的库存"相关 3 份文档）体现。若需要显式 hard negatives 评测，列为后续增量
+- ✅ 混淆负向：`evals/datasets/knowledge_rag_40.json` 34 条可答查询均显式标注 `hard_negative_docs`（语义相近但不该命中的文档 ID，与 relevant_docs 无交集）；评测 runner 命中硬负例即判该 case 失败（2026-08-13 增量闭合，`tests/unit/evals/test_hard_negative.py` 钉死消费逻辑）
 - ✅ L1 遵循评测包含非法状态转换、非法 region 值等必须拒绝的场景（`tests/unit/evals/test_skill_follow_dataset.py::TestDatasetConsistency::test_includes_mandatory_reject_scenarios` 钉死，15 REJECT / 5 FOLLOW）
 - ✅ 评分器输出 Recall@1、Recall@5、MRR、NDCG
 

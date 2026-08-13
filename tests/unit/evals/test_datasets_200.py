@@ -125,19 +125,42 @@ class TestKnowledgeRag:
         for case in _load("knowledge_rag_40.json")["cases"]:
             required = {"case_id", "query", "relevant_docs", "should_answer"}
             assert required <= set(case), case["case_id"]
-            assert set(case) - required <= {"answer_fact", "category", "note"}
+            assert set(case) - required <= {"answer_fact", "category", "note", "hard_negative_docs"}
             assert isinstance(case["should_answer"], bool)
             assert isinstance(case["relevant_docs"], list)
             if case["should_answer"]:
                 assert case["relevant_docs"], f"{case['case_id']}: answerable but no docs"
                 assert "answer_fact" in case, case["case_id"]
                 assert set(case["relevant_docs"]) <= doc_ids, case["case_id"]
+                assert "hard_negative_docs" in case, case["case_id"]
+                assert isinstance(case["hard_negative_docs"], list)
+                assert case["hard_negative_docs"], f"{case['case_id']}: no hard negatives"
+                assert set(case["hard_negative_docs"]) <= doc_ids, case["case_id"]
+                assert not set(case["hard_negative_docs"]) & set(case["relevant_docs"]), (
+                    f"{case['case_id']}: hard_negative overlaps relevant_docs"
+                )
             else:
                 assert case["relevant_docs"] == [], case["case_id"]
+                assert "hard_negative_docs" not in case, case["case_id"]
 
     def test_no_answer_cases_present(self) -> None:
         cases = _load("knowledge_rag_40.json")["cases"]
         assert sum(1 for c in cases if not c["should_answer"]) >= 5
+
+    def test_all_answerable_have_hard_negatives(self) -> None:
+        cases = _load("knowledge_rag_40.json")["cases"]
+        answerable = [c for c in cases if c["should_answer"]]
+        assert answerable, "no answerable cases"
+        missing = [c["case_id"] for c in answerable if not c["hard_negative_docs"]]
+        assert not missing, f"answerable cases missing hard negatives: {missing}"
+
+    def test_hard_negatives_disjoint_from_relevant(self) -> None:
+        for case in _load("knowledge_rag_40.json")["cases"]:
+            if not case["should_answer"]:
+                continue
+            relevant = set(case["relevant_docs"])
+            hard = set(case["hard_negative_docs"])
+            assert not hard & relevant, f"{case['case_id']}: {hard & relevant} also relevant"
 
 
 class TestPlanning:
