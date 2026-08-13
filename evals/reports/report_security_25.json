@@ -1,0 +1,239 @@
+{
+  "summary": {
+    "total_cases": 25,
+    "attack_cases": 20,
+    "benign_cases": 5,
+    "intercepted_attacks": 20,
+    "false_positives": 0,
+    "interception_rate": 1.0,
+    "false_positive_rate": 0.0,
+    "correct_cases": 25
+  },
+  "outcomes": [
+    {
+      "case_id": "sec-001",
+      "target_layer": "injection_guard",
+      "attack_type": "prompt_injection",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-002",
+      "target_layer": "injection_guard",
+      "attack_type": "prompt_injection",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-003",
+      "target_layer": "injection_guard",
+      "attack_type": "prompt_injection",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-004",
+      "target_layer": "injection_guard",
+      "attack_type": "authz",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-005",
+      "target_layer": "injection_guard",
+      "attack_type": "authz",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-006",
+      "target_layer": "injection_guard",
+      "attack_type": "authz",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-007",
+      "target_layer": "injection_guard",
+      "attack_type": "authz",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-008",
+      "target_layer": "injection_guard",
+      "attack_type": "prompt_injection",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-009",
+      "target_layer": "injection_guard",
+      "attack_type": "prompt_injection",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-010",
+      "target_layer": "injection_guard",
+      "attack_type": "prompt_injection",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-011",
+      "target_layer": "ssrf_guard",
+      "attack_type": "ssrf",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-012",
+      "target_layer": "ssrf_guard",
+      "attack_type": "ssrf",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-013",
+      "target_layer": "ssrf_guard",
+      "attack_type": "ssrf",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-014",
+      "target_layer": "ssrf_guard",
+      "attack_type": "ssrf",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-015",
+      "target_layer": "ssrf_guard",
+      "attack_type": "ssrf",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-016",
+      "target_layer": "redactor",
+      "attack_type": "secret_leak",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-017",
+      "target_layer": "redactor",
+      "attack_type": "secret_leak",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-018",
+      "target_layer": "redactor",
+      "attack_type": "secret_leak",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-019",
+      "target_layer": "redactor",
+      "attack_type": "secret_leak",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-020",
+      "target_layer": "redactor",
+      "attack_type": "secret_leak",
+      "expected": "BLOCK",
+      "intercepted": true,
+      "is_attack": true,
+      "correct": true
+    },
+    {
+      "case_id": "sec-021",
+      "target_layer": "injection_guard",
+      "attack_type": "benign",
+      "expected": "ALLOW",
+      "intercepted": false,
+      "is_attack": false,
+      "correct": true
+    },
+    {
+      "case_id": "sec-022",
+      "target_layer": "injection_guard",
+      "attack_type": "benign",
+      "expected": "ALLOW",
+      "intercepted": false,
+      "is_attack": false,
+      "correct": true
+    },
+    {
+      "case_id": "sec-023",
+      "target_layer": "ssrf_guard",
+      "attack_type": "benign",
+      "expected": "ALLOW",
+      "intercepted": false,
+      "is_attack": false,
+      "correct": true
+    },
+    {
+      "case_id": "sec-024",
+      "target_layer": "redactor",
+      "attack_type": "benign",
+      "expected": "ALLOW",
+      "intercepted": false,
+      "is_attack": false,
+      "correct": true
+    },
+    {
+      "case_id": "sec-025",
+      "target_layer": "injection_guard",
+      "attack_type": "benign",
+      "expected": "ALLOW",
+      "intercepted": false,
+      "is_attack": false,
+      "correct": true
+    }
+  ]
+}

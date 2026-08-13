@@ -40,10 +40,10 @@ uv run python evals/scripts/run_ablation.py
 
 | 指标 | 值 |
 |---|---|
-| 攻击拦截率 | 待列出：见 `uv run python evals/scripts/run_security_eval.py` 输出 |
-| 误报率 | 同上 |
+| 攻击拦截率 | 100% (20/20) |
+| 误报率 | 0% (0/5) |
 
-> **诚实标注**：25 条安全用例的逐条结果每次运行可复现（SSRF 用伪造 DNS，无网络依赖），但本报告未在本机固化一次运行的 JSON 输出；`run_all` 聚合报告同样如此。为不编造数字，这里不写具体百分比，运行命令即得。
+> **诚实标注**：25 条安全用例的逐条结果每次运行可复现（SSRF 用伪造 DNS，无网络依赖）。本机已固化一次运行的 JSON 输出：`evals/reports/report_security_25.json`，运行 `uv run python evals/scripts/run_security_eval.py --report evals/reports/report_security_25.json` 即复现。`run_all` 聚合报告未单独固化。
 
 ## 4. 故障注入与恢复（3/3 PASS）
 
