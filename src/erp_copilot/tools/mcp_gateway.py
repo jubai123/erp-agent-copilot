@@ -11,6 +11,22 @@ from typing import Any
 
 from mcp import ClientSession
 
+from erp_copilot.security.ssrf_guard import SSRFGuard
+
+
+class SSRFBlockedError(RuntimeError):
+    """Raised when a connection target fails the egress policy (task 5.3).
+
+    Carries the guard's stable verdict so the caller can persist the block
+    (SecurityEvent) or surface the reason without re-checking the URL.
+    """
+
+    def __init__(self, url: str, reason: str | None, detail: str | None) -> None:
+        self.url = url
+        self.reason = reason
+        self.detail = detail
+        super().__init__(f"URL blocked by egress policy: {reason} ({detail})")
+
 
 class MCPGatewayConnection:
     """A persistent, lazy-connecting wrapper around an MCP :class:`ClientSession`.
@@ -19,8 +35,9 @@ class MCPGatewayConnection:
     Disconnected sessions are automatically reconnected on the next call.
     """
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, *, guard: SSRFGuard | None = None) -> None:
         self._url = url
+        self._guard = guard
         self._session: ClientSession | None = None
         self._lock = Lock()
 
@@ -36,10 +53,17 @@ class MCPGatewayConnection:
         """Establish (or re-establish) the MCP session.
 
         Idempotent: calling on an already-connected session is a no-op.
+        A configured SSRF guard is enforced here, before any session exists
+        (docs/06 §6 "请求发出前"): a URL that fails the egress policy raises
+        :class:`SSRFBlockedError` and no session is ever created (fail-closed).
         """
         async with self._lock:
             if self._session is not None:
                 return
+            if self._guard is not None:
+                verdict = self._guard.check(self._url)
+                if not verdict.allowed:
+                    raise SSRFBlockedError(self._url, verdict.reason, verdict.detail)
             session = ClientSession()
             await session.initialize()
             self._session = session

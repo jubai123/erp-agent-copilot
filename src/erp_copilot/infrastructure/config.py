@@ -134,6 +134,23 @@ class Settings(BaseSettings):
         description="Number of concurrent Celery worker processes.",
     )
 
+    # -- MCP Gateway egress (SSRF, docs/06 §6) --------------------------------
+
+    mcp_egress_allowed_hosts: str = Field(
+        default="",
+        description=(
+            "Comma-separated allowlisted MCP server hosts (host or host:port) "
+            "the gateway may connect to. Empty means fail-closed: no egress."
+        ),
+    )
+    mcp_egress_trusted_internal_hosts: str = Field(
+        default="",
+        description=(
+            "Comma-separated explicitly trusted internal hosts (e.g. the ERP "
+            "simulator). They must also appear in mcp_egress_allowed_hosts."
+        ),
+    )
+
     # -- Observability --------------------------------------------------------
 
     otel_exporter_endpoint: str = Field(

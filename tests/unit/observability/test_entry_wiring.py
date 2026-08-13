@@ -60,9 +60,15 @@ class TestSimulatorLifespan:
 class TestGatewayLifespan:
     def test_wires_logging_and_tracing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _mock_observability(gateway_mod, monkeypatch)
+        # The gateway lifespan also opens the security-events DB channel
+        # (init_db); mock it so this wiring test does not mutate the global
+        # session factory (it reads DATABASE_URL from the env, which here is
+        # the sqlite backstop) and pollute later DB-dependent unit tests.
+        monkeypatch.setattr(gateway_mod, "init_db", Mock())
 
         _enter_lifespan(gateway_mod.lifespan, gateway_mod.create_gateway_app())
 
+        gateway_mod.init_db.assert_called_once()
         gateway_mod.setup_logging.assert_called_once_with(level="INFO", service="mcp-gateway")
         gateway_mod.build_otlp_exporter.assert_called_once_with("http://localhost:4317")
         gateway_mod.setup_tracing.assert_called_once_with(
