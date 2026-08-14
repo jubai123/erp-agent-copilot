@@ -66,13 +66,21 @@ def setup_tracing(
     return provider
 
 
-def build_otlp_exporter(endpoint: str) -> SpanExporter:
+def build_otlp_exporter(endpoint: str) -> SpanExporter | None:
     """Build an OTLP gRPC span exporter pointed at *endpoint*.
 
     The import is lazy so the gRPC dependency is only pulled in when an OTLP
     exporter is actually built (the production entry points); unit tests inject
     an :class:`InMemorySpanExporter` and never pay the gRPC import cost.
+
+    An empty *endpoint* means "no remote collector" — returning ``None`` lets
+    setup_tracing fall back to the non-blocking console exporter. Constructing an
+    OTLPSpanExporter here would block every request on a gRPC connect to an
+    unreachable host (SimpleSpanProcessor exports synchronously on span end).
     """
+    if not endpoint:
+        return None
+
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
     return OTLPSpanExporter(endpoint=endpoint)

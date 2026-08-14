@@ -64,6 +64,12 @@ class TestBuildOtlpExporter:
 
         assert isinstance(exporter, OTLPSpanExporter)
 
+    def test_empty_endpoint_returns_none(self) -> None:
+        # Empty endpoint means "no remote collector" — returning None lets
+        # setup_tracing fall back to the non-blocking console exporter instead
+        # of blocking every request on a gRPC connect to an unreachable host.
+        assert build_otlp_exporter("") is None
+
 
 class TestSpan:
     def test_child_spans_share_the_parent_trace(self) -> None:
