@@ -228,8 +228,14 @@ def _retrieve_sources(session, query: str, tenant_id: str, provider, reranker) -
 def _hard_negative_failed(
     retrieved: list[str], relevant: list[str], hard_negative: list[str]
 ) -> bool:
-    """True 表示检索结果命中了硬负例（混淆失败），无论相关文档是否同时命中。"""
-    return bool(set(hard_negative) & set(retrieved))
+    """True 表示检索被硬负例误导（命中陷阱且未命中任何相关文档）。
+
+    与 tool_retrieval 的混淆语义一致：陷阱与相关文档同现说明路由成功，
+    不算失败（同现率由 hard_negative_hit_rate 指标单独监控）。
+    """
+    trap_hit = bool(set(hard_negative) & set(retrieved))
+    relevant_hit = bool(set(relevant) & set(retrieved))
+    return trap_hit and not relevant_hit
 
 
 def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
@@ -291,7 +297,9 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
                 hard_negative = case["hard_negative_docs"]
                 hit_relevant = any(doc in retrieved for doc in expected)
                 confused = _hard_negative_failed(retrieved, expected, hard_negative)
-                if confused:
+                # hard_negative_hit_rate tracks co-surfacing as a monitoring
+                # signal even when routing succeeded.
+                if bool(set(hard_negative) & set(retrieved)):
                     hard_hits += 1
                 passed = hit_relevant and not confused
                 detail = (
