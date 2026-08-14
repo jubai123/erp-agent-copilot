@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 from sqlalchemy import text
 
@@ -37,3 +39,17 @@ def _clean_tables(_init_db: None) -> None:
         session.commit()
     finally:
         session.close()
+
+
+@pytest.fixture(autouse=True)
+def _reset_scenario() -> Generator[None, None, None]:
+    """Reset the ERP simulator scenario to happy_path after each test.
+
+    Scenario switching mutates the process-global simulator state, so a test
+    that leaves a non-happy_path scenario behind would leak it into the next
+    test. Mirrors tests/e2e/conftest.py.
+    """
+    yield
+    import apps.erp_simulator.scenarios as _scenarios
+
+    _scenarios._current_scenario = "happy_path"

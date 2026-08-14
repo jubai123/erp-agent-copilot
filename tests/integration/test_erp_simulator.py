@@ -434,3 +434,23 @@ class TestSimulatorTokenGate:
         response = client.get("/products/苹果")
 
         assert response.status_code == 200
+
+
+class TestScenarioResetIsolation:
+    """Scenario tests must not leak global simulator state into later tests.
+
+    Scenario switching mutates the process-global ``_current_scenario``.
+    e2e/conftest restores happy_path after every test; without the same
+    autouse teardown here, a scenario test that fails mid-mutation would leak
+    its state (e.g. timeout) into the next integration test.
+    """
+
+    def test_leaves_scenario_dirty(self) -> None:
+        import apps.erp_simulator.scenarios as _scenarios
+
+        _scenarios._current_scenario = "timeout"
+
+    def test_next_test_sees_happy_path(self) -> None:
+        from apps.erp_simulator.scenarios import get_scenario
+
+        assert get_scenario() == "happy_path"
