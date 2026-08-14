@@ -1,0 +1,41 @@
+# VCS
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Environment / secrets
+.env
+.env.*
+.env.example
+
+# Caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.code-review-graph/
+
+# Logs
+logs/
+*.log
+
+# Generated reports (reproducible via the documented commands)
+evals/reports/
+tests/performance/reports/
+
+# Not needed in the runtime image
+tests/
+evals/
+docs/
+session-history/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

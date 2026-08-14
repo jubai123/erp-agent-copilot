@@ -27,6 +27,117 @@ services:
       timeout: 5s
       retries: 5
 
+  # --- Application services (one image, command distinguishes the process) ---
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: erp-agent-copilot:latest
+    command: ["uvicorn", "apps.api.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    environment: &app_env
+      APP_NAME: erp-agent-copilot
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql://copilot:copilot_dev@postgres:5432/erp_copilot
+      REDIS_URL: redis://redis:6379/0
+      # header = development convenience (no X-API-Key required). Production
+      # MUST set AUTH_MODE=api_key + API_KEY_PEPPER (see .env.example).
+      AUTH_MODE: ${AUTH_MODE:-header}
+      API_KEY_PEPPER: ${API_KEY_PEPPER:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o}
+      CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-4}
+      # Empty by default => setup_tracing falls back to the non-blocking console
+      # exporter. Opt in to a remote collector, e.g. a host OTel Collector with
+      # OTEL_EXPORTER_ENDPOINT=http://host.docker.internal:4317.
+      OTEL_EXPORTER_ENDPOINT: ${OTEL_EXPORTER_ENDPOINT:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: erp-agent-copilot:latest
+    command: ["celery", "-A", "apps.worker.celery_app", "worker", "--loglevel=info"]
+    environment: *app_env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  erp_simulator:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: erp-agent-copilot:latest
+    command: ["uvicorn", "apps.erp_simulator.simulator:create_simulator_app", "--factory", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      APP_NAME: erp-agent-copilot
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Settings() requires DATABASE_URL even though the simulator is stateless.
+      DATABASE_URL: postgresql://copilot:copilot_dev@postgres:5432/erp_copilot
+      # Empty disables the inbound token gate (open test double); set a secret
+      # to fail-close every non-/health route (see session 33).
+      SIMULATOR_SHARED_SECRET: ${SIMULATOR_SHARED_SECRET:-}
+      OTEL_EXPORTER_ENDPOINT: ${OTEL_EXPORTER_ENDPOINT:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mcp_gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: erp-agent-copilot:latest
+    command: ["uvicorn", "apps.mcp_gateway.gateway:create_gateway_app", "--factory", "--host", "0.0.0.0", "--port", "8002"]
+    environment:
+      APP_NAME: erp-agent-copilot
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql://copilot:copilot_dev@postgres:5432/erp_copilot
+      REDIS_URL: redis://redis:6379/0
+      # Egress guard is fail-closed: empty => no outbound MCP connections.
+      # Set per topology, e.g. trusted_internal_hosts for an http erp_simulator.
+      MCP_EGRESS_ALLOWED_HOSTS: ${MCP_EGRESS_ALLOWED_HOSTS:-}
+      MCP_EGRESS_TRUSTED_INTERNAL_HOSTS: ${MCP_EGRESS_TRUSTED_INTERNAL_HOSTS:-}
+      OTEL_EXPORTER_ENDPOINT: ${OTEL_EXPORTER_ENDPOINT:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
 volumes:
   postgres_data:
   redis_data:
