@@ -241,9 +241,10 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
     reranking when a key is configured, deterministic stand-ins otherwise
     (each embedding kind gets its own tenant so vectors never mix).
     Answerable queries pass when at least one relevant document is retrieved
-    in the top 5; refusal queries pass only when no keyword hits exist, so an
-    out-of-domain query that happens to share a vocabulary word with the KB
-    (e.g. "供应商") is honestly scored as a miss.
+    in the top 5; refusal queries pass when the pipeline returns nothing,
+    i.e. the reranker's relevance gate judged every candidate below
+    threshold. With deterministic stand-ins there is no calibrated gate, so
+    refusal cases are honestly scored as misses.
     """
     import sqlalchemy as sa
 
@@ -276,8 +277,6 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
     try:
         tenant_id = _ensure_eval_tenant(session, _eval_tenant_for(provider))
         _ensure_kb_ingested(session, provider, tenant_id)
-
-        from erp_copilot.retrieval.fts import keyword_search
 
         per_case: list[dict] = []
         answerable: list[dict] = []
@@ -316,8 +315,9 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
                 )
             else:
                 total_refusals += 1
-                kw_hits = keyword_search(session, query, tenant_id, top_k=5)
-                passed = not kw_hits
+                # The reranker's min_relevance gate turns "nothing relevant
+                # enough" into an empty result list — that is the refusal.
+                passed = not retrieved
                 if passed:
                     refused += 1
                 per_case.append(

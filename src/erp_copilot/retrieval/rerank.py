@@ -34,6 +34,12 @@ class DashScopeReranker:
     OpenAI-compatible mode).
     """
 
+    # qwen3-rerank scores are calibrated relevance in [0, 1]: 0.5 cleanly
+    # separates the eval suite's answerable queries (top-1 >= 0.641) from
+    # out-of-domain refusals (top-1 <= 0.431). ``search_knowledge`` refuses
+    # when every result lands below this gate.
+    min_relevance: float | None = 0.5
+
     def __init__(
         self,
         api_key: str = "",
@@ -102,6 +108,9 @@ class CrossEncoderReranker:
     Uses *model_name* (e.g. ``BAAI/bge-reranker-v2-m3``) to compute
     joint query-document relevance scores.
     """
+
+    # Raw logits are uncalibrated — no absolute relevance threshold.
+    min_relevance: float | None = None
 
     def __init__(self, model_name: str) -> None:
         from sentence_transformers import CrossEncoder

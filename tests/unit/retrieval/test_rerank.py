@@ -149,3 +149,21 @@ class TestDashScopeRerankerRetry:
             DashScopeReranker(api_key="sk-test").rerank("q", ["doc"])
 
         assert route.call_count == 3
+
+
+class TestMinRelevance:
+    """Only calibrated rerankers expose a relevance gate for refusal decisions."""
+
+    def test_dashscope_reranker_sets_threshold(self) -> None:
+        assert DashScopeReranker(api_key="sk-test").min_relevance == 0.5
+
+    def test_deterministic_reranker_has_no_threshold(self) -> None:
+        from erp_copilot.retrieval.pipeline import DeterministicReranker
+
+        assert DeterministicReranker().min_relevance is None
+
+    def test_cross_encoder_reranker_has_no_threshold(self) -> None:
+        from erp_copilot.retrieval.rerank import CrossEncoderReranker
+
+        # Logit scores are uncalibrated — no meaningful absolute threshold.
+        assert CrossEncoderReranker.min_relevance is None

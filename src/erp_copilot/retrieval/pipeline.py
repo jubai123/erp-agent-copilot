@@ -42,6 +42,9 @@ class DeterministicEmbeddingProvider:
 class DeterministicReranker:
     """Length-based rerank heuristic — offline stand-in for a cross-encoder."""
 
+    # Heuristic scores carry no absolute relevance meaning — never refuse.
+    min_relevance: float | None = None
+
     def rerank(self, query: str, documents: list[str]) -> list[tuple[int, float]]:
         scored = [(i, 1.0 / max(len(d), 1)) for i, d in enumerate(documents)]
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -81,6 +84,10 @@ def search_knowledge(
     Recalls 2× *top_k* candidates from each channel so fusion has headroom,
     then reranks to *top_k* when *reranker* is present. Results carry a
     ``score`` key: the rerank score when reranked, else the RRF score.
+
+    A reranker exposing ``min_relevance`` acts as a refusal gate: results
+    below the threshold are dropped, and an empty list means "no knowledge
+    is relevant enough to answer" rather than "nothing matched".
     """
     if embedding_provider is None:
         raise ValueError("embedding_provider is required for semantic retrieval")
@@ -93,6 +100,9 @@ def search_knowledge(
 
     if reranker is not None:
         ranked = rerank_results(query, fused, reranker, top_k=top_k)
+        threshold = getattr(reranker, "min_relevance", None)
+        if threshold is not None:
+            ranked = [r for r in ranked if r["rerank_score"] >= threshold]
         return [_normalize(r, "rerank_score") for r in ranked]
     return [_normalize(r, "rrf_score") for r in fused[:top_k]]
 

@@ -36,6 +36,17 @@ class _FakeReranker:
         return [(i, 1.0 / (i + 1)) for i in range(len(documents))]
 
 
+class _ThresholdReranker:
+    """Reranker with a relevance gate that assigns fixed per-index scores."""
+
+    def __init__(self, min_relevance: float, scores: list[float]) -> None:
+        self.min_relevance = min_relevance
+        self._scores = scores
+
+    def rerank(self, query: str, documents: list[str]) -> list[tuple[int, float]]:
+        return [(i, self._scores[i]) for i in range(min(len(self._scores), len(documents)))]
+
+
 def _vec_results() -> list[dict]:
     return [
         {
@@ -187,3 +198,49 @@ class TestSearchKnowledge:
     def test_requires_embedding_provider(self, mock_db_boundary: None) -> None:
         with pytest.raises(ValueError, match="embedding_provider"):
             search_knowledge(object(), "如何创建订单", "tenant-1", top_k=5)
+
+
+class TestRelevanceGate:
+    """A reranker exposing min_relevance turns low scores into a refusal."""
+
+    def test_filters_results_below_threshold(self, mock_db_boundary: None) -> None:
+        # Fused order is [c2, c1, c3]; c2 scores above the gate, the rest below.
+        reranker = _ThresholdReranker(min_relevance=0.5, scores=[0.9, 0.4, 0.3])
+
+        results = search_knowledge(
+            object(),
+            "如何创建订单",
+            "tenant-1",
+            top_k=5,
+            embedding_provider=_FakeProvider(),
+            reranker=reranker,
+        )
+
+        assert [r["chunk_id"] for r in results] == ["c2"]
+        assert results[0]["score"] == 0.9
+
+    def test_all_below_threshold_returns_empty(self, mock_db_boundary: None) -> None:
+        reranker = _ThresholdReranker(min_relevance=0.5, scores=[0.4, 0.3, 0.2])
+
+        results = search_knowledge(
+            object(),
+            "汇率是多少",
+            "tenant-1",
+            top_k=5,
+            embedding_provider=_FakeProvider(),
+            reranker=reranker,
+        )
+
+        assert results == []
+
+    def test_reranker_without_threshold_is_unfiltered(self, mock_db_boundary: None) -> None:
+        results = search_knowledge(
+            object(),
+            "如何创建订单",
+            "tenant-1",
+            top_k=5,
+            embedding_provider=_FakeProvider(),
+            reranker=_FakeReranker(),
+        )
+
+        assert len(results) == 3
