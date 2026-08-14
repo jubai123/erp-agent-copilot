@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
+import httpx
+import pytest
+import respx
+
 from erp_copilot.retrieval.rerank import (
+    DashScopeReranker,
     Reranker,
     rerank_results,
 )
+
+RERANK_URL = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+
+
+def _ok_response(index: int = 0, score: float = 0.9) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={"output": {"results": [{"index": index, "relevance_score": score}]}},
+    )
 
 
 class _DummyReranker:
@@ -81,3 +95,57 @@ class TestRerankResults:
     def test_conforms_to_protocol(self) -> None:
         reranker = _DummyReranker()
         assert isinstance(reranker, Reranker)
+
+
+class TestDashScopeRerankerRetry:
+    """Transient failures (5xx, 429, transport errors) retry; permanent 4xx do not."""
+
+    @pytest.fixture()
+    def no_sleep(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import time
+
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    @respx.mock
+    def test_retries_transient_5xx_then_succeeds(self, no_sleep: None) -> None:
+        route = respx.post(RERANK_URL)
+        route.side_effect = [httpx.Response(500, json={"error": "boom"}), _ok_response()]
+
+        result = DashScopeReranker(api_key="sk-test").rerank("q", ["doc"])
+
+        assert route.call_count == 2
+        assert result == [(0, 0.9)]
+
+    @respx.mock
+    def test_retries_transport_error_then_succeeds(self, no_sleep: None) -> None:
+        route = respx.post(RERANK_URL)
+        route.side_effect = [httpx.ConnectError("conn reset"), _ok_response()]
+
+        result = DashScopeReranker(api_key="sk-test").rerank("q", ["doc"])
+
+        assert route.call_count == 2
+        assert result == [(0, 0.9)]
+
+    @respx.mock
+    def test_permanent_4xx_raises_without_retry(self, no_sleep: None) -> None:
+        route = respx.post(RERANK_URL)
+        route.side_effect = [httpx.Response(401, json={"error": "invalid key"})]
+
+        with pytest.raises(RuntimeError, match="401"):
+            DashScopeReranker(api_key="sk-bad").rerank("q", ["doc"])
+
+        assert route.call_count == 1
+
+    @respx.mock
+    def test_exhausts_retries_then_raises(self, no_sleep: None) -> None:
+        route = respx.post(RERANK_URL)
+        route.side_effect = [
+            httpx.Response(500, json={"error": "boom"}),
+            httpx.Response(503, json={"error": "still down"}),
+            httpx.Response(500, json={"error": "final"}),
+        ]
+
+        with pytest.raises(RuntimeError, match="500"):
+            DashScopeReranker(api_key="sk-test").rerank("q", ["doc"])
+
+        assert route.call_count == 3

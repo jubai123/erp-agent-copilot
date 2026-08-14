@@ -101,7 +101,31 @@ def _tool_retrieval(cases: list[dict]) -> RunnerOutput:
 
 
 KB_ROOT = Path(__file__).resolve().parent.parent / "datasets" / "knowledge"
-_EVAL_TENANT = "knowledge-rag-eval"
+
+
+def _select_eval_providers(settings):
+    """Production providers when a key is configured, else offline stand-ins.
+
+    Mirrors the runtime wiring in retrieval.pipeline so an eval run measures
+    the same configuration the worker uses.
+    """
+    from erp_copilot.retrieval.pipeline import build_embedding_provider, build_reranker
+
+    return build_embedding_provider(settings), build_reranker(settings)
+
+
+def _eval_tenant_for(provider) -> str:
+    """Separate eval tenants per embedding kind.
+
+    Content-hash dedup in _ensure_kb_ingested never re-embeds existing chunks,
+    so mixing deterministic and real vectors in one tenant would silently
+    corrupt retrieval. Real-embedding runs use a dedicated tenant.
+    """
+    from erp_copilot.retrieval.pipeline import DeterministicEmbeddingProvider
+
+    if isinstance(provider, DeterministicEmbeddingProvider):
+        return "knowledge-rag-eval"
+    return "knowledge-rag-eval-real"
 
 
 def _parse_frontmatter(content: str) -> dict:
@@ -133,13 +157,13 @@ def _load_knowledge_docs() -> list[dict]:
     return docs
 
 
-def _ensure_eval_tenant(session) -> str:
+def _ensure_eval_tenant(session, tenant_name: str) -> str:
     """Create the eval tenant if missing and return its id."""
     from erp_copilot.domain.entities import Tenant
 
-    tenant = session.query(Tenant).filter_by(name=_EVAL_TENANT).first()
+    tenant = session.query(Tenant).filter_by(name=tenant_name).first()
     if tenant is None:
-        tenant = Tenant(name=_EVAL_TENANT, slug=_EVAL_TENANT.replace("-", "_"))
+        tenant = Tenant(name=tenant_name, slug=tenant_name.replace("-", "_"))
         session.add(tenant)
         session.commit()
     return tenant.id
@@ -213,11 +237,13 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
 
     The knowledge base is ingested idempotently from datasets/knowledge and
     every query is answered by the real embed → vector → FTS → RRF → rerank
-    chain with deterministic providers (offline). Answerable queries pass when
-    at least one relevant document is retrieved in the top 5; refusal queries
-    pass only when no keyword hits exist, so an out-of-domain query that
-    happens to share a vocabulary word with the KB (e.g. "供应商") is honestly
-    scored as a miss.
+    chain. Providers follow the production config: real DashScope embedding +
+    reranking when a key is configured, deterministic stand-ins otherwise
+    (each embedding kind gets its own tenant so vectors never mix).
+    Answerable queries pass when at least one relevant document is retrieved
+    in the top 5; refusal queries pass only when no keyword hits exist, so an
+    out-of-domain query that happens to share a vocabulary word with the KB
+    (e.g. "供应商") is honestly scored as a miss.
     """
     import sqlalchemy as sa
 
@@ -227,10 +253,6 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
         get_engine,
         get_session,
         init_db,
-    )
-    from erp_copilot.retrieval.pipeline import (
-        DeterministicEmbeddingProvider,
-        DeterministicReranker,
     )
 
     url = os.getenv(
@@ -249,11 +271,10 @@ def _knowledge_rag(cases: list[dict]) -> RunnerOutput:
         session.close()
     Base.metadata.create_all(get_engine())
 
-    provider = DeterministicEmbeddingProvider()
-    reranker = DeterministicReranker()
+    provider, reranker = _select_eval_providers(settings)
     session = get_session()
     try:
-        tenant_id = _ensure_eval_tenant(session)
+        tenant_id = _ensure_eval_tenant(session, _eval_tenant_for(provider))
         _ensure_kb_ingested(session, provider, tenant_id)
 
         from erp_copilot.retrieval.fts import keyword_search

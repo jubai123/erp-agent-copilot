@@ -6,7 +6,13 @@ cross-encoder model that processes (query, document) pairs jointly.
 
 from __future__ import annotations
 
+import time
 from typing import Protocol, runtime_checkable
+
+import httpx
+
+_MAX_ATTEMPTS = 3
+_RETRY_DELAY_SECONDS = 2.0
 
 
 @runtime_checkable
@@ -33,44 +39,61 @@ class DashScopeReranker:
         api_key: str = "",
         model: str = "qwen3-rerank",
     ) -> None:
-        import httpx
-
         self._url = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
         self._api_key = api_key
         self._model = model
-        self._client = httpx.Client(timeout=httpx.Timeout(30.0))
+        # 90s budget per attempt: reranking ~20 candidate chunks takes
+        # seconds, but the DashScope endpoint occasionally stalls.
+        self._client = httpx.Client(timeout=httpx.Timeout(90.0))
 
     def rerank(self, query: str, documents: list[str]) -> list[tuple[int, float]]:
         if not documents:
             return []
 
-        response = self._client.post(
-            self._url,
-            json={
-                "model": self._model,
-                "input": {
-                    "query": query,
-                    "documents": documents,
-                },
-                "parameters": {
-                    "top_n": len(documents),
-                    "return_documents": False,
-                },
+        payload = {
+            "model": self._model,
+            "input": {
+                "query": query,
+                "documents": documents,
             },
-            headers={"Authorization": f"Bearer {self._api_key}"},
-        )
+            "parameters": {
+                "top_n": len(documents),
+                "return_documents": False,
+            },
+        }
+        headers = {"Authorization": f"Bearer {self._api_key}"}
 
-        if response.status_code != 200:
+        last_status: int | str = "transport"
+        last_detail: object = None
+        for attempt in range(_MAX_ATTEMPTS):
             try:
-                detail = response.json()
-            except Exception:
-                detail = response.text
-            raise RuntimeError(f"Rerank API error {response.status_code}: {detail}")
+                response = self._client.post(self._url, json=payload, headers=headers)
+            except httpx.TransportError as exc:
+                last_detail = str(exc)
+                if attempt < _MAX_ATTEMPTS - 1:
+                    time.sleep(_RETRY_DELAY_SECONDS * (attempt + 1))
+                    continue
+                raise RuntimeError(f"Rerank API transport error: {exc}") from exc
 
-        results = response.json()["output"]["results"]
-        scored = [(r["index"], float(r["relevance_score"])) for r in results]
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return scored
+            if response.status_code == 200:
+                results = response.json()["output"]["results"]
+                scored = [(r["index"], float(r["relevance_score"])) for r in results]
+                scored.sort(key=lambda x: x[1], reverse=True)
+                return scored
+
+            try:
+                last_detail = response.json()
+            except Exception:
+                last_detail = response.text
+            last_status = response.status_code
+
+            retryable = response.status_code == 429 or response.status_code >= 500
+            if retryable and attempt < _MAX_ATTEMPTS - 1:
+                time.sleep(_RETRY_DELAY_SECONDS * (attempt + 1))
+                continue
+            break
+
+        raise RuntimeError(f"Rerank API error {last_status}: {last_detail}")
 
 
 class CrossEncoderReranker:

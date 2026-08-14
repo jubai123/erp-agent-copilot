@@ -27,6 +27,62 @@ EXPECTED_COUNTS = {
     "security": 25,
 }
 
+_LLM_KEYS = ("LLM_API_KEY", "DASHSCOPE_API_KEY", "DEEPSEEK_API_KEY")
+
+
+@pytest.fixture()
+def no_llm_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in _LLM_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+
+class TestEvalProviderSelection:
+    """run_all must measure the production config when keys exist (task A)."""
+
+    def test_offline_falls_back_to_deterministic(self, no_llm_keys: None) -> None:
+        from erp_copilot.infrastructure.config import Settings
+        from erp_copilot.retrieval.pipeline import (
+            DeterministicEmbeddingProvider,
+            DeterministicReranker,
+        )
+        from evals.run_all import _select_eval_providers
+
+        provider, reranker = _select_eval_providers(
+            Settings(database_url="sqlite://", llm_api_key="")
+        )
+        assert isinstance(provider, DeterministicEmbeddingProvider)
+        assert isinstance(reranker, DeterministicReranker)
+
+    def test_dashscope_key_selects_real_providers(
+        self, no_llm_keys: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from erp_copilot.infrastructure.config import Settings
+        from erp_copilot.retrieval.embedding import OpenAIEmbeddingProvider
+        from erp_copilot.retrieval.rerank import DashScopeReranker
+        from evals.run_all import _select_eval_providers
+
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-diag")
+        provider, reranker = _select_eval_providers(
+            Settings(database_url="sqlite://", llm_api_key="")
+        )
+        assert isinstance(provider, OpenAIEmbeddingProvider)
+        assert isinstance(reranker, DashScopeReranker)
+
+    def test_tenant_name_separates_embedding_kinds(self, no_llm_keys: None) -> None:
+        from erp_copilot.retrieval.pipeline import (
+            DeterministicEmbeddingProvider,
+            OpenAIEmbeddingProvider,
+        )
+        from evals.run_all import _eval_tenant_for
+
+        assert _eval_tenant_for(DeterministicEmbeddingProvider()) == "knowledge-rag-eval"
+        assert (
+            _eval_tenant_for(
+                OpenAIEmbeddingProvider(base_url="https://example.com/v1", api_key="sk", model="m")
+            )
+            == "knowledge-rag-eval-real"
+        )
+
 
 def _fake_knowledge_rag(cases: list[dict]) -> RunnerOutput:
     """Offline stand-in for the DB-backed retrieval runner."""
