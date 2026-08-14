@@ -7,7 +7,7 @@ Sensitive values use :class:`pydantic.SecretStr` to prevent log leaks.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -159,6 +159,26 @@ class Settings(BaseSettings):
             "Shared secret for ERP Simulator service-to-service auth "
             "(X-Simulator-Token). Empty disables the gate; any HTTP caller of "
             "a directly-exposed simulator must send this secret."
+        ),
+    )
+
+    # -- API authentication ---------------------------------------------------
+
+    auth_mode: Literal["header", "api_key"] = Field(
+        default="api_key",
+        description=(
+            "API authentication mode. 'api_key' (production default) requires a "
+            "valid X-API-Key header and derives the actor identity from the key's "
+            "bound (tenant, user). 'header' trusts the X-Tenant-ID / X-User-ID "
+            "headers directly — development-only, never use it in production."
+        ),
+    )
+    api_key_pepper: str = Field(
+        default="",
+        description=(
+            "Server-side secret keyed into API-key hashes (HMAC-SHA256). Set a "
+            "strong random value in production and keep it stable across restarts, "
+            "or stored keys stop verifying."
         ),
     )
 

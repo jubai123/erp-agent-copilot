@@ -29,6 +29,11 @@ TEST_DATABASE_URL = os.environ.get(
     "postgresql://copilot:copilot_dev@localhost:5432/erp_copilot_test",
 )
 
+# Keep authentication in header mode for the suite (integration tests call the
+# API with X-Tenant-ID/X-User-ID). Production defaults to api_key mode; that
+# path is covered by its own unit tests. setdefault so CI can still override.
+os.environ.setdefault("AUTH_MODE", "header")
+
 
 def _ensure_test_database(url: str) -> str:
     """Create the test database (and pgvector) if missing; return *url*.
