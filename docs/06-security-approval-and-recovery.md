@@ -71,7 +71,10 @@ order:update
 order:cancel
 approval:order
 admin:tool
+admin:apikey
 ```
+
+凭证是敏感度最高的资源——签发/吊销 API key 等于授予/收回"以某用户身份认证"的能力，故与工具目录管理（`admin:tool`）分开，单独用 `admin:apikey` 保护（`POST /v1/api-keys`、`GET /v1/api-keys`、`DELETE /v1/api-keys/{key_id}`）。
 
 授权检查同时考虑：用户Scope、Tool所需Scope、资源租户、环境和审批状态。
 

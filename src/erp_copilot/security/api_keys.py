@@ -71,3 +71,23 @@ def verify_api_key(session: Session, plain_key: str, pepper: str = "") -> ApiKey
     key.last_used_at = datetime.now(UTC)
     session.commit()
     return key
+
+
+def list_api_keys(session: Session, tenant_id: str) -> list[ApiKey]:
+    """Return every API key bound to *tenant_id* (revoked ones included, for audit)."""
+    return session.query(ApiKey).filter_by(tenant_id=tenant_id).order_by(ApiKey.id).all()
+
+
+def revoke_api_key(session: Session, key_id: int, tenant_id: str) -> ApiKey | None:
+    """Revoke the key iff it belongs to *tenant_id*; idempotent, None if unknown.
+
+    Already-revoked keys keep their original ``revoked_at`` so repeated
+    deletions do not churn the audit timestamp.
+    """
+    key = session.query(ApiKey).filter_by(id=key_id, tenant_id=tenant_id).first()
+    if key is None:
+        return None
+    if key.revoked_at is None:
+        key.revoked_at = datetime.now(UTC)
+        session.commit()
+    return key
