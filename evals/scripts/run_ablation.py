@@ -168,10 +168,18 @@ def load_eval_queries() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _test_database_url() -> str:
+    """Ablation runs must only ever touch the dedicated test database."""
+    return os.getenv(
+        "TEST_DATABASE_URL",
+        "postgresql://copilot:copilot_dev@localhost:5432/erp_copilot_test",
+    )
+
+
 def _init_database() -> None:
     """Initialize database connection and create tables."""
     settings = Settings(
-        database_url="postgresql://copilot:copilot_dev@localhost:5432/erp_copilot",
+        database_url=_test_database_url(),
         llm_api_key="sk-test",
     )
     init_db(settings)

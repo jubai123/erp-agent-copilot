@@ -144,6 +144,25 @@ class TestLoadEvalQueries:
 
 
 # ---------------------------------------------------------------------------
+# Database target selection
+# ---------------------------------------------------------------------------
+
+
+class TestTestDatabaseUrl:
+    def test_defaults_to_test_database(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from evals.scripts.run_ablation import _test_database_url
+
+        monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
+        assert _test_database_url().endswith("/erp_copilot_test")
+
+    def test_env_override_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from evals.scripts.run_ablation import _test_database_url
+
+        monkeypatch.setenv("TEST_DATABASE_URL", "postgresql://x:y@host:5432/my_test_db")
+        assert _test_database_url() == "postgresql://x:y@host:5432/my_test_db"
+
+
+# ---------------------------------------------------------------------------
 # Metrics evaluation (unit-tested via _extract_doc_ids + metrics module)
 # ---------------------------------------------------------------------------
 
