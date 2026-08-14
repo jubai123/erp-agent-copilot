@@ -53,6 +53,7 @@ class Tenant(Base):
     knowledge_documents: Mapped[list[KnowledgeDocument]] = relationship(
         "KnowledgeDocument", back_populates="tenant", cascade="all, delete-orphan"
     )
+    api_keys: Mapped[list[ApiKey]] = relationship("ApiKey", back_populates="tenant")
 
 
 class User(Base):
@@ -439,3 +440,30 @@ class DocumentChunk(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     document: Mapped[KnowledgeDocument] = relationship("KnowledgeDocument", back_populates="chunks")
+
+
+class ApiKey(Base):
+    """A long-lived credential binding an actor to a (tenant, user).
+
+    Only the HMAC-SHA256 digest is stored (``key_hash``), so a database leak
+    does not expose usable keys. On authentication the key's (tenant, user)
+    *is* the identity — client headers never override it.
+    """
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    label: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    tenant: Mapped[Tenant] = relationship("Tenant", back_populates="api_keys")
