@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 
 from erp_copilot.retrieval.embedding import (
@@ -171,7 +172,7 @@ class TestOpenAIEmbeddingProvider:
         result = provider.embed([])
         assert result == []
 
-    def test_http_error_propagates(self, respx_mock) -> None:
+    def test_http_error_propagates(self, respx_mock, no_sleep: None) -> None:
         provider = OpenAIEmbeddingProvider(
             base_url="https://test.openai.com/v1",
             api_key="sk-test",
@@ -189,3 +190,72 @@ class TestOpenAIEmbeddingProvider:
         """OpenAIEmbeddingProvider is structural subtype of EmbeddingProvider."""
         provider = OpenAIEmbeddingProvider("http://x", "k", "m")
         assert isinstance(provider, EmbeddingProvider)
+
+
+@pytest.fixture()
+def no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+
+class TestOpenAIEmbeddingProviderRetry:
+    """Transient failures (5xx, 429, transport errors) retry; permanent 4xx do not."""
+
+    def test_retries_transient_5xx_then_succeeds(self, respx_mock, no_sleep: None) -> None:
+        route = respx_mock.post("https://test.openai.com/v1/embeddings")
+        route.side_effect = [
+            httpx.Response(500, json={"error": "boom"}),
+            httpx.Response(200, json={"data": [{"embedding": [0.1], "index": 0}]}),
+        ]
+        provider = OpenAIEmbeddingProvider(
+            base_url="https://test.openai.com/v1", api_key="sk-test", model="test"
+        )
+
+        result = provider.embed(["hello"])
+
+        assert route.call_count == 2
+        assert result == [[0.1]]
+
+    def test_retries_transport_error_then_succeeds(self, respx_mock, no_sleep: None) -> None:
+        route = respx_mock.post("https://test.openai.com/v1/embeddings")
+        route.side_effect = [
+            httpx.ConnectError("conn reset"),
+            httpx.Response(200, json={"data": [{"embedding": [0.2], "index": 0}]}),
+        ]
+        provider = OpenAIEmbeddingProvider(
+            base_url="https://test.openai.com/v1", api_key="sk-test", model="test"
+        )
+
+        result = provider.embed(["hello"])
+
+        assert route.call_count == 2
+        assert result == [[0.2]]
+
+    def test_permanent_4xx_raises_without_retry(self, respx_mock, no_sleep: None) -> None:
+        route = respx_mock.post("https://test.openai.com/v1/embeddings")
+        route.side_effect = [httpx.Response(401, json={"error": "invalid key"})]
+        provider = OpenAIEmbeddingProvider(
+            base_url="https://test.openai.com/v1", api_key="sk-bad", model="test"
+        )
+
+        with pytest.raises(RuntimeError, match="401"):
+            provider.embed(["hello"])
+
+        assert route.call_count == 1
+
+    def test_exhausts_retries_then_raises(self, respx_mock, no_sleep: None) -> None:
+        route = respx_mock.post("https://test.openai.com/v1/embeddings")
+        route.side_effect = [
+            httpx.Response(500, json={"error": "boom"}),
+            httpx.Response(503, json={"error": "still down"}),
+            httpx.Response(500, json={"error": "final"}),
+        ]
+        provider = OpenAIEmbeddingProvider(
+            base_url="https://test.openai.com/v1", api_key="sk-test", model="test"
+        )
+
+        with pytest.raises(RuntimeError, match="500"):
+            provider.embed(["hello"])
+
+        assert route.call_count == 3
