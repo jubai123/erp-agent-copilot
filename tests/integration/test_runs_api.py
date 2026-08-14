@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from fastapi.testclient import TestClient
 
@@ -30,6 +31,10 @@ from erp_copilot.domain.enums import ToolRiskLevel
 from erp_copilot.infrastructure.database import get_session
 from erp_copilot.memory.checkpoint import CheckpointSaver
 
+# A run's terminal statuses (mirrors apps/api/routes/runs.py); used to wait
+# for a dispatched run to settle before asserting its outcome.
+_TERMINAL_RUN_STATUSES = frozenset({"COMPLETED", "FAILED", "CANCELLED"})
+
 
 def _parse_sse(body: str) -> list[dict[str, str]]:
     """Parse a raw SSE body into {id, event, data} frames."""
@@ -48,6 +53,18 @@ def _parse_sse(body: str) -> list[dict[str, str]]:
         if frame:
             frames.append(frame)
     return frames
+
+
+def _run_event_log(run_id: str) -> str:
+    """Return the run's append-only event log for a failing assertion message."""
+    session = get_session()
+    try:
+        rows = (
+            session.query(RunEvent).filter_by(run_id=run_id).order_by(RunEvent.sequence.asc()).all()
+        )
+        return " | ".join(f"{row.event_type}:{row.payload}" for row in rows) or "(no events)"
+    finally:
+        session.close()
 
 
 class TestRunEvents:
@@ -324,14 +341,28 @@ class TestGetRun:
             json={"tenant_id": tenant_id, "title": "My run"},
             headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
         )
+        assert create_resp.status_code == 202, create_resp.text
         run_id = create_resp.json()["run_id"]
+
+        # create_run is 202 Accepted: the run is dispatched asynchronously, so
+        # the GET must observe the settled status. Poll briefly instead of
+        # asserting COMPLETED on the first read (a worker-timing flake), and
+        # include the run's event log when it settles anywhere but COMPLETED so
+        # a regression reports the cause instead of a bare status mismatch.
+        status = create_resp.json()["status"]
+        deadline = time.monotonic() + 10.0
+        while status not in _TERMINAL_RUN_STATUSES and time.monotonic() < deadline:
+            time.sleep(0.05)
+            status = client.get(f"/v1/runs/{run_id}", headers={"X-Tenant-ID": tenant_id}).json()[
+                "status"
+            ]
 
         response = client.get(f"/v1/runs/{run_id}", headers={"X-Tenant-ID": tenant_id})
 
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         data = response.json()
         assert data["run_id"] == run_id
-        assert data["status"] == "COMPLETED"
+        assert data["status"] == "COMPLETED", _run_event_log(run_id)
         assert data["title"] == "My run"
 
     def test_get_nonexistent_run_returns_404(self) -> None:
