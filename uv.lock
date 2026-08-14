@@ -782,7 +782,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "redis" },
-    { name = "sentence-transformers" },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 
@@ -795,6 +794,9 @@ dev = [
     { name = "respx" },
     { name = "ruff" },
     { name = "testcontainers" },
+]
+rerank = [
+    { name = "sentence-transformers" },
 ]
 
 [package.dev-dependencies]
@@ -832,11 +834,11 @@ requires-dist = [
     { name = "redis", specifier = ">=5.2" },
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.22" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
-    { name = "sentence-transformers", specifier = ">=3.0" },
+    { name = "sentence-transformers", marker = "extra == 'rerank'", specifier = ">=3.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "testcontainers", marker = "extra == 'dev'", specifier = ">=4.8" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["rerank", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "locust", specifier = ">=2.46.3" }]

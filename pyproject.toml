@@ -25,12 +25,17 @@ dependencies = [
     "httpx>=0.28",
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
-    "sentence-transformers>=3.0",
     "jieba>=0.42",
     "prometheus-client>=0.26.0",
 ]
 
 [project.optional-dependencies]
+# Local cross-encoder reranking (torch + CUDA, ~2.3GB) — opt-in because
+# build_reranker() only wires the API-backed DashScopeReranker and the
+# deterministic heuristic; no default path constructs CrossEncoderReranker.
+rerank = [
+    "sentence-transformers>=3.0",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
