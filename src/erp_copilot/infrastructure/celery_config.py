@@ -9,6 +9,10 @@ def build_celery_config(settings: Settings) -> dict:
     """Return a Celery configuration dict from application settings."""
     return {
         "broker_url": settings.redis_url,
+        # Auto-register task modules at worker startup. Without this,
+        # `celery -A apps.worker.celery_app worker` starts with an empty task
+        # registry and execute_run.delay() fails with KeyError in the consumer.
+        "imports": ["apps.worker.tasks"],
         "result_backend": settings.redis_url,
         "task_serializer": "json",
         "result_serializer": "json",

@@ -22,6 +22,18 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 import pytest  # noqa: E402
 
 import apps.worker.celery_app as worker_celery  # noqa: E402
+from erp_copilot.infrastructure.celery_config import build_celery_config  # noqa: E402
+from erp_copilot.infrastructure.config import Settings  # noqa: E402
+
+
+class TestCeleryConfig:
+    def test_imports_auto_register_worker_tasks(self) -> None:
+        # Without `imports`, `celery -A apps.worker.celery_app worker` starts
+        # with an EMPTY task registry — execute_run.delay() then fails with
+        # KeyError when the worker tries to deserialize the task (observed in
+        # the compose stack). Pinning the module here lets Celery auto-register
+        # every @celery_app.task in apps/worker/tasks.py at startup.
+        assert build_celery_config(Settings())["imports"] == ["apps.worker.tasks"]
 
 
 class TestWorkerObservabilityWiring:
