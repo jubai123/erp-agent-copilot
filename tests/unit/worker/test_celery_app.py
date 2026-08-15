@@ -53,3 +53,14 @@ class TestWorkerObservabilityWiring:
         worker_celery.setup_tracing.assert_called_once_with(
             service_name="erp-agent-copilot", exporter="OTLP"
         )
+
+    def test_worker_init_starts_metrics_server(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # worker_init fires once in the worker controller (parent) before the
+        # pool forks; the metrics HTTP server must come up there so Prometheus
+        # can scrape the worker's aggregated counters. Assert the wiring only —
+        # the actual server is exercised in the docker compose stack.
+        monkeypatch.setattr(worker_celery, "start_worker_metrics_server", Mock())
+
+        worker_celery._start_metrics_server()
+
+        worker_celery.start_worker_metrics_server.assert_called_once_with(port=8003)

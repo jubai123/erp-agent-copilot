@@ -3,13 +3,13 @@
 # Targets use compose service names — every job here lives on the same docker
 # network, so `api:8000` resolves via the built-in DNS.
 #
-# Today only the API process exposes /metrics (apps/api/main.py registers the
-# metrics router). The worker's phase_latency / runs_completed / runs_failed
-# counters are NOT scraped yet — they need a metrics endpoint in the worker
-# process, tracked as a follow-up task. erp_simulator and mcp_gateway return
-# 404 on /metrics (their apps do not register the router) and are deliberately
-# not targeted here: scraping them would report a false "down" for healthy
-# services.
+# Two processes expose /metrics: the API (:8000) and the worker (:8003). The
+# worker's endpoint aggregates its prefork children via prometheus multiprocess
+# (PROMETHEUS_MULTIPROC_DIR in the worker container), so phase_latency /
+# runs_completed / runs_failed are scrapable. erp_simulator and mcp_gateway
+# return 404 on /metrics (their apps do not register the router) and are
+# deliberately not targeted here: scraping them would report a false "down" for
+# healthy services. They stay unscraped until they expose a metrics route.
 
 global:
   scrape_interval: 15s
@@ -19,6 +19,10 @@ scrape_configs:
   - job_name: "erp-api"
     static_configs:
       - targets: ["api:8000"]
+
+  - job_name: "erp-worker"
+    static_configs:
+      - targets: ["worker:8003"]
 
   # Monitor the monitor: confirms Prometheus itself is up and alerting can
   # later key on job health (up{job!="prometheus"} == 0).

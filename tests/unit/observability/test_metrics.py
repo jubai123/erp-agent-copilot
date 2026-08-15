@@ -9,10 +9,18 @@ tests (prometheus_client raises on duplicate registration in one registry).
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
+import prometheus_client
+import pytest
+
 from erp_copilot.observability.metrics import (
     METRICS,
     Metrics,
     create_metrics,
+    create_worker_metrics_registry,
     generate_latest,
     set_worker_queue_length,
 )
@@ -107,3 +115,51 @@ class TestWorkerQueueGauge:
             assert "erp_worker_queue_length 5.0" in generate_latest(METRICS)
         finally:
             set_worker_queue_length(0)
+
+
+class TestWorkerMetricsRegistry:
+    def test_falls_back_to_singleton_without_multiprocess_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
+        monkeypatch.delenv("prometheus_multiproc_dir", raising=False)
+        # Local dev worker (single process, no mmap dir) serves the same
+        # in-process registry the API exposes — values stay correct, not empty.
+        assert create_worker_metrics_registry() is METRICS.registry
+
+    def test_builds_multiprocess_registry_when_env_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(tmp_path))
+        registry = create_worker_metrics_registry()
+        assert registry is not METRICS.registry
+        # A fresh registry exposing only the merged mmap files: the in-process
+        # singleton's platform families are absent because their values live in
+        # the worker children's per-pid files, not here.
+        names = {family.name for family in registry.collect()}
+        assert "erp_runs_completed_total" not in names
+
+    def test_multiprocess_registry_aggregates_other_processes_files(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The worker's counters are advanced by forked children, each writing
+        # to its own pid-named mmap file — but only if PROMETHEUS_MULTIPROC_DIR
+        # was set BEFORE the first metric was constructed (prometheus_client
+        # picks the value class once at import). A real subprocess reproduces
+        # that timing; the in-process MultiProcessCollector must merge its file.
+        script = (
+            "import os\n"
+            f'os.environ["PROMETHEUS_MULTIPROC_DIR"] = r"{tmp_path}"\n'
+            "import prometheus_client\n"
+            "c = prometheus_client.Counter(\n"
+            '    "erp_runs_completed_total", "completed",\n'
+            "    registry=prometheus_client.CollectorRegistry(),\n"
+            ")\n"
+            "c.inc()\n"
+            "c.inc()\n"
+        )
+        subprocess.run([sys.executable, "-c", script], check=True)
+
+        monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(tmp_path))
+        text = prometheus_client.generate_latest(create_worker_metrics_registry()).decode()
+        assert "erp_runs_completed_total 2.0" in text

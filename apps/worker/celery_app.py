@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from celery import Celery
-from celery.signals import worker_process_init
+from celery.signals import worker_init, worker_process_init
 
 from erp_copilot.infrastructure.celery_config import build_celery_config
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.observability.logging import setup_logging
+from erp_copilot.observability.metrics import start_worker_metrics_server
 from erp_copilot.observability.tracing import build_otlp_exporter, setup_tracing
 
 
@@ -38,3 +39,18 @@ def _setup_worker_observability(**kwargs: object) -> None:
         service_name=settings.app_name,
         exporter=build_otlp_exporter(settings.otel_exporter_endpoint),
     )
+
+
+@worker_init.connect
+def _start_metrics_server(**kwargs: object) -> None:
+    """Start the worker's ``/metrics`` scrape endpoint in the parent process.
+
+    ``worker_init`` fires once in the worker controller before the pool forks;
+    the threaded WSGI server aggregates the per-pid mmap files the forked
+    children write (prometheus multiprocess mode — only when
+    ``PROMETHEUS_MULTIPROC_DIR`` is set in the worker's environment). Children
+    inherit the listening socket but never accept on it, so the parent keeps
+    serving. Without the env var it serves the in-process singleton instead.
+    """
+    settings = Settings()  # type: ignore[call-arg]
+    start_worker_metrics_server(port=settings.worker_metrics_port)

@@ -15,9 +15,11 @@ per-process state; with multiple workers, aggregate with ``sum()``.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import prometheus_client
+from prometheus_client.multiprocess import MultiProcessCollector
 
 # Buckets tuned for agent-phase latencies: sub-second LLM calls up to
 # multi-minute tool chains. Adjust as the product's latency profile changes.
@@ -88,3 +90,33 @@ def generate_latest(metrics: Metrics = METRICS) -> str:
 def set_worker_queue_length(length: int) -> None:
     """Record the current worker queue depth (wired by the worker app)."""
     METRICS.worker_queue.set(length)
+
+
+def create_worker_metrics_registry() -> prometheus_client.CollectorRegistry:
+    """Registry for the worker's ``/metrics`` scrape endpoint.
+
+    Celery's prefork pool forks one child per concurrency slot; every child
+    holds a private copy of :data:`METRICS`, so the counters they advance (via
+    :func:`run_persistence.persist_run` and the graph's phase wrapper) live in
+    per-pid mmap files — but only when ``PROMETHEUS_MULTIPROC_DIR`` was set
+    before the first metric was constructed (prometheus_client picks its value
+    class once, at import). :class:`MultiProcessCollector` merges every ``*.db``
+    file into the response. Without the env var — e.g. a solo-pool local dev
+    worker — fall back to the in-process singleton so the endpoint stays
+    correct instead of empty.
+    """
+    if "PROMETHEUS_MULTIPROC_DIR" in os.environ or "prometheus_multiproc_dir" in os.environ:
+        registry = prometheus_client.CollectorRegistry()
+        MultiProcessCollector(registry=registry)
+        return registry
+    return METRICS.registry
+
+
+def start_worker_metrics_server(port: int) -> None:
+    """Serve the worker's aggregated metrics on *port* in a background thread.
+
+    Starts a threaded WSGI server (``start_http_server``) using
+    :func:`create_worker_metrics_registry`, so the worker parent can be scraped
+    by Prometheus without a second uvicorn process.
+    """
+    prometheus_client.start_http_server(port=port, registry=create_worker_metrics_registry())

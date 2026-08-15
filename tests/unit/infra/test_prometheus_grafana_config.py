@@ -26,16 +26,18 @@ def _load_yaml(path: Path) -> object:
 
 
 class TestPrometheusScrapeConfig:
-    def test_scrape_configs_cover_the_metrics_exposing_service(self) -> None:
+    def test_scrape_configs_cover_the_metrics_exposing_services(self) -> None:
         cfg = _load_yaml(_INFRA / "prometheus" / "prometheus.yml")
         targets = {
             target
             for job in cfg["scrape_configs"]
             for target in job["static_configs"][0]["targets"]
         }
-        # Only the API process registers the metrics router today; the worker is
-        # covered in a follow-up task once it gains a metrics endpoint.
+        # The API process exposes the platform counters on :8000; the worker
+        # exposes its aggregated phase_latency / runs_completed / runs_failed on
+        # :8003 via the prometheus multiprocess collector.
         assert "api:8000" in targets
+        assert "worker:8003" in targets
 
     def test_does_not_scrape_services_without_metrics(self) -> None:
         cfg = _load_yaml(_INFRA / "prometheus" / "prometheus.yml")
@@ -45,7 +47,8 @@ class TestPrometheusScrapeConfig:
             for target in job["static_configs"][0]["targets"]
         }
         # erp_simulator and mcp_gateway return 404 on /metrics — scraping them
-        # would make a healthy service report up=0 (a false "down").
+        # would make a healthy service report up=0 (a false "down"). They stay
+        # unscraped until they expose a metrics route of their own.
         assert "mcp_gateway:8002" not in targets
         assert "erp_simulator:8001" not in targets
 

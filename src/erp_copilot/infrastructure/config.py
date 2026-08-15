@@ -133,6 +133,14 @@ class Settings(BaseSettings):
         ge=1,
         description="Number of concurrent Celery worker processes.",
     )
+    worker_metrics_port: int = Field(
+        default=8003,
+        description=(
+            "Port the Celery worker's /metrics scrape endpoint binds to. The "
+            "parent process serves the aggregated counters (prometheus "
+            "multiprocess mode); Prometheus scrapes worker:8003."
+        ),
+    )
 
     # -- MCP Gateway egress (SSRF, docs/06 §6) --------------------------------
 

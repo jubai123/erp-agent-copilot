@@ -73,14 +73,33 @@ services:
       dockerfile: Dockerfile
     image: erp-agent-copilot:latest
     command: ["celery", "-A", "apps.worker.celery_app", "worker", "--loglevel=info"]
-    environment: *app_env
+    environment:
+      # Merge the shared app env, then pin the prometheus multiprocess dir for
+      # THIS service only — the API container must NOT see it, or its own
+      # in-process /metrics would silently switch to the (empty) mmap registry.
+      <<: *app_env
+      PROMETHEUS_MULTIPROC_DIR: /prometheus_metrics
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    ports:
+      - "8003:8003"
+    tmpfs:
+      # In-memory dir where forked children write per-pid metric files; wiped
+      # on restart so values from dead processes never persist. The image runs
+      # as USER app (uid/gid 1000); without an explicit owner, a `docker restart`
+      # re-mounts the tmpfs root-owned and the worker can't create counter files.
+      - /prometheus_metrics:uid=1000,gid=1000,mode=0750
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/metrics')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   erp_simulator:
     build:
