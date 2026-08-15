@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from celery import Celery
 from celery.signals import worker_init, worker_process_init
+from redis import Redis
 
 from erp_copilot.infrastructure.celery_config import build_celery_config
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.observability.logging import setup_logging
-from erp_copilot.observability.metrics import start_worker_metrics_server
+from erp_copilot.observability.metrics import (
+    start_queue_length_reporter,
+    start_worker_metrics_server,
+)
 from erp_copilot.observability.tracing import build_otlp_exporter, setup_tracing
 
 
@@ -54,3 +58,12 @@ def _start_metrics_server(**kwargs: object) -> None:
     """
     settings = Settings()  # type: ignore[call-arg]
     start_worker_metrics_server(port=settings.worker_metrics_port)
+
+    # Wire the queue-depth gauge in the parent process: sample LLEN on every
+    # queue this worker consumes and record it, so /metrics reports the real
+    # backlog instead of a permanent 0. Runs here (not in a forked child) so a
+    # single process owns the value; in multiprocess mode the parent writes its
+    # own mmap file, which the scrape endpoint merges.
+    redis_client = Redis.from_url(settings.redis_url)
+    queue_names = list(celery_app.amqp.queues.keys())
+    start_queue_length_reporter(redis_client, queue_names)

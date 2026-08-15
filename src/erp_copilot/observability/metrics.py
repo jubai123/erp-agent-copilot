@@ -15,11 +15,17 @@ per-process state; with multiple workers, aggregate with ``sum()``.
 
 from __future__ import annotations
 
+import logging
 import os
+import threading
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import prometheus_client
 from prometheus_client.multiprocess import MultiProcessCollector
+from redis import Redis
+
+logger = logging.getLogger(__name__)
 
 # Buckets tuned for agent-phase latencies: sub-second LLM calls up to
 # multi-minute tool chains. Adjust as the product's latency profile changes.
@@ -120,3 +126,68 @@ def start_worker_metrics_server(port: int) -> None:
     by Prometheus without a second uvicorn process.
     """
     prometheus_client.start_http_server(port=port, registry=create_worker_metrics_registry())
+
+
+def sample_queue_length(redis_client: Redis, queue_names: Iterable[str]) -> int:
+    """Sum the pending-message count across *queue_names* in the Redis broker.
+
+    Celery stores each queue as a Redis list, so ``LLEN`` is the depth of tasks
+    waiting to be consumed — the real backlog. This deliberately excludes
+    Celery's ``active``/``reserved`` inspect counters, which describe tasks the
+    workers have already claimed rather than tasks still queued.
+    """
+    total = 0
+    for name in queue_names:
+        # redis-py types llen as int | Awaitable[int] (shared with its async
+        # client); the sync call always returns int, and an absent key is 0.
+        length = redis_client.llen(name)
+        if isinstance(length, int):
+            total += length
+    return total
+
+
+def refresh_queue_length(redis_client: Redis, queue_names: Iterable[str]) -> int:
+    """Sample broker depth and record it on the worker_queue gauge.
+
+    A broker that is down or slow must never take down the reporter thread (or
+    the worker it lives in), so sampling failures degrade to 0 after logging.
+    Returns the value recorded on the gauge.
+    """
+    try:
+        length = sample_queue_length(redis_client, queue_names)
+    except Exception as exc:
+        logger.warning("queue-depth sampling failed, recording 0: %s", exc)
+        length = 0
+    METRICS.worker_queue.set(length)
+    return length
+
+
+def start_queue_length_reporter(
+    redis_client: Redis,
+    queue_names: Iterable[str],
+    interval_s: float = 5.0,
+    stop_event: threading.Event | None = None,
+) -> threading.Thread:
+    """Start a daemon thread that periodically records broker queue depth.
+
+    Runs in the worker parent (from ``worker_init``), not a forked child, so a
+    single process owns the gauge. In multiprocess mode the parent's value is
+    written to its own mmap file and merged into ``/metrics`` by
+    :class:`MultiProcessCollector`; without the env var it serves the in-process
+    singleton instead. A daemon thread needs no explicit shutdown: it dies with
+    the worker process.
+    """
+    event = stop_event or threading.Event()
+
+    def _loop() -> None:
+        while not event.is_set():
+            refresh_queue_length(redis_client, queue_names)
+            event.wait(interval_s)
+
+    thread = threading.Thread(
+        target=_loop,
+        name="queue-length-reporter",
+        daemon=True,
+    )
+    thread.start()
+    return thread

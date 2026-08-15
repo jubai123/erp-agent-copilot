@@ -116,6 +116,28 @@ class TestWorkerQueueGauge:
         finally:
             set_worker_queue_length(0)
 
+    def test_multiprocess_set_is_visible_to_worker_registry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # In the production worker, PROMETHEUS_MULTIPROC_DIR is set before
+        # prometheus_client is imported, so the singleton gauge is an mmap-backed
+        # MmapedValue. set_worker_queue_length then writes the parent's .db file,
+        # which create_worker_metrics_registry()'s MultiProcessCollector merges —
+        # otherwise the queue-depth value would be set in memory but invisible on
+        # /metrics (the gauge's reason for staying 0).
+        script = (
+            "import os\n"
+            f'os.environ["PROMETHEUS_MULTIPROC_DIR"] = r"{tmp_path}"\n'
+            "from erp_copilot.observability.metrics import set_worker_queue_length\n"
+            "set_worker_queue_length(42)\n"
+        )
+        subprocess.run([sys.executable, "-c", script], check=True)
+
+        monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(tmp_path))
+        text = prometheus_client.generate_latest(create_worker_metrics_registry()).decode()
+        assert 'erp_worker_queue_length{pid="' in text
+        assert "42.0" in text
+
 
 class TestWorkerMetricsRegistry:
     def test_falls_back_to_singleton_without_multiprocess_env(
