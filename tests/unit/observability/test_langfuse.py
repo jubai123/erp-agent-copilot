@@ -16,6 +16,7 @@ import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+import erp_copilot.observability.langfuse as langfuse_mod
 import erp_copilot.observability.tracing as tracing_mod
 from erp_copilot.observability.langfuse import estimate_cost, llm_call
 from erp_copilot.observability.logging import trace_context
@@ -30,6 +31,23 @@ def _reset_tracing() -> Iterator[None]:
     tracing_mod._service_name = tracing_mod._DEFAULT_SERVICE
     yield
     tracing_mod._provider = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_langfuse(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Reset the module-level Langfuse client between tests.
+
+    The module caches the configured client; without a reset one test's fake
+    leaks into the next (and a real client could flush to the network). The
+    LANGFUSE_* env vars are scrubbed too so a developer's local keys never
+    construct a real client inside a test.
+    """
+    monkeypatch.setattr(langfuse_mod, "_client", None)
+    monkeypatch.setattr(langfuse_mod, "_client_configured", False)
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_HOST", raising=False)
+    yield
 
 
 def _setup() -> InMemorySpanExporter:
@@ -125,3 +143,67 @@ class TestLlmCall:
         assert records[0].model == "gpt-4o"
         assert records[0].input_tokens == 5
         assert records[0].output_tokens == 7
+
+
+class _FakeGeneration:
+    def __init__(self) -> None:
+        self.updates: list[dict[str, object]] = []
+        self.ended = False
+
+    def update(self, **kwargs: object) -> None:
+        self.updates.append(kwargs)
+
+    def end(self) -> None:
+        self.ended = True
+
+
+class _FakeLangfuseClient:
+    def __init__(self) -> None:
+        self.starts: list[dict[str, object]] = []
+        self.gen = _FakeGeneration()
+
+    def start_observation(self, **kwargs: object) -> _FakeGeneration:
+        self.starts.append(kwargs)
+        return self.gen
+
+
+class TestLangfuseSdkIntegration:
+    def test_no_keys_installs_null_client(self) -> None:
+        client = langfuse_mod.configure_langfuse()
+        assert client is None
+        assert langfuse_mod._client is None
+
+    def test_configured_client_records_generation(self) -> None:
+        _setup()
+        fake = _FakeLangfuseClient()
+        langfuse_mod._client = fake
+        langfuse_mod._client_configured = True
+        with llm_call(model="gpt-4o", prompt="hello") as call:
+            call.completion = "world"
+            call.input_tokens = 100
+            call.output_tokens = 50
+        assert fake.starts == [
+            {
+                "name": "llm.gpt-4o",
+                "as_type": "generation",
+                "model": "gpt-4o",
+                "input": "hello",
+            }
+        ]
+        assert fake.gen.updates == [
+            {"output": "world", "usage_details": {"input": 100, "output": 50}}
+        ]
+        assert fake.gen.ended is True
+
+    def test_exception_marks_generation_error(self) -> None:
+        _setup()
+        fake = _FakeLangfuseClient()
+        langfuse_mod._client = fake
+        langfuse_mod._client_configured = True
+        with (
+            pytest.raises(RuntimeError, match="llm failed"),
+            llm_call(model="gpt-4o", prompt="boom"),
+        ):
+            raise RuntimeError("llm failed")
+        assert fake.gen.updates == [{"level": "ERROR", "status_message": "llm failed"}]
+        assert fake.gen.ended is True

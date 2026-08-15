@@ -1,7 +1,12 @@
 """Observability: structured logging, tracing, and LLM telemetry."""
 
 from erp_copilot.observability.http import TraceContextMiddleware
-from erp_copilot.observability.langfuse import LlmCall, estimate_cost, llm_call
+from erp_copilot.observability.langfuse import (
+    LlmCall,
+    configure_langfuse,
+    estimate_cost,
+    llm_call,
+)
 from erp_copilot.observability.logging import (
     JsonFormatter,
     TraceContext,
@@ -25,6 +30,7 @@ __all__ = [
     "TraceContext",
     "TraceContextMiddleware",
     "build_otlp_exporter",
+    "configure_langfuse",
     "estimate_cost",
     "extract_trace_context",
     "get_trace_context",
