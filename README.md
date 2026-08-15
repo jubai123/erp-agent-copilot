@@ -27,7 +27,7 @@ FastAPI + Pydantic v2 · LangGraph 强类型状态机 · Celery + Redis · Postg
 ### 1. 基础设施（Postgres + Redis）
 
 ```bash
-docker compose -f infra/docker-compose.yml up -d
+docker compose --env-file .env -f infra/docker-compose.yml up -d
 uv run alembic upgrade head
 ```
 
