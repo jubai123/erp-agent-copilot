@@ -16,7 +16,7 @@ flowchart LR
     API --> GATEWAY
 ```
 
-四个可运行进程 + 两个基础设施服务（`infra/docker-compose.yml` 只编排 Postgres 与 Redis；四个应用用 `uv run` 在宿主机运行）。
+四个可运行进程 + 两个基础设施服务 + 监控栈。`infra/docker-compose.yml` 一键编排全部 8 个服务（Postgres、Redis、四个应用进程、Prometheus、Grafana）；开发迭代也可只起 Postgres+Redis、四个应用用 `uv run` 在宿主机运行。
 
 ## 技术栈
 
@@ -24,14 +24,29 @@ FastAPI + Pydantic v2 · LangGraph 强类型状态机 · Celery + Redis · Postg
 
 ## 一键启动
 
-### 1. 基础设施（Postgres + Redis）
+### 1. 全栈容器化（推荐）
+
+`infra/docker-compose.yml` 一键编排全部 8 个服务：Postgres、Redis、四个应用进程（api / worker / erp_simulator / mcp_gateway）、Prometheus、Grafana。
 
 ```bash
 docker compose --env-file .env -f infra/docker-compose.yml up -d
 uv run alembic upgrade head
 ```
 
-### 2. 四个进程（四个终端）
+端口：API :8000 · Simulator :8001 · MCP Gateway :8002 · Prometheus :9090 · Grafana :3000。Postgres/Redis/Prometheus/Grafana 端口仅绑 127.0.0.1，应用端口 8000~8002 暴露本机网卡（生产前置于防火墙后）。
+
+> Grafana 需 `GRAFANA_ADMIN_PASSWORD`（已在根 `.env`；未设置则 compose 启动失败）。
+
+### 2. 仅基础设施 + 宿主机运行应用（开发迭代）
+
+两种模式互斥（应用端口 8000~8002 重叠）。需要热重载 / 断点调试时用此模式：
+
+```bash
+docker compose --env-file .env -f infra/docker-compose.yml up -d postgres redis
+uv run alembic upgrade head
+```
+
+四个进程（四个终端）：
 
 ```bash
 # API :8000
@@ -81,7 +96,7 @@ src/erp_copilot/ 核心库（domain, application, agent, retrieval, tools,
 evals/          评测数据集、评分器、harness、脚本与报告
 tests/          单元 / 集成 / 评测 / 性能（含故障注入、Locust）
 docs/           产品、架构、API 契约、威胁模型、评测、基准
-infra/          docker-compose.yml（Postgres + Redis）
+infra/          docker-compose.yml（8 服务全栈编排）+ Prometheus/Grafana 配置
 migrations/     Alembic 版本化迁移
 ```
 
