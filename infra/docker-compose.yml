@@ -6,7 +6,9 @@ services:
       POSTGRES_PASSWORD: copilot_dev
       POSTGRES_DB: erp_copilot
     ports:
-      - "5432:5432"
+      # Loopback-only: nothing outside the host should query the database
+      # directly; containers reach it over the compose network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +20,8 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      # Loopback-only: Redis has no auth in this stack; keep it off the NIC.
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -85,7 +88,9 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8003:8003"
+      # Loopback-only: the worker's /metrics scrape endpoint carries no auth;
+      # Prometheus reaches it over the compose network regardless.
+      - "127.0.0.1:8003:8003"
     tmpfs:
       # In-memory dir where forked children write per-pid metric files; wiped
       # on restart so values from dead processes never persist. The image runs

@@ -61,3 +61,20 @@ class TestObservabilityPortsHostBound:
         # observability UIs to loopback so they are reachable only via an SSH
         # tunnel, never from the public interface.
         assert published_port in _compose()["services"][service]["ports"]
+
+
+class TestInfrastructurePortsHostBound:
+    @pytest.mark.parametrize(
+        ("service", "published_port"),
+        [
+            ("postgres", "127.0.0.1:5432:5432"),
+            ("redis", "127.0.0.1:6379:6379"),
+            ("worker", "127.0.0.1:8003:8003"),
+        ],
+    )
+    def test_infrastructure_ports_bind_to_loopback(self, service: str, published_port: str) -> None:
+        # Nothing outside the host should reach the database, the cache, or the
+        # worker's metrics endpoint directly. Containers still reach them over
+        # the compose network regardless of the host binding, so loopback-only
+        # publishing costs nothing internally.
+        assert published_port in _compose()["services"][service]["ports"]
