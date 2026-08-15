@@ -1455,20 +1455,22 @@
 **交付物**：
 - `src/erp_copilot/observability/langfuse.py`（✅ 已实现）
 - `src/erp_copilot/observability/__init__.py`（✅ 追加导出）
-- `tests/unit/observability/test_langfuse.py`（✅ 已实现，10 用例）
+- `tests/unit/observability/test_langfuse.py`（✅ 已实现，13 用例）
 
 **验收标准**：
 - ✅ 每次 LLM 调用记录输入/输出 Token 数（`call.input_tokens` / `output_tokens` 填充后写入 Span 属性与 `LLM_CALL` 日志，`total_tokens` 由两者求和）
 - ✅ 每次调用记录延迟（`time.perf_counter()` 起止，`latency_ms` 毫秒级；异常路径同样记录）
 - ✅ 可按 Run 查看 LLM 调用链（`llm_call()` 内开 `llm.{model}` Span，`span()` 自动携带 6.1 的 run_id，一次 Run 内多次 LLM 调用共享 run_id，按 Run 过滤即得调用链）
 
-**落地细节**：项目规则禁止未批准依赖，故不引入官方 `langfuse` SDK，而是用 6.1/6.2 自建栈实现 Langfuse 风格 LLM 可观测性：`llm_call(model, prompt, system_prompt)` 是 `@contextmanager`，内部先 `span(f"llm.{model}")` 开 Span，`yield` 后由调用方回填 `completion`/`input_tokens`/`output_tokens`；退出时 `_finalize()` 把 Token、延迟、成本写入 Span 属性，并 `logger.info` 一条 `LLM_CALL` 结构化日志（6.1 JsonFormatter 自动带 run_id）。异常路径在 `except` 里补 `error` 属性、Span 标记 ERROR 后重抛（`_finalize` 在 `with span` 块内执行，保证异常时属性在 Span 关闭前落盘）。成本由 `estimate_cost()` 纯函数查 `_PRICING_USD_PER_1K` 价格表（gpt-4o / gpt-4o-mini / deepseek-chat，标注"示意价格"），未知模型或缺少 Token 返回 None、Span 省略成本属性。模块 docstring 明确：未来批准 SDK 后替换 `llm_call` 函数体即为干净换点。
+**落地细节**：`llm_call(model, prompt, system_prompt)` 是 `@contextmanager`，内部先 `span(f"llm.{model}")` 开 Span，`yield` 后由调用方回填 `completion`/`input_tokens`/`output_tokens`；退出时 `_finalize()` 把 Token、延迟、成本写入 Span 属性，并 `logger.info` 一条 `LLM_CALL` 结构化日志（6.1 JsonFormatter 自动带 run_id）。异常路径在 `except` 里补 `error` 属性、Span 标记 ERROR 后重抛（`_finalize` 在 `with span` 块内执行，保证异常时属性在 Span 关闭前落盘）。成本由 `estimate_cost()` 纯函数查 `_PRICING_USD_PER_1K` 价格表（gpt-4o / gpt-4o-mini / deepseek-chat，标注"示意价格"），未知模型或缺少 Token 返回 None、Span 省略成本属性。
+
+> **2026-08-15 决策修订**：官方 `langfuse` SDK（v4）已获批接入，替换最初的"自建 Langfuse 风格栈"方案（当时因"未批准依赖"规则暂不引入）。`configure_langfuse()` 读 `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_HOST` 建 client（缺任一 key 缓存 None，进程内只配置一次）；`llm_call` 额外记一条 `generation` observation——用 SDK 非 contextmanager 的 `start_observation()` + 手动 `update()`/`end()`，与自建 `span()` **解耦**避免 OTel context 嵌套。可观测性保持 **fail-open**：无密钥降级不采集，`start_observation`/`update`/`end` 任一步异常只记 warning、绝不阻断 LLM 调用；安全层缺配置仍直接拒（fail-closed），两条线不混。新增 3 个 SDK 驱动单测（null-client 降级、generation 记录、异常标记 ERROR）。
 
 **教学要点**：
 | 概念 | 讲解内容 |
 |------|---------|
 | LLM 可观测性为什么特殊 | 不只是调用成功与否：Prompt 大小、Token 数、延迟、成本是评估模型性价比与调优的基础；Langfuse 是这一品类的代表产品 |
-| 为什么不用官方 SDK | 项目规则"不添加未批准依赖"；用自建栈 + 干净换点（docstring 标注替换 `llm_call` 函数体）既守规则又保留可迁移性 |
+| 为什么接入官方 SDK | 2026-08-15 起官方 `langfuse` SDK（v4）获批接入：`generation` observation 直接对齐 Langfuse 平台，`start_observation`/`update`/`end` 与自建 `span()` 解耦；无密钥降级不采集（fail-open），采集异常不阻断 LLM 调用 |
 | contextmanager 承担"测量器" | `llm_call` 只测量包住它的代码块：开始计时、结束算延迟、异常记 error——调用方只需在块内回填 Token，职责清晰 |
 | 成本估算 | `estimate_cost` 纯函数查价格表（$/1K tokens × 输入/输出分别计价）；价格表标注"示意"，需按供应商最新价维护 |
 | 与 span/log 的关系 | 一次 LLM 调用 = 一个 `llm.{model}` Span（run_id 可过滤调用链）+ 一条 `LLM_CALL` JSON 日志，两路都服务于"按 Run 复现一次对话" |

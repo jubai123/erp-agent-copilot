@@ -40,7 +40,7 @@ flowchart LR
 | 向量检索 | pgvector + PostgreSQL FTS | 混合检索，本地部署简单 |
 | 工具协议 | MCP Python SDK | Agent 标准工具协议 |
 | 重排序 | Cross-Encoder / Qwen Rerank（可插拔，含 Dummy 回退） | 两阶段检索 |
-| 可观测性 | OpenTelemetry + Prometheus + 自研 Langfuse 兼容采集 | Trace / 指标 / LLM 调用 |
+| 可观测性 | OpenTelemetry + Prometheus + Langfuse SDK | Trace / 指标 / LLM 调用 |
 | 测试 | pytest + TestClient + respx | 单元 / 集成 / e2e / 评测 / 性能 |
 | 工程质量 | uv、ruff、mypy、pre-commit | 可复现环境与规范 |
 
@@ -112,7 +112,7 @@ Worker execute_run:
 - OpenTelemetry：`tracing.py` 提供 `node_span()` 装饰器、W3C tracecontext 传播。
 - Prometheus：`metrics.py` 暴露 `runs_created/completed/failed`、`phase_latency` 直方图、`worker_queue` 仪表，经 `/metrics` 输出。
 - 结构化日志：`logging.py` JSON 格式化，TraceContext（run_id/step_id/request_id）经 contextvars 贯穿。
-- LLM 调用：`langfuse.py` 采集模型、token、耗时与估算成本（自研实现，未引入外部 SDK）。
+- LLM 调用：`langfuse.py` 采集模型、token、耗时与估算成本，经**官方 Langfuse SDK** 上报 `generation` observation；未配置 `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` 时自动降级为不采集（fail-open），采集失败不阻断 LLM 调用。
 
 ## 10. 部署与数据边界
 

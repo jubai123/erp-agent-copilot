@@ -90,7 +90,7 @@ uv run python evals/scripts/run_security_eval.py --report report.json
 | 结构化日志 | `logging.py` | JSON 格式化，TraceContext（run_id/step_id/request_id）经 contextvars 贯穿 |
 | 分布式追踪 | `tracing.py` | `node_span()` 装饰器、W3C tracecontext 传播 |
 | 指标 | `metrics.py` | `runs_created/completed/failed`、`phase_latency` 直方图、`worker_queue`，经 `/metrics` 输出 Prometheus 文本格式 |
-| LLM 调用采集 | `langfuse.py` | 采集模型、token、耗时与估算成本（自研实现，未引入外部 SDK） |
+| LLM 调用采集 | `langfuse.py` | 采集模型、token、耗时与估算成本，经官方 Langfuse SDK 上报 generation observation（未配置 LANGFUSE_* 时降级不采集，fail-open） |
 
 ## 6. 评测与可观测的关系
 
