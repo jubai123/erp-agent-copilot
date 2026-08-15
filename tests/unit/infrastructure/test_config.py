@@ -97,6 +97,47 @@ class TestSecretStr:
         assert secret == "sk-secret-key"
 
 
+class TestApiKeyPepperFailClosed:
+    """api_key mode must never boot with an empty pepper (fail-closed)."""
+
+    def test_api_key_mode_requires_pepper(self) -> None:
+        # Empty pepper would HMAC key hashes with an empty secret — refuse to
+        # boot so a misconfigured production never runs in a weakened state.
+        with pytest.raises(ValidationError):
+            Settings(
+                database_url="postgresql://localhost/test",
+                auth_mode="api_key",
+                api_key_pepper="",
+            )
+
+    def test_api_key_mode_accepts_pepper(self) -> None:
+        settings = Settings(
+            database_url="postgresql://localhost/test",
+            auth_mode="api_key",
+            api_key_pepper="s3cr3t-pepper",
+        )
+        assert settings.api_key_pepper == "s3cr3t-pepper"
+
+    def test_api_key_mode_rejects_whitespace_only_pepper(self) -> None:
+        # A whitespace-only pepper is effectively empty (HMAC keyed with "   ").
+        with pytest.raises(ValidationError):
+            Settings(
+                database_url="postgresql://localhost/test",
+                auth_mode="api_key",
+                api_key_pepper="   ",
+            )
+
+    def test_header_mode_allows_empty_pepper(self) -> None:
+        # Development header mode trusts headers directly and hashes no keys,
+        # so no pepper is needed there.
+        settings = Settings(
+            database_url="postgresql://localhost/test",
+            auth_mode="header",
+            api_key_pepper="",
+        )
+        assert settings.auth_mode == "header"
+
+
 class TestEnvLoading:
     """Settings should load from environment variables."""
 

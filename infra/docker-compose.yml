@@ -39,9 +39,12 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: postgresql://copilot:copilot_dev@postgres:5432/erp_copilot
       REDIS_URL: redis://redis:6379/0
-      # header = development convenience (no X-API-Key required). Production
-      # MUST set AUTH_MODE=api_key + API_KEY_PEPPER (see .env.example).
-      AUTH_MODE: ${AUTH_MODE:-header}
+      # api_key = production default (fail-closed: every request needs a valid
+      # X-API-Key and identity derives from the key). header trusts
+      # X-Tenant-ID/X-User-ID and is dev-only — opt in explicitly with
+      # AUTH_MODE=header. api_key mode also requires a non-empty
+      # API_KEY_PEPPER (config.py fails fast if it's missing).
+      AUTH_MODE: ${AUTH_MODE:-api_key}
       API_KEY_PEPPER: ${API_KEY_PEPPER:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
@@ -161,7 +164,8 @@ services:
   prometheus:
     image: prom/prometheus:v2.53.0
     ports:
-      - "9090:9090"
+      # Loopback-only: reach the UI via SSH tunnel, never from the public NIC.
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     depends_on:
@@ -177,11 +181,13 @@ services:
   grafana:
     image: grafana/grafana:11.1.0
     ports:
-      - "3000:3000"
+      # Loopback-only: reach the UI via SSH tunnel, never from the public NIC.
+      - "127.0.0.1:3000:3000"
     environment:
-      # Dev convenience; production MUST set both via the environment.
+      # Fail closed: no default password. `:?` aborts `docker compose up` with
+      # a clear message unless GRAFANA_ADMIN_PASSWORD is set in the environment.
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       # provisioning/ is scanned at boot; dashboards/ is polled for file changes.

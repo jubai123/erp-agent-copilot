@@ -97,6 +97,18 @@ class Settings(BaseSettings):
         description="Embedding model name for semantic retrieval.",
     )
 
+    @model_validator(mode="after")
+    def _require_pepper_in_api_key_mode(self) -> Settings:
+        """Fail fast when api_key mode would hash key material with an empty pepper."""
+        if self.auth_mode == "api_key" and not self.api_key_pepper.strip():
+            raise ValueError(
+                "AUTH_MODE=api_key requires API_KEY_PEPPER (the HMAC-SHA256 "
+                "secret keyed into API-key hashes). Refusing to boot with an "
+                "empty pepper — set a strong random value and keep it stable "
+                "across restarts."
+            )
+        return self
+
     @model_validator(mode="before")
     @classmethod
     def _discover_llm_key(cls, data: Any) -> Any:
