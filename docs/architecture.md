@@ -13,7 +13,7 @@
 | MCP Gateway | `apps/mcp_gateway` | 持久 MCP 连接与服务器清单 | `uvicorn`，:8002 |
 | ERP Simulator | `apps/erp_simulator` | 确定性产品/库存/供应商/订单 + 场景切换 | `uvicorn`，:8001 |
 
-基础设施：PostgreSQL（pgvector/pgvector:pg17，:5432）、Redis（redis:7-alpine，:6379）。`infra/docker-compose.yml` 只编排 Postgres 与 Redis；四个应用进程用 `uv run` 在宿主机运行。
+基础设施：PostgreSQL（pgvector/pgvector:pg17，:5432）、Redis（redis:7-alpine，:6379）。`infra/docker-compose.yml` 一键编排全部 8 个服务（Postgres、Redis、四个应用进程、Prometheus、Grafana）；开发迭代也可只起 Postgres+Redis、四个应用用 `uv run` 在宿主机运行。
 
 ## 2. 架构图
 
@@ -116,6 +116,6 @@ Worker execute_run:
 
 ## 10. 部署与数据边界
 
-- `docker compose -f infra/docker-compose.yml up -d` 启动 Postgres + Redis；Alembic 迁移位于 `migrations/`。
+- `docker compose --env-file .env -f infra/docker-compose.yml up -d` 一键启动全部服务（Postgres、Redis、四个应用进程、Prometheus、Grafana；Grafana 需 `GRAFANA_ADMIN_PASSWORD`）；Alembic 迁移位于 `migrations/`，启动后执行 `uv run alembic upgrade head`。
 - 知识库保存业务规则/API 说明/流程；ERP Simulator 提供当前业务状态；PostgreSQL 保存 Run/Step/审批/事件/审计/评测；大型 Tool 结果存 Artifact。
 - 任何真实密钥、个人敏感信息和生产数据不进入仓库或评测集。
