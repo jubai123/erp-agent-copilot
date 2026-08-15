@@ -1,0 +1,14 @@
+# Grafana file-based dashboard provisioning. The path must match the volume
+# mount in docker-compose.yml (./grafana/dashboards -> /var/lib/grafana/dashboards).
+apiVersion: 1
+
+providers:
+  - name: "ERP Copilot"
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

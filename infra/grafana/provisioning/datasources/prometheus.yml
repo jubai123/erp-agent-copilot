@@ -1,0 +1,11 @@
+# Grafana data source provisioning — wired automatically on first boot.
+# The URL is the compose service name, resolvable inside the docker network.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus  # pinned so dashboards can reference it by uid
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
