@@ -35,9 +35,14 @@ _LLM_KEY_ENV_VARS: list[tuple[str, str, str, str]] = [
 class Settings(BaseSettings):
     """Application-wide settings with fail-fast validation on startup."""
 
+    # extra="ignore" (not the BaseSettings default of "forbid"): the root .env
+    # is shared with docker-compose interpolation (e.g. GRAFANA_ADMIN_PASSWORD,
+    # consumed by the grafana container, never by the app). Forbidding extras
+    # would break `cp .env.example .env` + local boot. Unknown keys are skipped.
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     # -- Application ----------------------------------------------------------

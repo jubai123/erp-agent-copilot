@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import SecretStr, ValidationError
 
@@ -51,6 +53,31 @@ class TestSettingsDefaults:
     def test_celery_concurrency_has_default(self) -> None:
         settings = Settings(database_url="postgresql://localhost/test", llm_api_key="sk-test")
         assert settings.celery_concurrency == 4
+
+
+class TestSharedEnvTolerance:
+    """The root .env is shared with docker-compose interpolation (e.g.
+    GRAFANA_ADMIN_PASSWORD, which the app never consumes). Settings must
+    tolerate compose-only keys instead of failing boot with extra_forbidden."""
+
+    def test_compose_only_env_var_does_not_block_boot(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "DATABASE_URL=postgresql://localhost/compose-shared-test\n"
+            "LLM_API_KEY=sk-test\n"
+            "GRAFANA_ADMIN_PASSWORD=supersecret\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.setitem(Settings.model_config, "env_file", str(env_file))
+        settings = Settings()
+        assert (
+            settings.database_url.get_secret_value() == "postgresql://localhost/compose-shared-test"
+        )
+        assert settings.llm_api_key.get_secret_value() == "sk-test"
 
 
 class TestSecretStr:

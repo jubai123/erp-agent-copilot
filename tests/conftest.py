@@ -34,6 +34,14 @@ TEST_DATABASE_URL = os.environ.get(
 # path is covered by its own unit tests. setdefault so CI can still override.
 os.environ.setdefault("AUTH_MODE", "header")
 
+# Pin the pepper the same way: the api-keys integration tests create keys
+# through the API (which hashes with Settings.api_key_pepper) and verify with
+# a hardcoded empty pepper, so the app must see "" during the suite. The root
+# .env now carries a real production pepper; without this pin the suite result
+# would depend on the developer's local .env. Env vars beat .env in
+# pydantic-settings, so this overrides the file value.
+os.environ.setdefault("API_KEY_PEPPER", "")
+
 
 def _ensure_test_database(url: str) -> str:
     """Create the test database (and pgvector) if missing; return *url*.
