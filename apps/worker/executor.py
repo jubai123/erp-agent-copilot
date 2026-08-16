@@ -1,4 +1,4 @@
-"""Deterministic ERP-simulator tool executor for the worker's agent graph.
+"""Tool executors for the worker's agent graph.
 
 Task 4.16: the worker drives the LangGraph, so the tool calls inside
 execute_ready_steps resolve here — the same in-process simulator data the old
@@ -13,16 +13,27 @@ and replays the existing order for the same idempotency_key — the at-most-once
 behaviour the write DAGs rely on. getOrderByOrderId reads one back. Both mirror
 the simulator HTTP routes (apps/erp_simulator/routes/orders.py) so the two
 entry points stay consistent.
+
+Cloud ERP (config-driven, simulator fallback): when ERP_API_BASE_URL is set,
+``resolve_erp_executor`` returns ``build_erp_http_executor`` instead of the
+in-process simulator — same tool contract, same normalized data shapes, but the
+calls go to the real cloud ERP over HTTP using the V5 calling convention
+(X-API-Key header; GET query params / POST JSON body). Cloud responses are
+camelCase and normalized back to the snake_case shapes below.
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
+
+import httpx
 
 from apps.erp_simulator.data.orders import create_order, get_by_id, get_by_idempotency_key
 from apps.erp_simulator.data.products import PRODUCT_BY_ID, PRODUCT_BY_NAME
 from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS
 from apps.erp_simulator.scenarios import get_scenario
+from erp_copilot.infrastructure.config import Settings
 from erp_copilot.tools.tool_result import ToolResult
 
 _TIMEOUT_ERROR = "Request timed out contacting ERP simulator"
@@ -233,3 +244,270 @@ def _order_to_dict(order: Any) -> dict[str, Any]:
         "idempotency_key": order.idempotency_key,
         "created_at": order.created_at,
     }
+
+
+# -- Cloud ERP HTTP executor (V5 calling convention) -------------------------
+
+_ERP_HTTP_TIMEOUT = 15.0  # seconds; the graph's step timeouts still apply on top.
+
+# The cloud API's supplier status enum; V6 uses AVAILABLE / UNAVAILABLE.
+_ERP_STATUS_ACTIVE = "InUse"
+_ERP_STATUS_DISABLED = "DisUse"
+_V6_STATUS_ACTIVE = "AVAILABLE"
+_V6_STATUS_DISABLED = "UNAVAILABLE"
+
+
+def _map_supplier_status(cloud_status: str | None) -> str:
+    return _V6_STATUS_ACTIVE if cloud_status == _ERP_STATUS_ACTIVE else _V6_STATUS_DISABLED
+
+
+def _normalize_product(payload: dict[str, Any]) -> dict[str, Any]:
+    """Cloud Product (camelCase) -> the simulator executor's product shape.
+
+    ``unit`` is not returned by the cloud API and nothing downstream consumes
+    it (the deterministic planner sets no success_condition), so it is omitted.
+    """
+    return {
+        "product_id": payload["productId"],
+        "name": payload["name"],
+        "description": payload["description"],
+        "price": payload["price"],
+        "stock": payload["quantityInStock"],
+    }
+
+
+def _normalize_supplier(payload: dict[str, Any]) -> dict[str, Any]:
+    # The cloud's deliveryAreas is an array of {region, ...} per the OpenAPI
+    # spec but the live API returns plain region strings ("北京", "上海"). V6
+    # uses a plain list of region strings either way, so both item forms are
+    # tolerated. delivery_days / price_per_kg have no cloud field.
+    delivery_areas = payload.get("deliveryAreas") or []
+    regions = [area if isinstance(area, str) else area["region"] for area in delivery_areas]
+    return {
+        "supplier_id": payload["supplierId"],
+        "name": payload["name"],
+        "regions": regions,
+        "status": _map_supplier_status(payload.get("status")),
+        "rating": payload.get("rating", 0.0),
+    }
+
+
+def _normalize_suppliers(payload: Any) -> dict[str, Any]:
+    """Normalize a supplier query result; tolerates a bare list or a single dict.
+
+    The top-level ``supplier_id`` names the first match so the create DAG's
+    argument_sources={"supplier_id": "step:s2"} resolves, mirroring
+    ``_suppliers_data`` for the in-process simulator.
+    """
+    items = payload if isinstance(payload, list) else [payload]
+    suppliers = [_normalize_supplier(item) for item in items if isinstance(item, dict)]
+    data: dict[str, Any] = {"suppliers": suppliers}
+    if suppliers:
+        data["supplier_id"] = suppliers[0]["supplier_id"]
+    return data
+
+
+def _normalize_order(payload: dict[str, Any]) -> dict[str, Any]:
+    """Cloud Order (camelCase) -> the simulator executor's order shape.
+
+    The cloud order carries no product_name and no idempotency_key — both are
+    omitted (nothing downstream reads them off a cloud result).
+    """
+    return {
+        "order_id": payload["id"],
+        "product_id": payload["productId"],
+        "quantity": payload["quantity"],
+        "supplier_id": payload["supplierId"],
+        "region": payload["orderRegion"],
+        "amount": payload["amount"],
+        "status": payload["status"],
+        "created_at": payload["orderTime"],
+    }
+
+
+def _permanent_failure(tool_version_id: str, error_code: str, error_message: str) -> ToolResult:
+    return ToolResult.failure(
+        tool_version_id=tool_version_id,
+        error_code=error_code,
+        error_message=error_message,
+        is_retryable=False,
+    )
+
+
+async def _request_json(
+    client: httpx.AsyncClient,
+    method: str,
+    path: str,
+    *,
+    headers: dict[str, str],
+    params: dict[str, str] | None = None,
+    json: dict[str, Any] | None = None,
+) -> Any:
+    response = await client.request(method, path, params=params, json=json, headers=headers)
+    response.raise_for_status()
+    return response.json()
+
+
+async def _dispatch_http(
+    client: httpx.AsyncClient,
+    tool_name: str,
+    arguments: dict[str, Any],
+    headers: dict[str, str],
+) -> ToolResult:
+    """Route one tool call to the cloud ERP and normalize its response.
+
+    Only the 5 tools the in-process simulator executor maps are supported; the
+    rest fail closed with UNKNOWN_TOOL (same as the simulator path).
+    """
+    if tool_name == "getProductByName":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/products/getProductByName",
+            headers=headers,
+            json={"name": arguments["name"]},
+        )
+        if payload.get("productId") is None:
+            return _permanent_failure(
+                tool_name, "PRODUCT_NOT_FOUND", f"Product '{arguments.get('name')!r}' not found"
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_product(payload))
+
+    if tool_name == "getSupplierByStatus":
+        cloud_status = (
+            _ERP_STATUS_ACTIVE
+            if arguments.get("status", _V6_STATUS_ACTIVE) == _V6_STATUS_ACTIVE
+            else _ERP_STATUS_DISABLED
+        )
+        payload = await _request_json(
+            client,
+            "GET",
+            "/suppliers/getSupplierByStatus",
+            headers=headers,
+            params={"status": cloud_status},
+        )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_suppliers(payload))
+
+    if tool_name == "querySuppliersByDeliveryRegion":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/suppliers/querySuppliersByDeliveryRegion",
+            headers=headers,
+            json={"region": arguments["region"]},
+        )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_suppliers(payload))
+
+    if tool_name == "createOrder":
+        # idempotency_key is deliberately dropped: the cloud createOrder API
+        # has no such field, so at-most-once rests solely on the DB
+        # IdempotencyStore replay — a lost-response retry can duplicate a cloud
+        # order (honest limitation, unlike the in-process simulator).
+        payload = await _request_json(
+            client,
+            "POST",
+            "/orders/createOrder",
+            headers=headers,
+            json={
+                "quantity": arguments["quantity"],
+                "productId": arguments["product_id"],
+                "supplierId": arguments["supplier_id"],
+                "orderRegion": arguments["region"],
+            },
+        )
+        if payload.get("id") is None:
+            return _permanent_failure(
+                tool_name, "ORDER_CREATE_FAILED", "Cloud ERP returned no order"
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_order(payload))
+
+    if tool_name == "getOrderByOrderId":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/orders/getOrderByOrderId",
+            headers=headers,
+            json={"orderId": arguments["order_id"]},
+        )
+        if payload.get("id") is None:
+            return _permanent_failure(
+                tool_name, "ORDER_NOT_FOUND", f"Order '{arguments.get('order_id')!r}' not found"
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_order(payload))
+
+    return ToolResult.failure(
+        tool_version_id=tool_name,
+        error_code="UNKNOWN_TOOL",
+        error_message=f"Unknown tool {tool_name!r}",
+    )
+
+
+def build_erp_http_executor(
+    base_url: str,
+    api_key: str,
+) -> Callable[[str, dict[str, Any]], Awaitable[ToolResult]]:
+    """Build the async cloud-ERP executor for the worker's agent graph.
+
+    Mirrors ``erp_simulator_executor``'s contract: every tool returns a
+    ToolResult (success or failure) — the verify node requires a StepResult per
+    step, so nothing here may raise. The outbound URL is the operator-configured
+    base URL plus a fixed constant path (never prompt-derived), so there is no
+    SSRF surface. Error mapping: network/timeout and HTTP >= 500 are retryable
+    (drive AsyncRetryExecutor); 4xx and malformed responses are permanent.
+    """
+    headers = {"X-API-Key": api_key}
+
+    async def erp_http_executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        try:
+            async with httpx.AsyncClient(base_url=base_url, timeout=_ERP_HTTP_TIMEOUT) as client:
+                return await _dispatch_http(client, tool_name, arguments, headers)
+        except httpx.TimeoutException as exc:
+            return ToolResult.failure(
+                tool_version_id=tool_name,
+                error_code="TIMEOUT",
+                error_message=f"Cloud ERP request timed out: {exc}",
+                is_retryable=True,
+            )
+        except httpx.TransportError as exc:
+            return ToolResult.failure(
+                tool_version_id=tool_name,
+                error_code="UPSTREAM_UNAVAILABLE",
+                error_message=f"Cloud ERP unreachable: {exc}",
+                is_retryable=True,
+            )
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code
+            return ToolResult.failure(
+                tool_version_id=tool_name,
+                error_code=f"UPSTREAM_{code}",
+                error_message=f"Cloud ERP returned HTTP {code}",
+                is_retryable=code >= 500,
+            )
+        except (KeyError, TypeError, ValueError, httpx.InvalidURL) as exc:
+            # Non-JSON body, a response shape that does not match the cloud
+            # contract, or a malformed base_url — normalizing is pointless, so
+            # fail permanently (the executor must never raise).
+            return _permanent_failure(
+                tool_name,
+                "INVALID_RESPONSE",
+                f"Cloud ERP response could not be parsed: {exc}",
+            )
+
+    return erp_http_executor
+
+
+def resolve_erp_executor(
+    settings: Settings,
+) -> Callable[[str, dict[str, Any]], Awaitable[ToolResult]]:
+    """Pick the worker executor from settings: cloud ERP when configured, else simulator.
+
+    Config-driven with simulator fallback: setting ERP_API_BASE_URL activates
+    the HTTP cloud executor; leaving it empty keeps the in-process deterministic
+    simulator, so offline and test environments make no network calls.
+    """
+    if settings.erp_api_base_url:
+        return build_erp_http_executor(
+            settings.erp_api_base_url,
+            settings.erp_api_key.get_secret_value(),
+        )
+    return erp_simulator_executor
