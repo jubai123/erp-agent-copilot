@@ -344,6 +344,15 @@ async def _request_json(
     json: dict[str, Any] | None = None,
 ) -> Any:
     response = await client.request(method, path, params=params, json=json, headers=headers)
+    # A redirect is the cloud's "invalid request / not found" fallback (302 ->
+    # /login, Spring Security style); raise before the HTML page hits json() so
+    # a tool branch can decide, and anything unhandled maps to UPSTREAM_{code}.
+    if response.is_redirect:
+        raise httpx.HTTPStatusError(
+            f"Cloud ERP returned redirect {response.status_code} for {response.request.url}",
+            request=response.request,
+            response=response,
+        )
     response.raise_for_status()
     return response.json()
 
@@ -415,20 +424,38 @@ async def _dispatch_http(
                 "orderRegion": arguments["region"],
             },
         )
-        if payload.get("id") is None:
+        if payload.get("id") in (None, -1):
+            # id == -1 is the cloud's business-failure sentinel: a valid request
+            # that fails business rules returns 200 + {"id": -1, "status": <中文
+            # 原因>} instead of a 4xx. Normalizing it as an order would fabricate
+            # an order that never exists.
+            reason = payload.get("status") or "cloud returned no order"
             return _permanent_failure(
-                tool_name, "ORDER_CREATE_FAILED", "Cloud ERP returned no order"
+                tool_name, "ORDER_CREATE_FAILED", f"Cloud ERP rejected order: {reason}"
             )
         return ToolResult.success(tool_version_id=tool_name, data=_normalize_order(payload))
 
     if tool_name == "getOrderByOrderId":
-        payload = await _request_json(
-            client,
-            "POST",
-            "/orders/getOrderByOrderId",
-            headers=headers,
-            json={"orderId": arguments["order_id"]},
-        )
+        try:
+            payload = await _request_json(
+                client,
+                "POST",
+                "/orders/getOrderByOrderId",
+                headers=headers,
+                json={"orderId": arguments["order_id"]},
+            )
+        except httpx.HTTPStatusError as exc:
+            # The cloud's "not found" fallback for a missing order is a 302 to
+            # /login (Spring Security style), not a 404. Intercept it before the
+            # generic UPSTREAM_{code} mapping so the read-back leg reports
+            # ORDER_NOT_FOUND, matching the in-process simulator.
+            if exc.response.status_code == 302:
+                return _permanent_failure(
+                    tool_name,
+                    "ORDER_NOT_FOUND",
+                    f"Order '{arguments.get('order_id')!r}' not found (cloud returned 302)",
+                )
+            raise
         if payload.get("id") is None:
             return _permanent_failure(
                 tool_name, "ORDER_NOT_FOUND", f"Order '{arguments.get('order_id')!r}' not found"

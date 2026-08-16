@@ -243,6 +243,35 @@ class TestCreateOrder:
         )
         assert b"idempotency_key" not in request.content
 
+    def test_business_failure_id_minus_one_is_permanent_failed(self) -> None:
+        # A structurally valid but business-invalid createOrder returns HTTP 200
+        # with the sentinel {"id": -1} plus the cloud's reason in "status" — not
+        # a 4xx. Treating it as success would fabricate an order that never
+        # exists, so it must surface as ORDER_CREATE_FAILED.
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/orders/createOrder").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={"id": -1, "status": "不存在该ID的产品，所以无法创建订单"},
+                )
+            )
+            result = _call(
+                "createOrder",
+                {
+                    "product_id": 999,
+                    "supplier_id": 3,
+                    "quantity": 20,
+                    "region": "上海",
+                    "idempotency_key": "k-456",
+                },
+            )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "ORDER_CREATE_FAILED"
+        assert result.error.is_retryable is False
+        assert "不存在该ID的产品" in result.error.error_message
+
 
 class TestGetOrderByOrderId:
     def test_posts_order_id_and_normalizes_order(self) -> None:
@@ -275,6 +304,26 @@ class TestGetOrderByOrderId:
         with respx.mock:
             respx.post(f"{_BASE_URL}/orders/getOrderByOrderId").mock(
                 return_value=httpx.Response(200, json={})
+            )
+            result = _call("getOrderByOrderId", {"order_id": 999})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "ORDER_NOT_FOUND"
+        assert result.error.is_retryable is False
+
+    def test_redirect_302_is_permanent_not_found(self) -> None:
+        # The cloud's "resource not found" fallback is a 302 to /login (Spring
+        # Security style), not a 404 — a nonexistent order id produces it. The
+        # redirect body is an HTML login page, so it must be intercepted before
+        # JSON parsing.
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/orders/getOrderByOrderId").mock(
+                return_value=httpx.Response(
+                    302,
+                    headers={"location": "/login"},
+                    text="<html>Redirecting...</html>",
+                )
             )
             result = _call("getOrderByOrderId", {"order_id": 999})
 
