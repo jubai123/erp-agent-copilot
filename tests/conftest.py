@@ -42,6 +42,13 @@ os.environ.setdefault("AUTH_MODE", "header")
 # pydantic-settings, so this overrides the file value.
 os.environ.setdefault("API_KEY_PEPPER", "")
 
+# Same hermeticity pin for the cloud ERP: a real ERP_API_BASE_URL in the
+# developer's local .env would otherwise switch resolve_erp_executor to the
+# HTTP executor and make unit tests hit the live cloud. The suite must always
+# exercise the in-process deterministic simulator unless a test opts in.
+os.environ.setdefault("ERP_API_BASE_URL", "")
+os.environ.setdefault("ERP_API_KEY", "")
+
 
 def _ensure_test_database(url: str) -> str:
     """Create the test database (and pgvector) if missing; return *url*.
