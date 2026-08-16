@@ -24,6 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from erp_copilot.agent.planner import WRITE_TOOLS
 from erp_copilot.agent.state import AgentState, Plan, PlanValidation, StateError
 from erp_copilot.domain.enums import ToolRiskLevel
 
@@ -117,6 +118,17 @@ def _structural_errors(
                 StateError(
                     code="WRITE_NEEDS_FALLBACK",
                     message=f"step {step.step_id} 为写操作但缺少补偿/回退说明",
+                    step_id=step.step_id,
+                )
+            )
+        if step.tool_name in WRITE_TOOLS and step.risk_level == ToolRiskLevel.READ:
+            errors.append(
+                StateError(
+                    code="RISK_DOWNGRADE",
+                    message=(
+                        f"step {step.step_id} 将已知写工具 {step.tool_name} 标记为 READ，"
+                        "写操作必须按 WRITE 走审批闸门"
+                    ),
                     step_id=step.step_id,
                 )
             )

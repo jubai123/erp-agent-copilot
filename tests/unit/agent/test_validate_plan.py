@@ -27,6 +27,10 @@ TOOLS: dict[str, ToolSpec] = {
     "getProductById": ToolSpec(name="getProductById", required_params=["id"]),
     "getOrderByOrderId": ToolSpec(name="getOrderByOrderId", required_params=["order_id"]),
     "updateOrderStatus": ToolSpec(name="updateOrderStatus", required_params=["order_id", "status"]),
+    "createOrder": ToolSpec(
+        name="createOrder",
+        required_params=["product_id", "supplier_id", "quantity", "region"],
+    ),
 }
 
 
@@ -143,6 +147,8 @@ class TestStructuralChecks:
                 _step(
                     step_id="s2",
                     tool_name="updateOrderStatus",
+                    risk_level=ToolRiskLevel.WRITE,
+                    fallback="回退到原状态",
                     depends_on=["s1"],
                     arguments={"order_id": "abc", "status": "CONFIRMED"},
                     argument_sources={
@@ -219,6 +225,83 @@ class TestStructuralChecks:
     def test_read_step_without_fallback_passes(self) -> None:
         result = validate_plan(Plan(steps=[_step()]), TOOLS)
         assert "WRITE_NEEDS_FALLBACK" not in _codes(result)
+
+
+class TestRiskDowngradeGuard:
+    def test_known_write_tool_labeled_read_rejected(self) -> None:
+        # The real-LLM smoke found DeepSeek labeling createOrder as risk=read,
+        # which policy ALLOWed (policy_check: READ + not requires_approval) — the
+        # write executed without an approval gate. Defence layer 2 must reject a
+        # known write tool labeled READ before it ever reaches policy_check.
+        plan = Plan(
+            steps=[
+                _step(
+                    tool_name="updateOrderStatus",
+                    arguments={"order_id": "a", "status": "X"},
+                    argument_sources={},
+                )
+            ]
+        )
+        result = validate_plan(plan, TOOLS)
+        assert result.is_valid is False
+        assert "RISK_DOWNGRADE" in _codes(result)
+
+    def test_create_order_labeled_read_rejected(self) -> None:
+        plan = Plan(
+            steps=[
+                _step(
+                    tool_name="createOrder",
+                    arguments={
+                        "product_id": 10094,
+                        "supplier_id": 2987,
+                        "quantity": 5,
+                        "region": "上海",
+                    },
+                    argument_sources={},
+                )
+            ]
+        )
+        result = validate_plan(plan, TOOLS)
+        assert "RISK_DOWNGRADE" in _codes(result)
+        assert result.is_valid is False
+
+    def test_known_write_tool_labeled_write_passes(self) -> None:
+        plan = Plan(
+            steps=[
+                _step(
+                    tool_name="updateOrderStatus",
+                    risk_level=ToolRiskLevel.WRITE,
+                    arguments={"order_id": "a", "status": "X"},
+                    argument_sources={},
+                    fallback="回退到原状态",
+                )
+            ]
+        )
+        result = validate_plan(plan, TOOLS)
+        assert "RISK_DOWNGRADE" not in _codes(result)
+        assert result.is_valid is True
+
+    def test_dangerous_label_for_write_tool_not_a_downgrade(self) -> None:
+        # ADMIN/DANGEROUS are still gated by approval; only the downgrade to READ
+        # is a bypass. DANGEROUS must not trip the guard.
+        plan = Plan(
+            steps=[
+                _step(
+                    tool_name="updateOrderStatus",
+                    risk_level=ToolRiskLevel.DANGEROUS,
+                    arguments={"order_id": "a", "status": "X"},
+                    argument_sources={},
+                    fallback="回退到原状态",
+                )
+            ]
+        )
+        result = validate_plan(plan, TOOLS)
+        assert "RISK_DOWNGRADE" not in _codes(result)
+        assert result.is_valid is True
+
+    def test_read_tool_labeled_read_untouched(self) -> None:
+        result = validate_plan(Plan(steps=[_step()]), TOOLS)  # getProductById
+        assert "RISK_DOWNGRADE" not in _codes(result)
 
 
 class TestTopologicalChecks:
