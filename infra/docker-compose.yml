@@ -53,6 +53,11 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o}
       CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-4}
+      # Cloud ERP: setting ERP_API_BASE_URL switches the worker's executor to
+      # HTTP calls against the real ERP (V5 convention, X-API-Key header);
+      # leaving it empty keeps the in-process deterministic simulator.
+      ERP_API_BASE_URL: ${ERP_API_BASE_URL:-}
+      ERP_API_KEY: ${ERP_API_KEY:-}
       # Empty by default => setup_tracing falls back to the non-blocking console
       # exporter. Opt in to a remote collector, e.g. a host OTel Collector with
       # OTEL_EXPORTER_ENDPOINT=http://host.docker.internal:4317.
