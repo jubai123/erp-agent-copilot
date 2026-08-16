@@ -39,20 +39,6 @@ if TYPE_CHECKING:
 
 REPORT_DIR = Path(__file__).resolve().parent / "reports"
 
-# A/B prompt variant (eval-scoped until the numbers justify promoting the rules
-# into the production SYSTEM_PROMPT). Targets the two baseline failure classes:
-# createOrder labeled READ in 16/18 create cases, and getSupplierByStatus
-# over-selected alongside querySuppliersByDeliveryRegion in the same 16.
-EVAL_SYSTEM_PROMPT = (
-    SYSTEM_PROMPT
-    + "\n\n固定规则（违反即计划不合法）:\n"
-    + "- createOrder、updateOrderStatus、cancelOrder 是写操作，risk_level 固定为 "
-    "WRITE，严禁标成 READ。\n"
-    + "- 供应商查询二选一：查询给出配送区域时只用 querySuppliersByDeliveryRegion；"
-    "仅询问可用性时用 getSupplierByStatus；不得同时选。\n"
-    + "- 只选完成任务所必需的工具，不要添加多余的查询步骤。"
-)
-
 
 def _failure_detail(case: dict, actual: list[str], validation_errors: list[str]) -> str:
     expected = [step["tool"] for step in case["steps"]]
@@ -235,7 +221,6 @@ def main() -> None:
             llm_complete=llm_complete,
             available_tools=set(WORKER_TOOL_SCHEMAS),
             tool_schemas=WORKER_TOOL_SCHEMAS,
-            system=EVAL_SYSTEM_PROMPT,
         ),
     )
     report = {

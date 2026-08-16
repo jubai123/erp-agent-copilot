@@ -11,9 +11,10 @@ llm_complete so both run deterministically — no LLM, no network.
 from __future__ import annotations
 
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, validate_plan
+from erp_copilot.agent.planner import WRITE_TOOLS
 from erp_copilot.agent.state import Plan, PlanStep, PlanValidation
 from erp_copilot.domain.enums import ToolRiskLevel
-from evals.llm_planner_eval import EVAL_SYSTEM_PROMPT, evaluate_cases, score_plan
+from evals.llm_planner_eval import evaluate_cases, score_plan
 
 TOOLS: dict[str, ToolSpec] = {
     "getProductByName": ToolSpec(name="getProductByName", required_params=["name"]),
@@ -234,10 +235,12 @@ class TestEvaluateCases:
         assert out["metrics"]["multi_step_set_acc"] == 1.0
         assert out["metrics"]["multi_step_count"] == 1
 
-    def test_eval_prompt_carries_fixed_policy_rules(self) -> None:
-        # The A/B prompt variant must actually reach the LLM — the two baseline
-        # failure classes (createOrder labeled READ; supplier two-choice
-        # over-selection) are targeted by explicit rules in EVAL_SYSTEM_PROMPT.
+    def test_prompt_carries_fixed_policy_rules(self) -> None:
+        # The fixed-policy rules (baseline failure classes: createOrder labeled
+        # READ; supplier two-choice over-selection) now live in the production
+        # SYSTEM_PROMPT and must reach the LLM by default. The risk table is
+        # derived from planner.WRITE_TOOLS — the same set the RISK_DOWNGRADE
+        # gate checks — so the prompt and the guard cannot drift apart.
         captured: list[str] = []
 
         def fake_llm(prompt: str) -> str:
@@ -249,10 +252,10 @@ class TestEvaluateCases:
             llm_complete=fake_llm,
             available_tools=set(TOOLS),
             tool_schemas=TOOLS,
-            system=EVAL_SYSTEM_PROMPT,
         )
         prompt = captured[0]
-        assert "createOrder、updateOrderStatus、cancelOrder" in prompt
         assert "严禁标成 READ" in prompt
         assert "供应商查询二选一" in prompt
         assert "getSupplierByStatus" in prompt
+        for tool in WRITE_TOOLS:
+            assert tool in prompt

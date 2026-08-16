@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from erp_copilot.agent.planner import stamp_idempotency_keys
+from erp_copilot.agent.planner import WRITE_TOOLS, stamp_idempotency_keys
 from erp_copilot.agent.state import AgentState, Plan, PlanStep, RetrievedDocument, StateError
 from erp_copilot.retrieval.skill_matcher import match_skills
 from erp_copilot.tools.candidate_filter import filter_candidates
@@ -50,6 +50,22 @@ Plan 必须遵守：
 - 不要输出 idempotency_key：运行时按 run_id 自动生成。
 
 输出为 JSON 对象：{{"title": str, "steps": [PlanStep, ...]}}。不要输出其他文本。"""
+
+# Fixed policy rules appended to the prompt (A/B-validated against planning_50,
+# 2026-08-16: 64% -> 100% set-exact). The risk table derives from
+# planner.WRITE_TOOLS — the same set validate_plan's RISK_DOWNGRADE gate checks
+# — so the LLM is told the policy the deterministic guard enforces. Prompt is
+# advisory (cut mislabeling from 89% to ~5%); the guard stays authoritative.
+SYSTEM_PROMPT = (
+    SYSTEM_PROMPT
+    + "\n\n固定规则（违反即计划不合法）:\n"
+    + "- 以下工具的 risk_level 固定为 WRITE，严禁标成 READ："
+    + "、".join(sorted(WRITE_TOOLS))
+    + "。\n"
+    + "- 供应商查询二选一：查询给出配送区域时只用 querySuppliersByDeliveryRegion；"
+    "仅询问可用性时用 getSupplierByStatus；不得同时选。\n"
+    + "- 只选完成任务所必需的工具，不要添加多余的查询步骤。"
+)
 
 # A state token is uppercase English (CREATED, CONFIRMED, SHIPPED, ...).
 _STATE_TOKEN = re.compile(r"[A-Z][A-Z]+")
