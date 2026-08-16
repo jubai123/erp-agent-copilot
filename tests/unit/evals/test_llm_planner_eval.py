@@ -13,7 +13,7 @@ from __future__ import annotations
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, validate_plan
 from erp_copilot.agent.state import Plan, PlanStep, PlanValidation
 from erp_copilot.domain.enums import ToolRiskLevel
-from evals.llm_planner_eval import evaluate_cases, score_plan
+from evals.llm_planner_eval import EVAL_SYSTEM_PROMPT, evaluate_cases, score_plan
 
 TOOLS: dict[str, ToolSpec] = {
     "getProductByName": ToolSpec(name="getProductByName", required_params=["name"]),
@@ -233,3 +233,26 @@ class TestEvaluateCases:
         assert out["metrics"]["single_step_set_acc"] == 1.0
         assert out["metrics"]["multi_step_set_acc"] == 1.0
         assert out["metrics"]["multi_step_count"] == 1
+
+    def test_eval_prompt_carries_fixed_policy_rules(self) -> None:
+        # The A/B prompt variant must actually reach the LLM — the two baseline
+        # failure classes (createOrder labeled READ; supplier two-choice
+        # over-selection) are targeted by explicit rules in EVAL_SYSTEM_PROMPT.
+        captured: list[str] = []
+
+        def fake_llm(prompt: str) -> str:
+            captured.append(prompt)
+            return '{"steps": []}'
+
+        evaluate_cases(
+            [_case(["getProductByName"], case_id="p1")],
+            llm_complete=fake_llm,
+            available_tools=set(TOOLS),
+            tool_schemas=TOOLS,
+            system=EVAL_SYSTEM_PROMPT,
+        )
+        prompt = captured[0]
+        assert "createOrder、updateOrderStatus、cancelOrder" in prompt
+        assert "严禁标成 READ" in prompt
+        assert "供应商查询二选一" in prompt
+        assert "getSupplierByStatus" in prompt

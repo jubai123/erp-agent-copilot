@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from erp_copilot.agent.nodes.build_plan import build_plan_node
+from erp_copilot.agent.nodes.build_plan import SYSTEM_PROMPT, build_plan_node
 from erp_copilot.agent.nodes.classify_intent import classify_intent_node
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.state import AgentState, Plan, PlanValidation
@@ -38,6 +38,20 @@ if TYPE_CHECKING:
     from erp_copilot.infrastructure.config import Settings
 
 REPORT_DIR = Path(__file__).resolve().parent / "reports"
+
+# A/B prompt variant (eval-scoped until the numbers justify promoting the rules
+# into the production SYSTEM_PROMPT). Targets the two baseline failure classes:
+# createOrder labeled READ in 16/18 create cases, and getSupplierByStatus
+# over-selected alongside querySuppliersByDeliveryRegion in the same 16.
+EVAL_SYSTEM_PROMPT = (
+    SYSTEM_PROMPT
+    + "\n\n固定规则（违反即计划不合法）:\n"
+    + "- createOrder、updateOrderStatus、cancelOrder 是写操作，risk_level 固定为 "
+    "WRITE，严禁标成 READ。\n"
+    + "- 供应商查询二选一：查询给出配送区域时只用 querySuppliersByDeliveryRegion；"
+    "仅询问可用性时用 getSupplierByStatus；不得同时选。\n"
+    + "- 只选完成任务所必需的工具，不要添加多余的查询步骤。"
+)
 
 
 def _failure_detail(case: dict, actual: list[str], validation_errors: list[str]) -> str:
@@ -98,18 +112,21 @@ def evaluate_cases(
     llm_complete: Callable[[str], str],
     available_tools: set[str],
     tool_schemas: dict[str, ToolSpec],
+    system: str = SYSTEM_PROMPT,
 ) -> RunnerOutput:
     """Run the real classify → LLM plan → validate chain and aggregate scores.
 
     Mirrors the app's LLM-planner wiring (build_plan_node + validate_plan with
     injected schemas and candidate-filtered tool set) so the eval measures the
     same configuration the interactive path uses, including all four
-    deterministic guards and the RISK_DOWNGRADE gate.
+    deterministic guards and the RISK_DOWNGRADE gate. ``system`` lets the eval
+    A/B prompt variants against the production SYSTEM_PROMPT.
     """
     plan_node = build_plan_node(
         llm_complete=llm_complete,
         available_tools=available_tools,
         tool_schemas=tool_schemas,
+        system=system,
     )
     validate_node = build_validate_plan_node(tool_schemas=tool_schemas)
 
@@ -171,6 +188,10 @@ def build_real_llm_complete(settings: Settings) -> Callable[[str], str]:
             model=settings.llm_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
+            # DeepSeek JSON mode: fixes the baseline's 2 unparseable outputs
+            # (plan-047/048). The prompt already names JSON, which the mode
+            # requires.
+            response_format={"type": "json_object"},
         )
         return resp.choices[0].message.content or ""
 
@@ -214,6 +235,7 @@ def main() -> None:
             llm_complete=llm_complete,
             available_tools=set(WORKER_TOOL_SCHEMAS),
             tool_schemas=WORKER_TOOL_SCHEMAS,
+            system=EVAL_SYSTEM_PROMPT,
         ),
     )
     report = {
