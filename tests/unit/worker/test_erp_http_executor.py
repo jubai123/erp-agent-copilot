@@ -300,6 +300,48 @@ class TestGetOrderByOrderId:
         assert result.data["region"] == "上海"
         _assert_body(route.calls.last.request, {"orderId": 7})
 
+    def test_nested_order_envelope_is_normalized(self) -> None:
+        # The real cloud wraps the order in {"order": {...}} with a parallel
+        # {"supplier": {...}} object — the flat shape the original unit test
+        # assumed does not exist in the wild. Reading back an existing order
+        # must unwrap the envelope and normalize the inner order.
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/orders/getOrderByOrderId").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "order": {
+                            "id": 120562,
+                            "orderTime": "2026-08-15T16:31:29.518+00:00",
+                            "quantity": 1,
+                            "amount": 5.0,
+                            "status": "已下单",
+                            "supplierId": 2987,
+                            "productId": 10094,
+                            "orderRegion": "上海",
+                        },
+                        "supplier": {
+                            "supplierId": 2987,
+                            "name": "京东222",
+                            "phone": "12345678",
+                            "address": "上海某某地址",
+                            "deliveryAreas": ["上海"],
+                            "rating": 100.0,
+                            "status": "InUse",
+                        },
+                    },
+                )
+            )
+            result = _call("getOrderByOrderId", {"order_id": 120562})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["order_id"] == 120562
+        assert result.data["product_id"] == 10094
+        assert result.data["supplier_id"] == 2987
+        assert result.data["region"] == "上海"
+        assert result.data["status"] == "已下单"
+
     def test_empty_response_is_permanent_not_found(self) -> None:
         with respx.mock:
             respx.post(f"{_BASE_URL}/orders/getOrderByOrderId").mock(

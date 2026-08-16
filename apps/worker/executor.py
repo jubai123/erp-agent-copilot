@@ -456,11 +456,16 @@ async def _dispatch_http(
                     f"Order '{arguments.get('order_id')!r}' not found (cloud returned 302)",
                 )
             raise
-        if payload.get("id") is None:
+        # The cloud wraps the order in {"order": {...}} with a parallel
+        # {"supplier": {...}} object — not the flat order shape createOrder
+        # returns. Unwrap the envelope before checking the id; a bare payload
+        # (empty or flat) is treated as the order itself.
+        order = payload.get("order") if isinstance(payload.get("order"), dict) else payload
+        if order.get("id") is None:
             return _permanent_failure(
                 tool_name, "ORDER_NOT_FOUND", f"Order '{arguments.get('order_id')!r}' not found"
             )
-        return ToolResult.success(tool_version_id=tool_name, data=_normalize_order(payload))
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_order(order))
 
     return ToolResult.failure(
         tool_version_id=tool_name,
