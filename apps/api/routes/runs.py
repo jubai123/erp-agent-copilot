@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from apps.api.schemas.runs import ApproveRunRequest, CreateRunRequest, RunResponse
+from apps.worker.executor import resolve_erp_executor
 from apps.worker.graph_builder import build_worker_graph
 from erp_copilot.agent.nodes.classify_intent import classify_intent
 from erp_copilot.agent.state import AgentState, AgentStatus, ApprovalStatus
@@ -19,6 +20,7 @@ from erp_copilot.application.events import append_run_event
 from erp_copilot.application.run_persistence import make_status_event_sink, persist_run
 from erp_copilot.domain.entities import Run, RunEvent
 from erp_copilot.domain.errors import CopilotError, NotFoundError
+from erp_copilot.infrastructure.config import Settings
 from erp_copilot.infrastructure.database import get_session
 from erp_copilot.memory.checkpoint import CheckpointSaver
 from erp_copilot.observability.metrics import METRICS
@@ -231,7 +233,12 @@ async def approve_run(
         decision = ApprovalStatus.APPROVED if body.decision == "APPROVE" else ApprovalStatus.DENIED
         saver = CheckpointSaver(session, event_sink=make_status_event_sink(session))
         decided, result = await decide_and_resume(
-            build_worker_graph(session, saver, run_id=run_id),
+            build_worker_graph(
+                session,
+                saver,
+                run_id=run_id,
+                executor=resolve_erp_executor(Settings()),
+            ),
             saver,
             session,
             run_id=run_id,

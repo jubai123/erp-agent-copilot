@@ -22,11 +22,13 @@ from celery.utils.log import get_task_logger
 from langgraph.graph.state import CompiledStateGraph
 
 from apps.worker.celery_app import celery_app
+from apps.worker.executor import resolve_erp_executor
 from apps.worker.graph_builder import build_worker_graph
 from erp_copilot.agent.recovery import RunRecovery
 from erp_copilot.agent.state import AgentState
 from erp_copilot.application.run_persistence import make_status_event_sink, persist_run
 from erp_copilot.domain.entities import Run
+from erp_copilot.infrastructure.config import Settings
 from erp_copilot.memory.checkpoint import CheckpointSaver
 from erp_copilot.observability.metrics import METRICS
 
@@ -111,7 +113,12 @@ def execute_run(
         session.commit()
 
         saver = CheckpointSaver(session, event_sink=make_status_event_sink(session))
-        graph = build_worker_graph(session, saver, run_id=run.id)
+        graph = build_worker_graph(
+            session,
+            saver,
+            run_id=run.id,
+            executor=resolve_erp_executor(Settings()),
+        )
 
         # Task 5.8: a run that was mid-flight when the worker (re)started resumes
         # from its latest checkpoint (reconciled for writes) instead of restarting

@@ -152,6 +152,7 @@ def build_worker_graph(
     *,
     retrieve_node: Callable[[AgentState], dict[str, Any]] | None = None,
     run_id: str | None = None,
+    executor: Callable[..., Any] | None = None,
 ) -> CompiledStateGraph:
     """Build the worker graph with real nodes, write scope and idempotent writes.
 
@@ -167,6 +168,11 @@ def build_worker_graph(
     no-op without an explicit flag. *run_id* threads the run into the
     quarantine recorder so flagged knowledge lands in security_events keyed to
     the run.
+
+    *executor* resolves tool calls inside execute_ready_steps; it defaults to
+    the in-process ERP simulator so offline/test builds make no network calls.
+    Callers that want the cloud ERP pass resolve_erp_executor(settings) — see
+    apps.worker.executor.
     """
     if retrieve_node is None:
         retrieve_node = build_worker_retrieve_node(session, run_id=run_id)
@@ -178,7 +184,7 @@ def build_worker_graph(
         execute_node=_observe_phase(
             "execute",
             build_execute_steps_node(
-                executor=erp_simulator_executor,
+                executor=executor or erp_simulator_executor,
                 idempotency_store=IdempotencyStore(session),
                 retry_executor=AsyncRetryExecutor(),
             ),
