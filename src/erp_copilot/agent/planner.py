@@ -41,6 +41,12 @@ _CANCEL_ORDER = "cancelOrder"
 
 _ORDER_WRITE_SCOPE = "order:write"
 
+# Known order-domain write tools. The deterministic planner always stamps these
+# as WRITE + requires_approval; validate_plan (defence layer 2) shares this set
+# so a plan that labels one of them READ is rejected as RISK_DOWNGRADE — the LLM
+# planner must not downgrade risk to slip a write past the approval gate.
+WRITE_TOOLS: frozenset[str] = frozenset({_CREATE_ORDER, _UPDATE_ORDER_STATUS, _CANCEL_ORDER})
+
 
 def _read_step(
     step_id: str,
@@ -265,7 +271,7 @@ def _order_dag_steps(action: str, entities: dict[str, Any]) -> list[PlanStep] | 
     return None
 
 
-def _stamp_idempotency_keys(plan: Plan, run_id: str) -> Plan:
+def stamp_idempotency_keys(plan: Plan, run_id: str) -> Plan:
     """Stamp a deterministic idempotency key onto every WRITE/DANGEROUS step.
 
     The key is f"{run_id}:{step_id}": the same run + same step always maps to
@@ -300,7 +306,7 @@ def build_deterministic_plan_node() -> Callable[[AgentState], dict[str, Any]]:
         if state.intent is None:
             return {"errors": [StateError(code="NO_INTENT", message="build_plan 阶段缺少意图分类")]}
         plan, errors = build_plan_from_intent(state.intent)
-        plan = _stamp_idempotency_keys(plan, state.run_id)
+        plan = stamp_idempotency_keys(plan, state.run_id)
         updates: dict[str, Any] = {
             "plan": plan,
             "candidate_tools": [step.tool_name for step in plan.steps],

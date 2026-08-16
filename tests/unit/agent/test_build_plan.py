@@ -27,6 +27,7 @@ from erp_copilot.agent.nodes.build_plan import (
     parse_plan_response,
     reject_l1_violations,
 )
+from erp_copilot.agent.nodes.validate_plan import ToolSpec
 from erp_copilot.agent.state import (
     AgentState,
     IntentClassification,
@@ -126,6 +127,59 @@ class TestBuildPlannerPrompt:
         )
         assert prompt.rstrip().endswith("查询苹果的库存")
 
+    def test_injects_required_params_from_schemas(self) -> None:
+        # The real LLM (e.g. DeepSeek) guessed "product_name" for getProductByName
+        # because the prompt only listed bare tool names, failing validate_plan's
+        # MISSING_REQUIRED_ARG gate. With schemas injected the prompt must state
+        # the exact required parameter names.
+        schemas = {
+            "getProductByName": ToolSpec(name="getProductByName", required_params=["name"]),
+            "createOrder": ToolSpec(
+                name="createOrder",
+                required_params=["product_id", "supplier_id", "quantity", "region"],
+            ),
+        }
+        prompt = build_planner_prompt(
+            query="下单",
+            active_skills=[],
+            retrieved_context=[],
+            candidate_tools=["getProductByName", "createOrder"],
+            tool_schemas=schemas,
+        )
+        assert "必填参数: name" in prompt
+        assert "必填参数: product_id, supplier_id, quantity, region" in prompt
+
+    def test_tool_names_only_when_no_schemas(self) -> None:
+        prompt = build_planner_prompt(
+            query="q",
+            active_skills=[],
+            retrieved_context=[],
+            candidate_tools=["getProductByName"],
+        )
+        # Without schemas no tool carries a "(必填参数: ...)" suffix; the
+        # SYSTEM_PROMPT's generic mention of "必填参数名" is a separate string.
+        assert "必填参数: " not in prompt
+
+    def test_system_prompt_requires_fallback_and_bans_pending_source(self) -> None:
+        # WRITE/DANGEROUS steps without a compensation note fail validate_plan's
+        # WRITE_NEEDS_FALLBACK gate, so the planner prompt must demand one. And
+        # "pending" is not a resolvable argument source (execute_steps fails it
+        # with ARGUMENT_RESOLUTION_FAILED) — it must not be offered as legal.
+        assert "fallback" in SYSTEM_PROMPT
+        assert "补偿" in SYSTEM_PROMPT
+        assert "pending" not in SYSTEM_PROMPT
+
+    def test_system_prompt_uses_step_refs_not_user_query_for_sources(self) -> None:
+        # "user_query" as an argument source makes execute_steps replace the
+        # argument with the ENTIRE raw query at run time (resolve_arguments),
+        # which mangled every entity param — name became the whole query
+        # sentence, so getProductByName hit the cloud as PRODUCT_NOT_FOUND. The
+        # contract: concrete values go straight into arguments; argument_sources
+        # only ever holds "step:{id}" refs to other steps' outputs.
+        assert "user_query" not in SYSTEM_PROMPT
+        assert "step:{step_id}" in SYSTEM_PROMPT
+        assert "具体值" in SYSTEM_PROMPT
+
 
 class TestParsePlanResponse:
     def test_parses_object_with_steps(self) -> None:
@@ -150,6 +204,22 @@ class TestParsePlanResponse:
         bad = {"steps": [{"tool_name": "getProductById"}], "title": "t"}
         with pytest.raises(ValidationError):
             parse_plan_response(json.dumps(bad))
+
+    def test_coerces_numeric_step_ids_and_dependencies(self) -> None:
+        # DeepSeek emitted step_id/depends_on as ints (1, 2, 3), which the strict
+        # Plan schema rejects. The parser normalizes ints to strings so a
+        # numerically consistent DAG (step "1" refs step:1) still validates —
+        # type-sloppy LLM output is normalized the same way risk_level aliases are.
+        plan = parse_plan_response(
+            _plan_json(
+                [
+                    _step(step_id=1, depends_on=[2]),
+                    _step(step_id=2, depends_on=[]),
+                ]
+            )
+        )
+        assert [s.step_id for s in plan.steps] == ["1", "2"]
+        assert plan.steps[0].depends_on == ["2"]
 
 
 class TestRejectL1Violations:
@@ -286,3 +356,80 @@ class TestBuildPlanNode:
         assert updates["candidate_tools"] == []
         assert updates["active_skills"] == []
         assert updates["plan"].steps[0].tool_name == "getProductById"
+
+    def test_node_prompt_includes_required_params_when_schemas_given(self) -> None:
+        captured: list[str] = []
+
+        def llm(prompt: str) -> str:
+            captured.append(prompt)
+            return _plan_json([_step()])
+
+        node = build_plan_node(
+            llm_complete=llm,
+            available_tools={"getProductByName", "getProductById"},
+            tool_schemas={
+                "getProductByName": ToolSpec(name="getProductByName", required_params=["name"])
+            },
+        )
+        node(_agent_state(intent=IntentClassification(domain="product", action="query")))
+        assert "必填参数: name" in captured[0]
+
+    def test_node_stamps_idempotency_key_on_write_steps(self) -> None:
+        # The deterministic planner stamps {run_id}:{step_id} onto WRITE steps so
+        # execute_steps routes them through the IdempotencyStore (at-most-once).
+        # The LLM planner must do the same — without a key the write path degrades
+        # to at-least-once (the cloud createOrder has no idempotency field).
+        node = build_plan_node(
+            llm_complete=lambda _: _plan_json(
+                [
+                    _step(
+                        step_id="s3",
+                        tool_name="createOrder",
+                        arguments={"quantity": 5, "region": "上海"},
+                        risk_level="WRITE",
+                        fallback="取消新建订单以补偿",
+                    )
+                ]
+            ),
+            available_tools={"createOrder"},
+        )
+        updates = node(
+            _agent_state(
+                run_id="run-abc", intent=IntentClassification(domain="order", action="create")
+            )
+        )
+        step = updates["plan"].steps[0]
+        assert step.idempotency_key == "run-abc:s3"
+        assert step.arguments["idempotency_key"] == "run-abc:s3"
+
+    def test_node_promotes_literal_step_refs_to_sources(self) -> None:
+        # DeepSeek put the dependency reference as a literal argument value
+        # ({"product_id": "step:1"}) with empty argument_sources. resolve_arguments
+        # only resolves refs listed in argument_sources, so without promotion the
+        # literal "step:1" would be sent to the cloud as productId — a 302. The
+        # node promotes "step:{id}"-shaped values into argument_sources.
+        node = build_plan_node(
+            llm_complete=lambda _: _plan_json(
+                [
+                    _step(
+                        step_id="4",
+                        tool_name="createOrder",
+                        arguments={
+                            "product_id": "step:1",
+                            "supplier_id": "step:2",
+                            "quantity": 5,
+                        },
+                        risk_level="WRITE",
+                        fallback="取消新建订单以补偿",
+                        depends_on=["1", "2"],
+                    )
+                ]
+            ),
+            available_tools={"createOrder"},
+        )
+        updates = node(
+            _agent_state(intent=IntentClassification(domain="order", action="create"))
+        )
+        step = updates["plan"].steps[0]
+        assert step.argument_sources["product_id"] == "step:1"
+        assert step.argument_sources["supplier_id"] == "step:2"

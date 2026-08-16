@@ -19,13 +19,17 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from erp_copilot.agent.planner import stamp_idempotency_keys
 from erp_copilot.agent.state import AgentState, Plan, PlanStep, RetrievedDocument, StateError
 from erp_copilot.retrieval.skill_matcher import match_skills
 from erp_copilot.tools.candidate_filter import filter_candidates
+
+if TYPE_CHECKING:
+    from erp_copilot.agent.nodes.validate_plan import ToolSpec
 
 # System section of the planner prompt. It must stay above the L1/L2/tool
 # sections — build_planner_prompt prepends it and the whole block is the
@@ -36,17 +40,37 @@ SYSTEM_PROMPT = """你是 ERP 系统的计划器（Planner）。
 Plan 必须遵守：
 - 只使用下方 Available Tools 中列出的候选工具，不得发明工具名。
 - 每个 Step 包含 step_id、tool_name、arguments、depends_on（依赖的 step_id 列表）。
-- argument_sources 记录每个参数的来源：user_query / retrieved / pending。
+- arguments 直接给出每个参数的具体值（从用户查询中提取）。
+- 跨步骤参数：argument_sources 写 {"参数名": "step:{step_id}"}，并加入 depends_on。
 - L1 Active Skills 是硬约束，任何违反它们的 Step 都必须拒绝生成（例如非法订单状态转换）。
 - L2 Retrieved Knowledge 是参考，帮助你补全参数语义。
 - risk_level 只取 READ / WRITE / ADMIN 之一。
+- WRITE / DANGEROUS 步骤必须提供非空 fallback（补偿/回退说明，例如"取消新建订单以补偿"）。
+- 参数名必须与 Available Tools 中标注的必填参数名完全一致。
+- 不要输出 idempotency_key：运行时按 run_id 自动生成。
 
 输出为 JSON 对象：{{"title": str, "steps": [PlanStep, ...]}}。不要输出其他文本。"""
 
 # A state token is uppercase English (CREATED, CONFIRMED, SHIPPED, ...).
 _STATE_TOKEN = re.compile(r"[A-Z][A-Z]+")
+# A literal "step:{id}" argument value — the LLM's way of writing a dependency
+# that the executor only honours when it sits in argument_sources.
+_STEP_REF_RE = re.compile(r"^step:[A-Za-z0-9]+$")
 # "任何状态" in a transition rule means the source/target is unconstrained.
 _ANY_STATE = "*"
+
+
+def _render_candidate_tool(name: str, spec: ToolSpec | None) -> str:
+    """Render one candidate tool with its required param names when known.
+
+    A bare tool name leaves the LLM guessing the argument names (it invented
+    ``product_name`` for getProductByName), which validate_plan's
+    MISSING_REQUIRED_ARG gate then rejects. Stating the required params turns
+    the gate into a contract the LLM can satisfy.
+    """
+    if spec is not None and spec.required_params:
+        return f"- {name}(必填参数: {', '.join(spec.required_params)})"
+    return f"- {name}"
 
 
 def build_planner_prompt(
@@ -56,18 +80,29 @@ def build_planner_prompt(
     retrieved_context: list[RetrievedDocument],
     candidate_tools: list[str],
     system: str = SYSTEM_PROMPT,
+    tool_schemas: dict[str, ToolSpec] | None = None,
 ) -> str:
     """Assemble the constrained planner prompt in the documented order.
 
     The order matters: L1 hard constraints come before L2 reference knowledge,
     both before the candidate tools, and the user query lands last so the LLM
     sees the instruction context before the question.
+
+    When *tool_schemas* is given, each candidate tool renders with its required
+    parameter names so the LLM emits arguments that pass validate_plan's
+    MISSING_REQUIRED_ARG gate; without it tools render as bare names (backward
+    compatible for callers that only pass names).
     """
     skills_block = "\n".join(
         f"- {skill.get('skill_id', 'skill')}: {skill.get('content', '')}" for skill in active_skills
     )
     knowledge_block = "\n".join(f"- [{doc.source}] {doc.content}" for doc in retrieved_context)
-    tools_block = "\n".join(f"- {tool}" for tool in candidate_tools)
+    if tool_schemas:
+        tools_block = "\n".join(
+            _render_candidate_tool(tool, tool_schemas.get(tool)) for tool in candidate_tools
+        )
+    else:
+        tools_block = "\n".join(f"- {tool}" for tool in candidate_tools)
     sections = [
         system,
         "## L1 Active Skills（硬约束）\n" + skills_block,
@@ -78,16 +113,55 @@ def build_planner_prompt(
     return "\n\n".join(sections)
 
 
+def _promote_step_ref_values(plan: Plan) -> Plan:
+    """Promote literal ``"step:{id}"`` argument values into argument_sources.
+
+    LLMs often emit a dependency reference as a literal argument value
+    (``{"product_id": "step:1"}``) with empty argument_sources, but
+    resolve_arguments only resolves refs listed in argument_sources — the
+    literal would otherwise be sent to the tool verbatim (``productId="step:1"``
+    → cloud 302). Any ``"step:{id}"``-shaped value whose param is not already
+    sourced is promoted to argument_sources; the placeholder stays in arguments
+    because resolution overwrites it at execution time.
+    """
+    changed = False
+    steps: list[PlanStep] = []
+    for step in plan.steps:
+        promoted = {
+            name: value
+            for name, value in step.arguments.items()
+            if isinstance(value, str)
+            and _STEP_REF_RE.match(value)
+            and name not in step.argument_sources
+        }
+        if promoted:
+            changed = True
+            step = step.model_copy(
+                update={"argument_sources": {**step.argument_sources, **promoted}}
+            )
+        steps.append(step)
+    if not changed:
+        return plan
+    return plan.model_copy(update={"steps": steps})
+
+
 def parse_plan_response(raw: str) -> Plan:
     """Parse the LLM's JSON (optionally fenced) into a strict Plan.
 
     Accepts either a bare step list or a {"steps": [...]} object. The strict
     schema rejects unknown fields, so hallucinated tool names or extra keys
-    surface as ValidationError instead of silently corrupting the run.
+    surface as ValidationError instead of silently corrupting the run. Numeric
+    step_id/depends_on values (a common LLM type slip) are normalized to
+    strings so a numerically consistent DAG still validates.
     """
     data = json.loads(_strip_code_fence(raw))
     if isinstance(data, list):
         data = {"steps": data}
+    for step in data.get("steps", []):
+        if isinstance(step.get("step_id"), int):
+            step["step_id"] = str(step["step_id"])
+        if isinstance(step.get("depends_on"), list):
+            step["depends_on"] = [str(dep) for dep in step["depends_on"]]
     return Plan.model_validate(data)
 
 
@@ -176,12 +250,19 @@ def build_plan_node(
     llm_complete: Callable[[str], str],
     available_tools: frozenset[str] | set[str] | None = None,
     system: str = SYSTEM_PROMPT,
+    tool_schemas: dict[str, ToolSpec] | None = None,
 ) -> Callable[[AgentState], dict[str, Any]]:
     """Build the build_plan LangGraph node with an injected LLM callable.
 
     The app wires *llm_complete* to a real provider (OpenAI-compatible);
     tests substitute a stub. Candidate filtering and L1 skill matching are
     deterministic pure functions called directly here.
+
+    *tool_schemas* mirrors the validator's ToolSpec map so the prompt can state
+    each candidate tool's required params and the node can stamp deterministic
+    idempotency keys on WRITE/DANGEROUS steps — matching the deterministic
+    planner's at-most-once contract (execute_steps only routes keyed steps
+    through the IdempotencyStore).
     """
 
     def plan_node(state: AgentState) -> dict[str, Any]:
@@ -195,6 +276,7 @@ def build_plan_node(
             retrieved_context=state.retrieved_context,
             candidate_tools=candidates,
             system=system,
+            tool_schemas=tool_schemas,
         )
         try:
             plan = parse_plan_response(llm_complete(prompt))
@@ -211,6 +293,8 @@ def build_plan_node(
             }
 
         filtered_plan, l1_errors = reject_l1_violations(plan, skills)
+        filtered_plan = _promote_step_ref_values(filtered_plan)
+        filtered_plan = stamp_idempotency_keys(filtered_plan, state.run_id)
         updates: dict[str, Any] = {
             "plan": filtered_plan,
             "candidate_tools": candidates,
