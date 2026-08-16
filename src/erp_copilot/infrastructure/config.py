@@ -187,6 +187,22 @@ class Settings(BaseSettings):
         ),
     )
 
+    # -- ERP API (cloud) ------------------------------------------------------
+
+    erp_api_base_url: str = Field(
+        default="",
+        description=(
+            "Base URL of the real cloud ERP API. When set (non-empty), the "
+            "worker's executor calls the cloud ERP over HTTP (V5 calling "
+            "convention, X-API-Key header); when empty, it falls back to the "
+            "in-process deterministic ERP simulator."
+        ),
+    )
+    erp_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="API key for the cloud ERP API (sent as the X-API-Key header).",
+    )
+
     # -- API authentication ---------------------------------------------------
 
     auth_mode: Literal["header", "api_key"] = Field(
