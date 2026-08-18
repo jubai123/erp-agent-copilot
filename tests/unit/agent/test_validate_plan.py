@@ -15,6 +15,8 @@ without a database.
 
 from __future__ import annotations
 
+import pytest
+
 from erp_copilot.agent.nodes.validate_plan import (
     ToolSpec,
     build_validate_plan_node,
@@ -176,6 +178,49 @@ class TestStructuralChecks:
         result = validate_plan(plan, TOOLS)
         assert "BROKEN_ARGUMENT_SOURCE" in _codes(result)
         assert "MISSING_DEPENDENCY" in _codes(result)
+
+    @pytest.mark.parametrize(
+        "placeholder",
+        [
+            "from_step_1",  # 实测：plan-049 createOrder 的占位符
+            "$1",
+            "$1.product_id",
+            "上一步的结果",
+            "上一次查询的结果",
+            "prev_step",
+            "previous_output",
+            "last_result",
+            "step_1",
+        ],
+    )
+    def test_reference_shaped_argument_values_rejected(self, placeholder: str) -> None:
+        # 跨步骤引用若不用规范 step:{id}（argument_sources + depends_on），
+        # LLM 就会写成各种占位符（from_step_1 / $1 / 上一步…）。它们绕过
+        # BROKEN_ARGUMENT_SOURCE（只查 argument_sources 侧），会被当字面量
+        # 发给工具（cloud 302）。必须在执行前拦下——这就是 fail-closed 那一侧。
+        plan = Plan(steps=[_step(step_id="s1", arguments={"id": placeholder})])
+        result = validate_plan(plan, TOOLS)
+        assert "UNRESOLVED_REFERENCE" in _codes(result)
+        assert result.is_valid is False
+
+    def test_canonical_step_ref_in_arguments_not_flagged(self) -> None:
+        # _promote_step_ref_values 会把规范 step:{id} 从 arguments 提升进
+        # argument_sources 并保留占位符在 arguments（执行时覆盖）。规范形式
+        # 不能被新检查误伤。
+        plan = Plan(
+            steps=[
+                _step(step_id="s1", tool_name="getProductById"),
+                _step(
+                    step_id="s2",
+                    tool_name="getProductById",
+                    depends_on=["s1"],
+                    arguments={"id": "step:s1"},
+                    argument_sources={"id": "step:s1"},
+                ),
+            ]
+        )
+        result = validate_plan(plan, TOOLS)
+        assert "UNRESOLVED_REFERENCE" not in _codes(result)
 
     def test_missing_dependency_rejected(self) -> None:
         plan = Plan(steps=[_step(step_id="s1", depends_on=["ghost"])])

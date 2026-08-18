@@ -12,13 +12,17 @@ unit-testable without a database; the app builds them from the tool registry.
 
 argument_sources follow a simple contract: a value of "step:{step_id}" means
 the argument's value comes from that step's output and the step must appear in
-depends_on. Semantic misselection (getProductById with id="苹果") passes here by
-design — the strict PlanStep schema accepts it — and is caught by verify_results
-(layer 4).
+depends_on. The arguments side is guarded too: any value shaped like a
+cross-step reference (from_step_1, $1, 上一步, ...) but not in the canonical
+step:{id} form is an UNRESOLVED_REFERENCE — it would otherwise be sent to the
+tool verbatim. Semantic misselection (getProductById with id="苹果") passes here
+by design — the strict PlanStep schema accepts it — and is caught by
+verify_results (layer 4).
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -29,6 +33,31 @@ from erp_copilot.agent.state import AgentState, Plan, PlanValidation, StateError
 from erp_copilot.domain.enums import ToolRiskLevel
 
 _STEP_SOURCE_PREFIX = "step:"
+
+# Canonical cross-step reference form: "step:{id}" in argument_sources (plus the
+# step in depends_on). Only this form is resolvable at execution time.
+_CANONICAL_REF_RE = re.compile(r"^step:[A-Za-z0-9]+$")
+# Non-canonical reference *family*: placeholder shapes LLMs emit when they mean
+# "reuse an earlier step's output" but skip the canonical form (from_step_1, $1,
+# 上一步, previous_output, step_1, ...). In arguments these are unresolved
+# references, not data — they would be sent to the tool verbatim (cloud 302).
+# Flagging the family rather than one literal keeps the guard from whack-a-mole
+# churn as the model's improvisations vary. The canonical step:{id} form is
+# excluded so the promote step's legitimate placeholder is never flagged.
+_REFERENCE_MARKER_RE = re.compile(
+    r"(?i)"
+    r"(?:^|\W)\$[0-9]"  # $1, $1.product_id
+    r"|(?:上一步|前一步|前序|前步|下一步|上一次|上面的结果)"
+    r"|(?:prev(?:ious)?|last|from|refer(?:ence)?|source)"
+    r"[ _-]*(?:step|output|result)"  # from_step_1, previous_output
+    r"|step[ _:.-]*[0-9]"  # step1 / step:1 / step_1 / step 1
+)
+
+
+def _looks_like_reference(value: str) -> bool:
+    if _CANONICAL_REF_RE.match(value):
+        return False
+    return _REFERENCE_MARKER_RE.search(value) is not None
 
 
 class ToolSpec(BaseModel):
@@ -81,6 +110,18 @@ def _structural_errors(
                             step_id=step.step_id,
                         )
                     )
+        for param, value in step.arguments.items():
+            if isinstance(value, str) and _looks_like_reference(value):
+                errors.append(
+                    StateError(
+                        code="UNRESOLVED_REFERENCE",
+                        message=(
+                            f"step {step.step_id} 参数 {param} 的值 {value!r} 是未识别的"
+                            "跨步骤引用，必须用 argument_sources 的 step:{step_id} 形式"
+                        ),
+                        step_id=step.step_id,
+                    )
+                )
         for source in step.argument_sources.values():
             if not source.startswith(_STEP_SOURCE_PREFIX):
                 continue
