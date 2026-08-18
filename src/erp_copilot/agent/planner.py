@@ -47,6 +47,31 @@ _ORDER_WRITE_SCOPE = "order:write"
 # planner must not downgrade risk to slip a write past the approval gate.
 WRITE_TOOLS: frozenset[str] = frozenset({_CREATE_ORDER, _UPDATE_ORDER_STATUS, _CANCEL_ORDER})
 
+# Per-tool success_condition templates (defence layer 4, verify_results).
+# Placeholders are formatted with the step's own arguments so the predicate
+# pins *what the query asked for* — a completed step whose result does not
+# match is a semantic mis-selection, not a success. Set-query tools
+# (querySuppliersByDeliveryRegion / getSupplierByStatus) are deliberately
+# absent: an empty supplier list is a legitimate answer and the deterministic
+# planner cannot mis-select them, so verify stays lazy there.
+_SUCCESS_CONDITION_TEMPLATES: dict[str, str] = {
+    _PRODUCT_BY_NAME: "response.name == {name!r}",
+    _PRODUCT_BY_ID: "response.product_id == {product_id!r}",
+    _ORDER_BY_ID: "response.order_id == {order_id!r}",
+    # createOrder: amount (not status) stays stable across the simulator and
+    # the cloud ERP (cloud order status is an unnormalised field), and a real
+    # order always carries a positive amount.
+    _CREATE_ORDER: "response.amount > 0",
+}
+
+
+def _condition_for(tool_name: str, arguments: dict[str, Any]) -> str | None:
+    """Return the formatted success predicate for *tool_name*, or None."""
+    template = _SUCCESS_CONDITION_TEMPLATES.get(tool_name)
+    if template is None:
+        return None
+    return template.format(**arguments)
+
 
 def _read_step(
     step_id: str,
@@ -64,6 +89,7 @@ def _read_step(
         required_scope=required_scope,
         timeout_s=10,
         max_retries=1,
+        success_condition=_condition_for(tool_name, arguments),
     )
 
 
@@ -89,6 +115,7 @@ def _write_step(
         timeout_s=30,
         max_retries=2,
         fallback=fallback,
+        success_condition=_condition_for(tool_name, arguments),
     )
 
 

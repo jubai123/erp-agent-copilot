@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from erp_copilot.agent.planner import WRITE_TOOLS, stamp_idempotency_keys
+from erp_copilot.agent.skill_catalog import AgentSkill, load_agent_skills
 from erp_copilot.agent.state import AgentState, Plan, PlanStep, RetrievedDocument, StateError
 from erp_copilot.retrieval.skill_matcher import match_skills
 from erp_copilot.tools.candidate_filter import filter_candidates
@@ -76,17 +77,29 @@ _STEP_REF_RE = re.compile(r"^step:[A-Za-z0-9]+$")
 _ANY_STATE = "*"
 
 
-def _render_candidate_tool(name: str, spec: ToolSpec | None) -> str:
-    """Render one candidate tool with its required param names when known.
+def _render_candidate_tool(
+    name: str,
+    spec: ToolSpec | None,
+    skill: AgentSkill | None = None,
+) -> str:
+    """Render one candidate tool with its routing description and required params.
 
-    A bare tool name leaves the LLM guessing the argument names (it invented
-    ``product_name`` for getProductByName), which validate_plan's
-    MISSING_REQUIRED_ARG gate then rejects. Stating the required params turns
-    the gate into a contract the LLM can satisfy.
+    A bare tool name leaves the LLM guessing both the argument names (it invented
+    ``product_name`` for getProductByName — a MISSING_REQUIRED_ARG gate failure)
+    and *when* the tool applies. The skill catalog (Tier2 routing basis) fixes
+    the second: its description — what the tool does, when to use it, trigger
+    words — is inlined next to the name so the LLM reasons over "which tool for
+    this query" at the point of choice. Without a description the line keeps the
+    bare name + required params format (backward compatible).
     """
-    if spec is not None and spec.required_params:
-        return f"- {name}(必填参数: {', '.join(spec.required_params)})"
-    return f"- {name}"
+    params = (
+        f"(必填参数: {', '.join(spec.required_params)})"
+        if spec is not None and spec.required_params
+        else ""
+    )
+    if skill is not None and skill.description:
+        return f"- {name}: {skill.description} {params}".rstrip()
+    return f"- {name}{params}"
 
 
 def build_planner_prompt(
@@ -97,6 +110,7 @@ def build_planner_prompt(
     candidate_tools: list[str],
     system: str = SYSTEM_PROMPT,
     tool_schemas: dict[str, ToolSpec] | None = None,
+    skill_catalog: dict[str, AgentSkill] | None = None,
 ) -> str:
     """Assemble the constrained planner prompt in the documented order.
 
@@ -107,16 +121,23 @@ def build_planner_prompt(
     When *tool_schemas* is given, each candidate tool renders with its required
     parameter names so the LLM emits arguments that pass validate_plan's
     MISSING_REQUIRED_ARG gate; without it tools render as bare names (backward
-    compatible for callers that only pass names).
+    compatible for callers that only pass names). When *skill_catalog* is given,
+    each candidate tool also renders its skill description (the Tier2 routing
+    basis) inline; a candidate the catalog does not cover falls back to the
+    bare format.
     """
     skills_block = "\n".join(
         f"- {skill.get('skill_id', 'skill')}: {skill.get('content', '')}" for skill in active_skills
     )
     knowledge_block = "\n".join(f"- [{doc.source}] {doc.content}" for doc in retrieved_context)
-    if tool_schemas:
-        tools_block = "\n".join(
-            _render_candidate_tool(tool, tool_schemas.get(tool)) for tool in candidate_tools
-        )
+    if tool_schemas or skill_catalog:
+
+        def _render(tool: str) -> str:
+            spec = tool_schemas.get(tool) if tool_schemas else None
+            skill = skill_catalog.get(tool) if skill_catalog else None
+            return _render_candidate_tool(tool, spec, skill)
+
+        tools_block = "\n".join(_render(tool) for tool in candidate_tools)
     else:
         tools_block = "\n".join(f"- {tool}" for tool in candidate_tools)
     sections = [
@@ -261,12 +282,29 @@ def reject_l1_violations(
     return Plan(steps=kept, title=plan.title), errors
 
 
+_SKILL_CATALOG_CACHE: dict[str, AgentSkill] | None = None
+
+
+def _get_skill_catalog() -> dict[str, AgentSkill]:
+    """Load the on-disk skill catalog once, keyed by tool name.
+
+    Mirrors skill_matcher's module-level cache so the per-request build_plan
+    node never re-reads the SKILL.md files. Keyed by tool (not skill name) so
+    the prompt renders a description for every candidate tool in O(1).
+    """
+    global _SKILL_CATALOG_CACHE
+    if _SKILL_CATALOG_CACHE is None:
+        _SKILL_CATALOG_CACHE = {skill.tool: skill for skill in load_agent_skills()}
+    return _SKILL_CATALOG_CACHE
+
+
 def build_plan_node(
     *,
     llm_complete: Callable[[str], str],
     available_tools: frozenset[str] | set[str] | None = None,
     system: str = SYSTEM_PROMPT,
     tool_schemas: dict[str, ToolSpec] | None = None,
+    skill_catalog: dict[str, AgentSkill] | None = None,
 ) -> Callable[[AgentState], dict[str, Any]]:
     """Build the build_plan LangGraph node with an injected LLM callable.
 
@@ -279,7 +317,15 @@ def build_plan_node(
     idempotency keys on WRITE/DANGEROUS steps — matching the deterministic
     planner's at-most-once contract (execute_steps only routes keyed steps
     through the IdempotencyStore).
+
+    *skill_catalog* (tool → AgentSkill) feeds the prompt's inline tool
+    descriptions — the Tier2 routing basis. It defaults to the on-disk catalog
+    (datasets/knowledge/agent_skills) so the interactive path and the LLM
+    planner eval both render real descriptions; an explicit dict lets tests
+    inject a controlled catalog.
     """
+    if skill_catalog is None:
+        skill_catalog = _get_skill_catalog()
 
     def plan_node(state: AgentState) -> dict[str, Any]:
         domain = state.intent.domain if state.intent else ""
@@ -293,6 +339,7 @@ def build_plan_node(
             candidate_tools=candidates,
             system=system,
             tool_schemas=tool_schemas,
+            skill_catalog=skill_catalog,
         )
         try:
             plan = parse_plan_response(llm_complete(prompt))

@@ -152,3 +152,48 @@ class TestIdempotencyKeyStamping:
         plan_a = self._stamped_plan("帮我在上海下一单 10 KG 苹果", run_id="run-a")
         plan_b = self._stamped_plan("帮我在上海下一单 10 KG 苹果", run_id="run-b")
         assert plan_a.steps[-1].idempotency_key != plan_b.steps[-1].idempotency_key
+
+
+class TestSuccessCondition:
+    """Deterministic plan steps carry success predicates so the verify node
+    (defence layer 4) is active on the worker production path — semantic
+    mis-selection is caught instead of silently passing."""
+
+    def test_product_name_step_pins_the_queried_name(self) -> None:
+        intent = classify_intent("苹果多少钱")
+        plan, errors = build_plan_from_intent(intent)
+        assert errors == []
+        assert plan.steps[0].success_condition == "response.name == '苹果'"
+
+    def test_product_by_id_step_pins_the_id(self) -> None:
+        intent = classify_intent("商品 4 号的信息")
+        plan, errors = build_plan_from_intent(intent)
+        assert errors == []
+        assert plan.steps[0].success_condition == "response.product_id == 4"
+
+    def test_order_lookup_step_pins_the_order_id(self) -> None:
+        intent = classify_intent("查订单 3f2a9c1d")
+        plan, errors = build_plan_from_intent(intent)
+        assert errors == []
+        assert plan.steps[0].success_condition == "response.order_id == '3f2a9c1d'"
+
+    def test_create_order_step_pins_a_real_order_amount(self) -> None:
+        intent = classify_intent("帮我在上海下一单 10 KG 苹果")
+        plan, errors = build_plan_from_intent(intent)
+        assert errors == []
+        s1, _s2, s3 = plan.steps
+        assert s1.tool_name == "getProductByName"
+        assert s1.success_condition == "response.name == '苹果'"
+        assert s3.tool_name == "createOrder"
+        assert s3.success_condition == "response.amount > 0"
+
+    def test_supplier_set_query_steps_stay_lazy(self) -> None:
+        # Set-query tools get no predicate: an empty supplier list is a
+        # legitimate business answer, and the deterministic planner cannot
+        # mis-select the supplier tool.
+        intent = classify_intent("上海有哪些供应商")
+        plan, errors = build_plan_from_intent(intent)
+        assert errors == []
+        assert plan.steps
+        for step in plan.steps:
+            assert step.success_condition is None

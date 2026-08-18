@@ -20,10 +20,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from erp_copilot.agent.nodes.classify_intent import classify_intent
 from erp_copilot.agent.nodes.verify_results import (
     build_verify_results_node,
     evaluate_success_condition,
 )
+from erp_copilot.agent.planner import build_plan_from_intent
 from erp_copilot.agent.state import (
     AgentState,
     AgentStatus,
@@ -275,3 +277,73 @@ def test_evaluate_success_condition_signature_is_callable() -> None:
     # Guards the pure-function seam used by the node so a refactor cannot
     # silently change it into an unexported helper.
     assert callable(evaluate_success_condition)
+
+
+class TestDeterministicPlanSemanticGate:
+    """The deterministic planner's success_conditions are enforced by verify —
+    proves defence layer 4 is active on the worker production path.
+
+    Feeds executor-shaped result data (the shapes apps/worker/executor.py
+    produces) through the real classify_intent → build_plan_from_intent → verify
+    chain. Before the planner sets success_condition, both cases SUCCEEDED
+    because verify lazily skipped condition-less completed steps.
+    """
+
+    @staticmethod
+    def _create_plan() -> Plan:
+        intent = classify_intent("帮我在上海下一单 10 KG 苹果")
+        plan, errors = build_plan_from_intent(intent)
+        assert errors == []
+        return plan
+
+    def _state(
+        self,
+        s1_data: dict[str, Any],
+        s3_data: dict[str, Any],
+    ) -> AgentState:
+        plan = self._create_plan()
+        results: dict[str, StepResult] = {
+            "s1": _completed("s1", s1_data),
+            "s2": _completed("s2", {"suppliers": [{"supplier_id": 3}], "supplier_id": 3}),
+            "s3": _completed("s3", s3_data),
+        }
+        return _node_state(plan=plan, results=results)
+
+    def test_matching_executor_data_succeeds(self) -> None:
+        updates = _invoke(
+            self._state(
+                s1_data={"product_id": 1, "name": "苹果", "price": 10.0, "stock": 90, "unit": "KG"},
+                s3_data={
+                    "order_id": "a1b2c3d4e5f6",
+                    "product_id": 1,
+                    "quantity": 10,
+                    "supplier_id": 3,
+                    "region": "上海",
+                    "amount": 100.0,
+                    "status": "CREATED",
+                    "idempotency_key": "r1:s3",
+                    "created_at": "2026-08-17T00:00:00Z",
+                },
+            )
+        )
+        assert updates["status"] == AgentStatus.SUCCEEDED
+
+    def test_wrong_product_name_triggers_replanning(self) -> None:
+        # The tool ran and the step COMPLETED, but it returned the wrong
+        # product — the semantic mismatch layer 4 exists to catch.
+        updates = _invoke(
+            self._state(
+                s1_data={"product_id": 2, "name": "香蕉", "price": 8.0, "stock": 50, "unit": "KG"},
+                s3_data={
+                    "order_id": "a1b2c3d4e5f6",
+                    "product_id": 2,
+                    "amount": 80.0,
+                    "status": "CREATED",
+                },
+            )
+        )
+        assert updates["status"] == AgentStatus.REPLANNING
+        errors = updates["errors"]
+        assert [e.code for e in errors] == ["SUCCESS_CONDITION_FAILED"]
+        assert errors[0].step_id == "s1"
+        assert errors[0].details["condition"] == "response.name == '苹果'"

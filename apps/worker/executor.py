@@ -265,7 +265,8 @@ def _normalize_product(payload: dict[str, Any]) -> dict[str, Any]:
     """Cloud Product (camelCase) -> the simulator executor's product shape.
 
     ``unit`` is not returned by the cloud API and nothing downstream consumes
-    it (the deterministic planner sets no success_condition), so it is omitted.
+    it (the deterministic planner's getProductByName success_condition only
+    reads ``name``), so it is omitted.
     """
     return {
         "product_id": payload["productId"],
