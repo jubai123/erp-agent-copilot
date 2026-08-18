@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+import erp_copilot.security.approval as approval_mod
 from erp_copilot.agent.graph import build_agent_graph
 from erp_copilot.agent.nodes.execute_steps import build_execute_steps_node
 from erp_copilot.agent.nodes.policy_check import build_policy_check_node
@@ -35,6 +36,7 @@ from erp_copilot.domain.entities import AgentCheckpoint, AuditLog
 from erp_copilot.domain.enums import ToolRiskLevel
 from erp_copilot.domain.errors import CopilotError, NotFoundError
 from erp_copilot.memory.checkpoint import CheckpointSaver
+from erp_copilot.observability.metrics import create_metrics, generate_latest
 from erp_copilot.security.approval import (
     ApprovalDecisionService,
     decide_and_resume,
@@ -439,3 +441,52 @@ class TestDecideAndResume:
         assert logs[0].action == "approval.denied"
         assert logs[0].result == "denied"
         assert logs[0].ip is None
+
+
+class TestApprovalMetrics:
+    """Task 7.4: deciding a request incs the matching outcome label.
+
+    decide() flips exactly one PENDING record (APPROVAL_ALREADY_DECIDED guards
+    double decisions), and the inc fires only after the checkpoint save succeeds
+    — a failed persist produces neither a record nor a count, so metrics and the
+    audit trail agree. The module-level METRICS is monkeypatched per test.
+    """
+
+    def _wired(self, monkeypatch: pytest.MonkeyPatch) -> object:
+        metrics = create_metrics()
+        monkeypatch.setattr(approval_mod, "METRICS", metrics)
+        return metrics
+
+    def test_approve_increments_approved_outcome(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metrics = self._wired(monkeypatch)
+        saver = _save_paused(session)
+        _service(saver).decide(
+            run_id="r1",
+            tenant_id="t1",
+            step_id="s1",
+            decision=ApprovalStatus.APPROVED,
+            decided_by="ops",
+        )
+        text = generate_latest(metrics)
+        assert 'erp_approval_requests_total{outcome="approved"} 1.0' in text
+        # A label value never observed emits no series line — only the touched
+        # outcome appears in the exposition text.
+        assert 'outcome="denied"' not in text
+
+    def test_denied_increments_denied_outcome(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metrics = self._wired(monkeypatch)
+        saver = _save_paused(session)
+        _service(saver).decide(
+            run_id="r1",
+            tenant_id="t1",
+            step_id="s1",
+            decision=ApprovalStatus.DENIED,
+            decided_by="risk",
+        )
+        text = generate_latest(metrics)
+        assert 'erp_approval_requests_total{outcome="denied"} 1.0' in text
+        assert 'outcome="approved"' not in text

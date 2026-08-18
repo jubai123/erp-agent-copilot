@@ -23,6 +23,7 @@ from erp_copilot.agent.state import (
     ApprovalStatus,
     PolicyDecision,
 )
+from erp_copilot.observability.metrics import METRICS
 
 
 def pending_approval_step_ids(state: AgentState) -> list[str]:
@@ -95,6 +96,11 @@ def request_approval_node(state: AgentState) -> dict[str, Any]:
     updates: dict[str, Any] = {}
     if new_requests:
         updates["approvals"] = [*state.approvals, *new_requests]
+        # Task 7.4: inc once per genuinely new request. Only requests not yet
+        # recorded reach this branch, so a checkpoint-resume re-invoke never
+        # double-counts — the counter is idempotency-aligned with the node.
+        for _ in new_requests:
+            METRICS.approval_requests.labels(outcome="pending").inc()
     resolved = _resolve_decided_approvals(state)
     if resolved:
         updates["policy_decisions"] = {**state.policy_decisions, **resolved}

@@ -21,6 +21,7 @@ from erp_copilot.agent.state import AgentStatus, ApprovalRequest, ApprovalStatus
 from erp_copilot.domain.entities import AuditLog
 from erp_copilot.domain.errors import CopilotError, NotFoundError
 from erp_copilot.memory.checkpoint import CheckpointSaver
+from erp_copilot.observability.metrics import METRICS
 
 _DECIDABLE = (ApprovalStatus.APPROVED, ApprovalStatus.DENIED)
 
@@ -106,6 +107,9 @@ class ApprovalDecisionService:
             "approval_decision",
             state.model_copy(update={"approvals": approvals}),
         )
+        # Task 7.4: inc after the checkpoint save — a failed persist leaves no
+        # record and no count, so metrics stay consistent with the audit trail.
+        METRICS.approval_requests.labels(outcome=decision.value).inc()
         return decided
 
 

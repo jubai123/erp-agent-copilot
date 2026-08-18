@@ -1805,6 +1805,8 @@
 
 ## 任务 7.4：审批/人工介入率计数器
 
+> **状态：✅ 已完成**（2026-08-19，`metrics.py` 新增 `erp_approval_requests_total`（标签 `outcome=approved/denied/pending`）；`request_approval_node` 仅对**新建**请求逐个 `inc(outcome="pending")`（与节点幂等对齐，checkpoint-resume 重入不重复计数）；`ApprovalDecisionService.decide` 在 checkpoint 保存成功后才 `inc` 对应 outcome（DB 失败则无记录无计数，指标与审计一致）；评估器 `METRIC_FAMILIES` 8→9 族、"9 族齐全"验收串同步。单测钉住：暂停 2 新请求 → pending 2.0、幂等重入不再计数、decide APPROVED/DENIED 各 inc 对应 outcome。验证：71 目标测试 + 全量单测 1491 passed + ruff/mypy src 干净。注：run 级介入率（审批 Run 数/总 Run 数）需请求→run 关联标签，留待 7.8/7.11 补齐；`line_coverage_percent` NOT_CONFIGURED 为阶段收尾独立事项）
+
 **目标**：量化"AI 独立完成"与"需要人工"的比例——自动化率 = 1 − 介入率，Copilot 的核心价值指标。
 
 **交付物**：

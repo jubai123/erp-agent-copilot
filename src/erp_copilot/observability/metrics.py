@@ -43,6 +43,7 @@ class Metrics:
     runs_retries: prometheus_client.Counter
     runs_replans: prometheus_client.Counter
     runs_abandoned: prometheus_client.Counter
+    approval_requests: prometheus_client.Counter
     phase_latency: prometheus_client.Histogram
     worker_queue: prometheus_client.Gauge
 
@@ -85,6 +86,12 @@ def create_metrics() -> Metrics:
         runs_abandoned=prometheus_client.Counter(
             "erp_run_abandoned_total",
             "Total number of runs abandoned to FAILED (recover_or_replan give-up branch)",
+            registry=registry,
+        ),
+        approval_requests=prometheus_client.Counter(
+            "erp_approval_requests_total",
+            "Total number of human approval requests, labeled by outcome",
+            labelnames=["outcome"],
             registry=registry,
         ),
         phase_latency=prometheus_client.Histogram(

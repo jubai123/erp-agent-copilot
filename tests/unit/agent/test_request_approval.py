@@ -13,6 +13,9 @@ for denied steps arrive with task 5.2's decision API.
 
 from __future__ import annotations
 
+import pytest
+
+import erp_copilot.agent.nodes.request_approval as request_mod
 from erp_copilot.agent.nodes.request_approval import request_approval_node
 from erp_copilot.agent.state import (
     AgentState,
@@ -24,6 +27,7 @@ from erp_copilot.agent.state import (
     PolicyDecision,
 )
 from erp_copilot.domain.enums import ToolRiskLevel
+from erp_copilot.observability.metrics import create_metrics, generate_latest
 
 
 def _state(**overrides: object) -> AgentState:
@@ -226,3 +230,53 @@ class TestPolicyResolution:
             "s1": PolicyDecision.ALLOW,
             "s2": PolicyDecision.ALLOW,
         }
+
+
+class TestApprovalMetrics:
+    """Task 7.4: the pause path incs the pending outcome per *new* request.
+
+    The counter is idempotency-aligned with the node: only requests that are
+    actually new (not already recorded) advance the pending count, so a
+    checkpoint-resume re-invoke never double-counts. The module-level METRICS
+    is monkeypatched like the recover_or_replan counter tests do.
+    """
+
+    def _wired(self, monkeypatch: pytest.MonkeyPatch) -> object:
+        metrics = create_metrics()
+        monkeypatch.setattr(request_mod, "METRICS", metrics)
+        return metrics
+
+    def test_pause_increments_pending_per_new_request(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metrics = self._wired(monkeypatch)
+        state = _state(
+            plan=Plan(steps=[_write_step("s1"), _write_step("s2")]),
+            policy_decisions={
+                "s1": PolicyDecision.REQUIRE_APPROVAL,
+                "s2": PolicyDecision.REQUIRE_APPROVAL,
+            },
+        )
+        updates = request_approval_node(state)
+        assert updates["status"] == AgentStatus.WAITING_APPROVAL
+        text = generate_latest(metrics)
+        assert 'erp_approval_requests_total{outcome="pending"} 2.0' in text
+
+    def test_idempotent_reinvoke_does_not_recount(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metrics = self._wired(monkeypatch)
+        state = _state(
+            plan=Plan(steps=[_write_step()]),
+            policy_decisions={"s1": PolicyDecision.REQUIRE_APPROVAL},
+        )
+        first = request_approval_node(state)
+        resumed = _state(
+            plan=Plan(steps=[_write_step()]),
+            policy_decisions={"s1": PolicyDecision.REQUIRE_APPROVAL},
+            approvals=first["approvals"],
+        )
+        second = request_approval_node(resumed)
+        assert second.get("approvals") is None  # nothing new recorded
+        text = generate_latest(metrics)
+        assert 'erp_approval_requests_total{outcome="pending"} 1.0' in text
