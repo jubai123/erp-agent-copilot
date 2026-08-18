@@ -80,9 +80,7 @@ class TestStartQueueLengthReporter:
     def test_loop_samples_and_stops_cleanly(self) -> None:
         redis = _FakeRedis({"celery": 7})
         stop = threading.Event()
-        thread = start_queue_length_reporter(
-            redis, ["celery"], interval_s=0.01, stop_event=stop
-        )
+        thread = start_queue_length_reporter(redis, ["celery"], interval_s=0.01, stop_event=stop)
         try:
             _wait_for(
                 lambda: "erp_worker_queue_length 7.0" in generate_latest(METRICS),
@@ -96,9 +94,7 @@ class TestStartQueueLengthReporter:
     def test_survives_transient_broker_failure(self) -> None:
         redis = _FakeRedis({"celery": 3}, fail=True)
         stop = threading.Event()
-        thread = start_queue_length_reporter(
-            redis, ["celery"], interval_s=0.01, stop_event=stop
-        )
+        thread = start_queue_length_reporter(redis, ["celery"], interval_s=0.01, stop_event=stop)
         try:
             # A failing broker must not kill the reporter thread: it samples 0,
             # logs a warning, and keeps going. Let it run a few cycles.
