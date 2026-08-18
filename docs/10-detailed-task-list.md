@@ -1759,6 +1759,8 @@
 
 ## 任务 7.2：LLM 调用点接 `llm_call`（LLM 采集接线）
 
+> **状态：✅ 已完成**（2026-08-19，生产接线由 commit `e6d5449`（2026-08-18，session 53）先行完成：`resolve_llm_plan_node` 在组合根把真实 chat 调用包进 `llm_call` 并回填 `usage` token，接入 worker 任务与 API 审批恢复两条路径；静态扫描 `llm_call(` = 1 处，D3 该指标 FAIL → PASS（报告生成于 08-17 早于接线，属过期值）。本次补充接线测试 `test_resolve_llm_complete_backfills_tokens_onto_span_and_log`，钉住「真实响应形状 → token 回填 → span/LLM_CALL 日志带 model/input_tokens/output_tokens/latency_ms」穿透生产链路。设计偏差：包装在组合根而非 `build_plan.py` 内部，纯 agent 节点不耦合可观测性）
+
 **目标**：让真实 LLM 调用的 token/延迟/成本/模型落到 span、结构化日志与 Langfuse，闭合 D3 缺口「LLM 采集 0 调用点」。
 
 **交付物**：
