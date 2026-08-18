@@ -119,6 +119,28 @@ def _skipped(step_id: str) -> StepResult:
     return StepResult(step_id=step_id, status=StepStatus.SKIPPED)
 
 
+_EXTERNAL_OPERATION_FIELDS = {"createOrder": "order_id"}
+
+
+def _external_operation_id(step: PlanStep, result: ToolResult) -> str | None:
+    """Extract the external operation id from a successful write result.
+
+    createOrder's returned order_id is the outside-world handle for the write;
+    recovery later re-reads it (getOrderByOrderId) to confirm the operation took
+    effect instead of blindly retrying (docs/06 §7 rule 3). Only a string handle
+    on a succeeded result is captured — a non-dict result or a missing field
+    keeps the ledger column NULL.
+    """
+    field = _EXTERNAL_OPERATION_FIELDS.get(step.tool_name)
+    if field is None or result.status != "SUCCEEDED":
+        return None
+    data = result.data
+    if not isinstance(data, dict):
+        return None
+    value = data.get(field)
+    return value if isinstance(value, str) else None
+
+
 def _make_call(
     step: PlanStep,
     arguments: dict[str, Any],
@@ -213,7 +235,11 @@ async def _run_step_idempotent(
     else:
         result = await retry_executor.execute(call, max_retries=step.max_retries)
     if result.status == "SUCCEEDED":
-        store.complete(record, json.dumps(result.data or {}, ensure_ascii=False))
+        store.complete(
+            record,
+            json.dumps(result.data or {}, ensure_ascii=False),
+            external_operation_id=_external_operation_id(step, result),
+        )
     else:
         error = result.error
         store.fail(record, error.error_message if error else "工具执行失败")

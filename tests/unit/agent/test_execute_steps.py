@@ -657,6 +657,45 @@ class TestIdempotencyStoreWiring:
         assert record.run_id == "r1"
         assert record.step_id == "s1"
 
+    def test_fresh_write_records_external_operation_id(self, engine: Engine) -> None:
+        """A successful createOrder links the external order id to the ledger.
+
+        docs/06 §7 rule 3: "Tool 成功后在同一业务流程中记录结果和外部操作标识" —
+        the external operation id is what recovery later uses to re-read the
+        outside world (getOrderByOrderId) and confirm the write took effect
+        instead of blindly retrying.
+        """
+
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            return ToolResult.success(
+                tool_version_id="createOrder", data={"order_id": "o1", "status": "CREATED"}
+            )
+
+        state = _node_state(plan=Plan(steps=[self._write_step()]))
+        updates = _invoke(self._node(executor, engine), state)
+
+        assert updates["step_results"]["s1"].status == StepStatus.COMPLETED
+        record = self._record(engine, "w1")
+        assert record.external_operation_id == "o1"
+
+    def test_write_result_without_external_id_leaves_field_null(self, engine: Engine) -> None:
+        """A write whose result carries no external id keeps external_operation_id NULL.
+
+        Only createOrder currently returns an order id; other write tools (and a
+        malformed result) must not fabricate a handle recovery could query.
+        """
+
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            return ToolResult.success(
+                tool_version_id="createOrder", data={"status": "CREATED"}
+            )
+
+        state = _node_state(plan=Plan(steps=[self._write_step()]))
+        _invoke(self._node(executor, engine), state)
+
+        record = self._record(engine, "w1")
+        assert record.external_operation_id is None
+
     def test_replay_skips_executor_and_returns_cached_data(self, engine: Engine) -> None:
         async def first_executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
             return ToolResult.success(tool_version_id="createOrder", data={"order_id": "o1"})
