@@ -65,7 +65,9 @@ SYSTEM_PROMPT = (
     + "。\n"
     + "- 供应商查询二选一：查询给出配送区域时只用 querySuppliersByDeliveryRegion；"
     "仅询问可用性时用 getSupplierByStatus；不得同时选。\n"
-    + "- 只选完成任务所必需的工具，不要添加多余的查询步骤。"
+    + "- 只选完成任务所必需的工具，不要添加多余的查询步骤。\n"
+    + "- 跨步骤数据引用：argument_sources 里引用的每个 step 必须同时列入该 step "
+    "的 depends_on，漏掉任一引用即计划不合法。"
 )
 
 # A state token is uppercase English (CREATED, CONFIRMED, SHIPPED, ...).

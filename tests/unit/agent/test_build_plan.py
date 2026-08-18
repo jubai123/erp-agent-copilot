@@ -182,6 +182,16 @@ class TestBuildPlannerPrompt:
         assert "step:{step_id}" in SYSTEM_PROMPT
         assert "具体值" in SYSTEM_PROMPT
 
+    def test_system_prompt_couples_step_refs_with_depends_on_in_fixed_rules(self) -> None:
+        # BROKEN_ARGUMENT_SOURCE fires when argument_sources references a step
+        # missing from depends_on (plan-049/050). The coupling must live in the
+        # "固定规则（违反即计划不合法）" block — the same hard-rules place the
+        # WRITE-risk rule sits — not only in the soft "并加入 depends_on" line
+        # the model keeps ignoring.
+        fixed_rules = SYSTEM_PROMPT.split("固定规则", 1)[1]
+        assert "argument_sources" in fixed_rules
+        assert "depends_on" in fixed_rules
+
 
 class TestParsePlanResponse:
     def test_parses_object_with_steps(self) -> None:
