@@ -1,6 +1,6 @@
 """One-click evaluation harness — task 6.6.
 
-Wires the six category runners into evals.harness.run_all and emits a
+Wires the five category runners into evals.harness.run_all and emits a
 per-category + overall score report with a detailed failure log.
 
 Runner provenance is recorded per category so a number is never mistaken for
@@ -508,7 +508,7 @@ CATEGORY_RUNNERS: dict[str, RunnerFn] = {
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the 200-case eval harness")
+    parser = argparse.ArgumentParser(description="Run the 175-case eval harness")
     parser.add_argument(
         "--report",
         type=str,

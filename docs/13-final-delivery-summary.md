@@ -6,7 +6,7 @@
 
 ## 1. 一句话交付
 
-把自然语言 ERP 业务需求编译为**可解释、可审批、可恢复**的跨系统工具调用 DAG 的 Agent Runtime：FastAPI + LangGraph 状态机 + Celery + PostgreSQL/pgvector 混合检索 + MCP，四个进程、两个基础设施，1207 个单元测试、175 条离线评测、故障注入 3/3。
+把自然语言 ERP 业务需求编译为**可解释、可审批、可恢复**的跨系统工具调用 DAG 的 Agent Runtime：FastAPI + LangGraph 状态机 + Celery + PostgreSQL/pgvector 混合检索 + MCP，四个进程、两个基础设施，1562 个单元测试、175 条离线评测、故障注入 3/3。
 
 ## 2. 交付范围（已实现）
 
@@ -18,7 +18,7 @@
 |---|---|
 | 工具层 | OpenAPI 3.x 导入校验、Tool/ToolVersion 版本化、风险分级（read/write/dangerous）、候选过滤（`candidate_filter` 9 工具确定性分类学）、MCP Gateway、统一 `ToolResult`/`ToolError` |
 | 检索层 | L1 Skill 确定性注入（`skill_matcher`，意图→技能映射 42/42 命中）+ L2 RAG（`ingestion`→pgvector 向量 + PostgreSQL FTS 混合→RRF→Cross-Encoder Rerank）+ 引用与无依据拒答；**生产配置 = Hybrid+Rerank**（消融定案，ADR 决策七） |
-| Agent 层 | 强类型 `AgentState` + 9 节点 LangGraph：确定性意图分类、Plan DAG 校验（Kahn 拓扑 + 波动分组：READ 并行 / WRITE 串行）、Policy Scope 门、写审批分支、语义验证门（AST 白名单安全 eval）、Checkpoint 恢复 |
+| Agent 层 | 强类型 `AgentState` + 12 节点 LangGraph：确定性意图分类、三层漏斗路由（Tier1 确定性 / Tier2 LLM 约束 / Tier3 自由规划）、Plan DAG 校验（Kahn 拓扑 + 波动分组：READ 并行 / WRITE 串行）、Policy Scope 门、写审批分支、语义验证门（AST 白名单安全 eval）、Checkpoint 恢复 |
 | 安全层 | 五层防护：注入守卫 / SSRF 守卫 / Policy 门控 / 审批 / 输出脱敏；幂等键 at-most-once；退避重试；失败队列；安全事件与审计 |
 | 可观测层 | 结构化日志、OpenTelemetry Trace、Prometheus 指标、Langfuse、Record/Replay 评测 |
 | 评测层 | 175 条五类离线评测 + 42 条检索消融 + 25 条安全守卫 + 故障注入 3/3 + Locust 负载（方法就绪） |
@@ -43,8 +43,8 @@
 
 | 指标 | 结果 | 依据 |
 |---|---|---|
-| 单元测试 | **1207 通过** | `uv run pytest tests/ -q` |
-| 类型检查 | 65 个 src 文件 mypy 干净 | `uv run mypy src` |
+| 单元测试 | **1562 通过** | `uv run pytest tests/ -q` |
+| 类型检查 | 103 个 src+apps 文件 mypy 干净 | `uv run mypy src/ apps/` |
 | 静态检查 | ruff check / format 全绿 | `uv run ruff check .` / `uv run ruff format --check .` |
 | 检索消融（42 条） | Rerank 使 **Recall@5 0.7381→0.9167**、NDCG@5 0.6824→0.8249；代价 P50 ~53→~226ms；Vector-only Recall@1 0.3968 反最高 | `uv run python evals/scripts/run_ablation.py` |
 | 故障注入 | **3/3 PASS**（崩溃恢复 / 超时重试 / 订单幂等；负例证明 harness 不虚绿） | `uv run python tests/performance/fault_injection.py` |
@@ -79,13 +79,13 @@
 
 - **git**：分支 `master`，`v1.0.0` 注解标签指向最终 HEAD；工作树干净。
 - **提交记录**（本任务收尾 4 个）：`9d9ff87` 移除 V5 遗留并加固 gitignore → `6f534de` 补交全部核心源码 → `0954377` 修复引导文件 ruff 并迁移 V5 数据集为测试 fixture → `af3834d` 任务 6.11 完成 → `c97a85d` [REDACTED]讲稿（任务 6.12）。
-- **门禁**：`uv run pytest tests/ -q` 1207 通过、`uv run mypy src` 干净（65 文件）、`uv run ruff check` / `format` 全绿。
+- **门禁**：`uv run pytest tests/ -q` 1562 通过、`uv run mypy src/ apps/` 干净（103 文件）、`uv run ruff check` / `format` 全绿。
 
 ## 7. 复现全部数字
 
 ```bash
-uv run pytest tests/ -q                       # 1207 通过
-uv run mypy src                                  # 65 文件干净
+uv run pytest tests/ -q                       # 1562 通过
+uv run mypy src/ apps/                            # 103 文件干净
 uv run ruff check . && uv run ruff format --check
 uv run python tests/performance/fault_injection.py   # 3/3 PASS
 uv run python evals/scripts/run_ablation.py          # 42 查询消融

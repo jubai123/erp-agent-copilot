@@ -4,14 +4,14 @@
 
 ## 1. 评测框架（`evals/`）
 
-Runner 无关的编排框架 `evals/harness.py`：加载六类数据集 → 注入各分类 runner → 汇总 per-category + overall 分数与失败明细。runner 只返回规范化的 `RunnerOutput`，框架不关心分类如何评分。
+Runner 无关的编排框架 `evals/harness.py`：加载五类数据集 → 注入各分类 runner → 汇总 per-category + overall 分数与失败明细。runner 只返回规范化的 `RunnerOutput`，框架不关心分类如何评分。
 
 ```text
 evals/
 ├── harness.py            # 加载数据集、run_category、overall_score、失败日志、报告
-├── run_all.py            # 六个分类 runner 装配 + 一键入口
+├── run_all.py            # 五个分类 runner 装配 + 一键入口
 ├── record_replay.py      # LLM Record/Replay（确定性回归）
-├── datasets/             # 7 个数据集，共 220 条
+├── datasets/             # 9 个数据集，共 290 条
 ├── scripts/              # run_security_eval.py / run_ablation.py / analyze_ablation.py / diagnose_keyword_search.py
 └── scorers/              # retrieval_scorer.py / skill_scorer.py
 ```
@@ -104,6 +104,6 @@ uv run python evals/scripts/run_security_eval.py --report report.json
 uv run evals/run_all.py                 # 175 条五大分类评测
 uv run python evals/scripts/run_security_eval.py   # 25 条安全守卫评测
 uv run python evals/scripts/run_ablation.py        # 42 条检索消融
-uv run pytest tests/unit                # 单元测试（1063 条通过）
+uv run pytest tests/unit                # 单元测试（1451 条通过）
 uv run python tests/performance/fault_injection.py # 故障注入 3/3 PASS
 ```

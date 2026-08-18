@@ -6,8 +6,8 @@
 
 | 项 | 结果 | 证据 |
 |---|---|---|
-| 单元测试 | 1261 通过 | `uv run pytest tests/ -q` |
-| 类型检查 | 96 个文件 mypy 干净 | `uv run mypy src/ apps/` |
+| 单元测试 | 1562 通过 | `uv run pytest tests/ -q` |
+| 类型检查 | 103 文件 mypy 干净 | `uv run mypy src/ apps/` |
 | 静态检查 | ruff check / format 通过 | `uv run ruff check .` / `uv run ruff format --check` |
 | 故障注入 | 3/3 场景 PASS | `uv run python tests/performance/fault_injection.py` |
 | 检索消融 | 42 条查询 × 3 配置 | `evals/reports/ablation_after_keyword_fix.json` |
@@ -93,11 +93,12 @@ uv run locust -f tests/performance/locustfile.py \
 ## 6. 复现全部数字
 
 ```bash
-uv run pytest tests/ -q                      # 1207 通过
-uv run mypy src                                 # 65 文件干净
+uv run pytest tests/ -q                      # 1562 通过
+uv run mypy src/ apps/                       # 103 文件干净
 uv run ruff check . && uv run ruff format --check
 uv run python tests/performance/fault_injection.py   # 3/3 PASS
 uv run python evals/scripts/run_ablation.py          # 42 查询消融
 uv run evals/run_all.py                              # 175 条五大分类
 uv run python evals/scripts/run_security_eval.py     # 25 条安全守卫
+uv run python evals/run_engineering_metrics.py       # 四维度工程化指标统一评测（见 docs/14）
 ```
