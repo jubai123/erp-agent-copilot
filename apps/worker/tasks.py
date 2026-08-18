@@ -25,7 +25,7 @@ from apps.worker.celery_app import celery_app
 from apps.worker.executor import resolve_erp_executor
 from apps.worker.graph_builder import build_worker_graph
 from apps.worker.llm_planner import resolve_llm_plan_node
-from erp_copilot.agent.recovery import RunRecovery
+from erp_copilot.agent.recovery import RunRecovery, build_write_reconciler
 from erp_copilot.agent.state import AgentState
 from erp_copilot.application.run_persistence import make_status_event_sink, persist_run
 from erp_copilot.domain.entities import Run
@@ -127,7 +127,15 @@ def execute_run(
         # from its latest checkpoint (reconciled for writes) instead of restarting
         # from a blank state — otherwise a decided approval or partial execution
         # would be lost. A fresh run has no checkpoint and starts blank.
-        recovery = RunRecovery(session, saver=saver)
+        # The reconciler reads the external ERP (getOrderByOrderId) for a PENDING
+        # write whose external_operation_id is recorded, settling it when the
+        # outside world confirms (docs/06 §8) instead of routing every one to a
+        # human.
+        recovery = RunRecovery(
+            session,
+            saver=saver,
+            reconciler=build_write_reconciler(resolve_erp_executor(settings)),
+        )
         resumed = recovery.load(run.id, run.tenant_id)
         if resumed.resumed and resumed.state is not None:
             state = resumed.state

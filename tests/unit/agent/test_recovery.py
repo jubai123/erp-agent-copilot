@@ -17,12 +17,18 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session
 
-from erp_copilot.agent.recovery import RunRecovery
+from erp_copilot.agent.recovery import (
+    Reconciliation,
+    ReconciliationOutcome,
+    RunRecovery,
+    build_write_reconciler,
+)
 from erp_copilot.agent.state import (
     AgentState,
     AgentStatus,
@@ -34,6 +40,7 @@ from erp_copilot.agent.state import (
 from erp_copilot.domain.entities import AgentCheckpoint, IdempotencyRecord
 from erp_copilot.domain.enums import StepStatus, ToolRiskLevel
 from erp_copilot.memory.checkpoint import CheckpointSaver
+from erp_copilot.tools.tool_result import ToolResult
 
 
 @pytest.fixture()
@@ -88,7 +95,14 @@ def _state(**overrides: object) -> AgentState:
     return AgentState(**data)
 
 
-def _add_record(engine: Engine, *, key: str, step: str, status: str) -> None:
+def _add_record(
+    engine: Engine,
+    *,
+    key: str,
+    step: str,
+    status: str,
+    external_operation_id: str | None = None,
+) -> None:
     with Session(engine) as db:
         db.add(
             IdempotencyRecord(
@@ -98,6 +112,7 @@ def _add_record(engine: Engine, *, key: str, step: str, status: str) -> None:
                 idempotency_key=key,
                 status=status,
                 request_payload="{}",
+                external_operation_id=external_operation_id,
             )
         )
         db.commit()
@@ -260,3 +275,158 @@ class TestStatePreservation:
             "PREVIOUS",
             "RECOVERY_RECONCILIATION_REQUIRED",
         ]
+
+
+class TestActiveReconciliation:
+    """With a reconciler injected, recovery settles PENDING writes by querying
+    the external system instead of unconditionally routing to human (docs/06 §8
+    "查询外部操作结果或转人工"). The reconciler reports APPLIED / NOT_APPLIED /
+    UNKNOWN; only UNKNOWN keeps RECOVERY_RECONCILIATION_REQUIRED.
+    """
+
+    def _record(self, engine: Engine, key: str = "k1") -> IdempotencyRecord:
+        with Session(engine) as db:
+            return db.query(IdempotencyRecord).filter_by(idempotency_key=key).one()
+
+    def _recovery(
+        self,
+        engine: Engine,
+        outcome: ReconciliationOutcome,
+        payload: str | None = None,
+    ) -> RunRecovery:
+        with Session(engine) as db:
+            CheckpointSaver(db).save("execute_ready_steps", _state())
+
+        def reconciler(record: IdempotencyRecord) -> Reconciliation:
+            return Reconciliation(outcome, result_payload=payload)
+
+        return RunRecovery(Session(engine), reconciler=reconciler)
+
+    def test_applied_settles_record_completed_and_resumes(self, engine: Engine) -> None:
+        _add_record(
+            engine, key="k1", step="s1", status="PENDING", external_operation_id="o1"
+        )
+
+        result = self._recovery(
+            engine, ReconciliationOutcome.APPLIED, '{"order_id": "o1"}'
+        ).load("r1", "t1")
+
+        assert result.reconciled_steps == ()
+        assert result.resumed is True
+        assert result.state is not None
+        assert not [
+            e for e in result.state.errors if e.code == "RECOVERY_RECONCILIATION_REQUIRED"
+        ]
+        record = self._record(engine)
+        assert record.status == "COMPLETED"
+        assert record.result_payload == '{"order_id": "o1"}'
+
+    def test_not_applied_marks_record_failed_for_safe_retry(self, engine: Engine) -> None:
+        _add_record(
+            engine, key="k1", step="s1", status="PENDING", external_operation_id="o1"
+        )
+
+        result = self._recovery(engine, ReconciliationOutcome.NOT_APPLIED).load("r1", "t1")
+
+        assert result.reconciled_steps == ()
+        assert result.state is not None
+        assert not [
+            e for e in result.state.errors if e.code == "RECOVERY_RECONCILIATION_REQUIRED"
+        ]
+        assert self._record(engine).status == "FAILED"
+
+    def test_unknown_keeps_human_reconciliation(self, engine: Engine) -> None:
+        _add_record(
+            engine, key="k1", step="s1", status="PENDING", external_operation_id="o1"
+        )
+
+        result = self._recovery(engine, ReconciliationOutcome.UNKNOWN).load("r1", "t1")
+
+        assert result.reconciled_steps == ("s1",)
+        assert result.state is not None
+        assert [e.code for e in result.state.errors] == ["RECOVERY_RECONCILIATION_REQUIRED"]
+        assert self._record(engine).status == "PENDING"
+
+    def test_applied_without_payload_defaults_empty_result(self, engine: Engine) -> None:
+        _add_record(
+            engine, key="k1", step="s1", status="PENDING", external_operation_id="o1"
+        )
+
+        self._recovery(engine, ReconciliationOutcome.APPLIED).load("r1", "t1")
+
+        record = self._record(engine)
+        assert record.status == "COMPLETED"
+        assert record.result_payload == "{}"
+
+
+class TestWriteReconciler:
+    """build_write_reconciler reads the external ERP for a PENDING write's
+    operation id (docs/06 §8). APPLIED carries the serialized external result,
+    NOT_APPLIED when the outside world has no trace, UNKNOWN when there is no
+    handle or the query gives no clear answer.
+    """
+
+    def _record(self, *, external_operation_id: str | None = "o1") -> IdempotencyRecord:
+        return IdempotencyRecord(
+            tenant_id="t1",
+            run_id="r1",
+            step_id="s1",
+            idempotency_key="k1",
+            status="PENDING",
+            request_payload="{}",
+            external_operation_id=external_operation_id,
+        )
+
+    def test_applied_when_external_order_found(self) -> None:
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            assert tool_name == "getOrderByOrderId"
+            assert arguments == {"order_id": "o1"}
+            return ToolResult.success(
+                tool_version_id="getOrderByOrderId",
+                data={"order_id": "o1", "status": "CREATED"},
+            )
+
+        settlement = build_write_reconciler(executor)(self._record())
+
+        assert settlement.outcome is ReconciliationOutcome.APPLIED
+        assert settlement.result_payload == '{"order_id": "o1", "status": "CREATED"}'
+
+    def test_not_applied_when_order_missing(self) -> None:
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            return ToolResult.failure(
+                tool_version_id="getOrderByOrderId",
+                error_code="ORDER_NOT_FOUND",
+                error_message="not found",
+            )
+
+        settlement = build_write_reconciler(executor)(self._record())
+
+        assert settlement.outcome is ReconciliationOutcome.NOT_APPLIED
+        assert settlement.result_payload is None
+
+    def test_no_external_handle_is_unknown_without_calling_executor(self) -> None:
+        calls: list[str] = []
+
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            calls.append(tool_name)
+            raise AssertionError("executor must not run without a handle")
+
+        settlement = build_write_reconciler(executor)(
+            self._record(external_operation_id=None)
+        )
+
+        assert settlement.outcome is ReconciliationOutcome.UNKNOWN
+        assert calls == []
+
+    def test_upstream_failure_is_unknown(self) -> None:
+        async def executor(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            return ToolResult.failure(
+                tool_version_id="getOrderByOrderId",
+                error_code="TIMEOUT",
+                error_message="gateway timeout",
+                is_retryable=True,
+            )
+
+        settlement = build_write_reconciler(executor)(self._record())
+
+        assert settlement.outcome is ReconciliationOutcome.UNKNOWN
