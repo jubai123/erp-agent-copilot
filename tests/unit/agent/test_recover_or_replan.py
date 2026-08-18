@@ -16,6 +16,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+import erp_copilot.agent.nodes.recover_or_replan as recover_mod
 from erp_copilot.agent.nodes.recover_or_replan import (
     MAX_REPLANS,
     MAX_RETRIES,
@@ -31,6 +34,7 @@ from erp_copilot.agent.state import (
     StepResult,
 )
 from erp_copilot.domain.enums import StepStatus, ToolRiskLevel
+from erp_copilot.observability.metrics import create_metrics, generate_latest
 
 
 def _step(step_id: str = "s1", **overrides: object) -> PlanStep:
@@ -240,3 +244,73 @@ class TestNoAction:
     def test_succeeded_without_errors_is_a_noop(self) -> None:
         updates = _invoke(_state(status=AgentStatus.SUCCEEDED))
         assert updates == {}
+
+
+class TestRecoveryMetrics:
+    """Task 7.3: each decision family advances its own Prometheus counter.
+
+    The counters are the D2 retry_rate/recovery_rate source — the node incs
+    them where the decision is made, keyed by semantic (retries/replans/
+    abandoned) so aggregations can tell "retried a lot" from "gave up a lot".
+    """
+
+    def _wired(self, monkeypatch: pytest.MonkeyPatch) -> object:
+        metrics = create_metrics()
+        monkeypatch.setattr(recover_mod, "METRICS", metrics)
+        return metrics
+
+    def test_retry_branch_increments_retries_counter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metrics = self._wired(monkeypatch)
+        plan = Plan(steps=[_step("s1")])
+        state = _state(
+            status=AgentStatus.RETRYING,
+            plan=plan,
+            step_results={"s1": _failed("s1", is_retryable=True)},
+        )
+        assert _invoke(state)["status"] == AgentStatus.EXECUTING
+
+        text = generate_latest(metrics)
+        assert "erp_run_retries_total 1.0" in text
+        assert "erp_run_replans_total 0.0" in text
+        assert "erp_run_abandoned_total 0.0" in text
+
+    def test_replan_branch_increments_replans_counter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metrics = self._wired(monkeypatch)
+        plan = Plan(steps=[_step("s1")])
+        state = _state(
+            status=AgentStatus.REPLANNING,
+            plan=plan,
+            step_results={"s1": _failed("s1", is_retryable=False)},
+        )
+        assert _invoke(state)["status"] == AgentStatus.PLANNING
+
+        text = generate_latest(metrics)
+        assert "erp_run_replans_total 1.0" in text
+        assert "erp_run_retries_total 0.0" in text
+
+    def test_give_up_branch_increments_abandoned_counter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metrics = self._wired(monkeypatch)
+        # No plan in the RETRYING branch routes to RECOVERY_GIVE_UP.
+        state = _state(status=AgentStatus.RETRYING)
+        assert _invoke(state)["status"] == AgentStatus.FAILED
+
+        text = generate_latest(metrics)
+        assert "erp_run_abandoned_total 1.0" in text
+        assert "erp_run_retries_total 0.0" in text
+
+    def test_noop_does_not_increment_any_counter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metrics = self._wired(monkeypatch)
+        assert _invoke(_state(status=AgentStatus.SUCCEEDED)) == {}
+
+        text = generate_latest(metrics)
+        assert "erp_run_retries_total 0.0" in text
+        assert "erp_run_replans_total 0.0" in text
+        assert "erp_run_abandoned_total 0.0" in text

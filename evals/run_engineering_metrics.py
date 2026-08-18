@@ -80,11 +80,14 @@ REPORT_DIR = Path(__file__).resolve().parent / "reports"
 _NODE_SPAN_DEF_FILE = SRC_DIR / "observability" / "tracing.py"
 _LLM_CALL_DEF_FILE = SRC_DIR / "observability" / "langfuse.py"
 
-# The five Prometheus families the platform exposes (observability/metrics.py).
+# The eight Prometheus families the platform exposes (observability/metrics.py).
 METRIC_FAMILIES = (
     "erp_runs_created_total",
     "erp_runs_completed_total",
     "erp_runs_failed_total",
+    "erp_run_retries_total",
+    "erp_run_replans_total",
+    "erp_run_abandoned_total",
     "erp_phase_latency_seconds",
     "erp_worker_queue_length",
 )
@@ -136,6 +139,57 @@ def _metric_family_names(text: str) -> set[str]:
         if line.startswith("# HELP "):
             names.add(line.split()[2])
     return names
+
+
+def _counter_value(text: str, family: str) -> float:
+    """Current value of one counter family from exposition text (0 if absent)."""
+    for line in text.splitlines():
+        if line.startswith(family + " "):
+            try:
+                return float(line.split()[1])
+            except (ValueError, IndexError):
+                return 0.0
+    return 0.0
+
+
+def _recovery_rate_metrics(metrics: Metrics) -> list[Metric]:
+    """Retry/recovery rates derived from the real counters (task 7.3).
+
+    The D2 structural gap is closed once the counter families are registered:
+    the rates are then measurable (0.0 when no retries/replans occurred) and
+    reported MEASURED; a missing family falls back to the honest NOT_CONFIGURED.
+    """
+    text = generate_latest(metrics)
+    families = _metric_family_names(text)
+    runs = _counter_value(text, "erp_runs_created_total")
+    retries = _counter_value(text, "erp_run_retries_total")
+    replans = _counter_value(text, "erp_run_replans_total")
+    return [
+        _metric(
+            "retry_rate",
+            round(retries / runs, 4) if runs else 0.0,
+            "rate",
+            "记录",
+            MEASURED if "erp_run_retries_total" in families else NOT_CONFIGURED,
+            (
+                "erp_run_retries_total 已接线"
+                if "erp_run_retries_total" in families
+                else "retry_count 仅在 AgentState，无 Prometheus 指标"
+            ),
+        ),
+        _metric(
+            "recovery_rate",
+            round(replans / runs, 4) if runs else 0.0,
+            "rate",
+            "记录",
+            MEASURED if "erp_run_replans_total" in families else NOT_CONFIGURED,
+            (
+                "erp_run_replans_total 已接线"
+                if "erp_run_replans_total" in families
+                else "replan_count 仅在 AgentState，无 Prometheus 指标"
+            ),
+        ),
+    ]
 
 
 def _scan_call_sites(dirs: Iterable[Path], patterns: tuple[str, ...], exclude: set[Path]) -> int:
@@ -462,34 +516,24 @@ def collect_quality(
     return _group("quality", _group_status(metrics), metrics)
 
 
-def collect_e2e_runtime(driver: Callable[[], dict[str, object]] | None = None) -> GroupResult:
+def collect_e2e_runtime(
+    driver: Callable[[], dict[str, object]] | None = None,
+    metrics: Metrics | None = None,
+) -> GroupResult:
     """End-to-end Agent runtime: real runs, phase latency, success rate.
 
-    The retry/recovery rates are structural gaps (no production metrics yet) and
-    are reported as NOT_CONFIGURED even when the driver succeeds — they are not
-    papered over.
+    The retry/recovery rates (task 7.3) are derived from the Prometheus counters
+    the recovery node advances; they are MEASURED once the counter families are
+    registered (0.0 when no retries/replans occurred), NOT_CONFIGURED otherwise.
+    *metrics* is the registry the rates are read from — tests inject a fresh one,
+    production defaults to the module singleton the e2e driver writes to.
     """
     if driver is None:
         driver = _run_real_e2e
+    if metrics is None:
+        from erp_copilot.observability.metrics import METRICS
 
-    gap_metrics: list[Metric] = [
-        _metric(
-            "retry_rate",
-            "待新增生产指标",
-            "",
-            "待新增",
-            NOT_CONFIGURED,
-            "retry_count 仅在 AgentState，无 Prometheus 指标",
-        ),
-        _metric(
-            "recovery_rate",
-            "待新增生产指标",
-            "",
-            "待新增",
-            NOT_CONFIGURED,
-            "replan_count 仅在 AgentState，无 Prometheus 指标",
-        ),
-    ]
+        metrics = METRICS
 
     try:
         m = driver()
@@ -509,7 +553,7 @@ def collect_e2e_runtime(driver: Callable[[], dict[str, object]] | None = None) -
             _metric("phase_latency_verify_ms", 0.0, "ms", "记录", SKIPPED, ""),
             _metric("execution_success_rate", 0.0, "rate", "≥ 0.99", SKIPPED, ""),
         ]
-        return _group("e2e_runtime", SKIPPED, skipped + gap_metrics)
+        return _group("e2e_runtime", SKIPPED, skipped + _recovery_rate_metrics(metrics))
 
     phase = _as_dict(m.get("phase_latency_ms"))
     happy_ok = m.get("happy_path_success") is True
@@ -520,7 +564,7 @@ def collect_e2e_runtime(driver: Callable[[], dict[str, object]] | None = None) -
     # a healthy driver as failed.
     success_rate = (int(happy_ok) + int(timeout_ok)) / 2
 
-    metrics: list[Metric] = [
+    measured: list[Metric] = [
         _metric(
             "happy_path_success",
             happy_ok,
@@ -570,7 +614,11 @@ def collect_e2e_runtime(driver: Callable[[], dict[str, object]] | None = None) -
             "场景到达预期终态比例 (happy=COMPLETED, timeout=FAILED)",
         ),
     ]
-    return _group("e2e_runtime", _group_status(metrics), metrics + gap_metrics)
+    return _group(
+        "e2e_runtime",
+        _group_status(measured),
+        measured + _recovery_rate_metrics(metrics),
+    )
 
 
 def collect_observability(
@@ -605,9 +653,9 @@ def collect_observability(
             "metric_families_present",
             f"{len(METRIC_FAMILIES) - len(missing)}/{len(METRIC_FAMILIES)}",
             "families",
-            "5 族",
+            "8 族",
             PASS if not missing else FAIL,
-            f"缺失: {missing}" if missing else "5 族齐全",
+            f"缺失: {missing}" if missing else "8 族齐全",
         ),
         _metric(
             "phase_latency_phase_label",

@@ -29,6 +29,7 @@ from typing import Any
 from erp_copilot.agent.recovery import RECOVERY_RECONCILIATION_REQUIRED
 from erp_copilot.agent.state import AgentState, AgentStatus, StateError
 from erp_copilot.domain.enums import StepStatus, ToolRiskLevel
+from erp_copilot.observability.metrics import METRICS
 
 # Run-level recovery budgets. Both counters live on AgentState; a mixed
 # retry/replan sequence terminates within (MAX_RETRIES + 1) * (MAX_REPLANS + 1)
@@ -38,6 +39,9 @@ MAX_REPLANS = 1
 
 
 def _give_up(state: AgentState, code: str, message: str) -> dict[str, Any]:
+    # Task 7.3: every give-up path funnels through here, so a single inc covers
+    # human reconciliation, no-plan, unsafe write retry, and budget exhaustion.
+    METRICS.runs_abandoned.inc()
     return {
         "status": AgentStatus.FAILED,
         "errors": [*state.errors, StateError(code=code, message=message)],
@@ -97,6 +101,7 @@ def recover_or_replan(state: AgentState) -> dict[str, Any]:
                 "RETRY_BUDGET_EXHAUSTED",
                 f"重试预算（{MAX_RETRIES}）已耗尽，放弃自动重试",
             )
+        METRICS.runs_retries.inc()
         return {
             "status": AgentStatus.EXECUTING,
             "retry_count": state.retry_count + 1,
@@ -114,6 +119,7 @@ def recover_or_replan(state: AgentState) -> dict[str, Any]:
             )
         # step_results is deliberately NOT reset: the resume guard uses it to
         # skip completed (possibly WRITE) steps on the replanned pass.
+        METRICS.runs_replans.inc()
         return {
             "status": AgentStatus.PLANNING,
             "replan_count": state.replan_count + 1,

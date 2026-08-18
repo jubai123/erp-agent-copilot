@@ -1782,6 +1782,8 @@
 
 ## 任务 7.3：重试/重规划/放弃率 Prometheus 计数器
 
+> **状态：✅ 已完成**（2026-08-19，`metrics.py` 新增 `erp_run_retries_total` / `erp_run_replans_total` / `erp_run_abandoned_total` 三计数器；`recover_or_replan.py` retry/replan/give-up 三分支各 `inc()`，其中 `_give_up` 单点覆盖全部 5 条放弃路径；评估器 `collect_e2e_runtime` 新增 `metrics` 注入参数，retry_rate/recovery_rate 从真实计数器解析，D2 从 NOT_CONFIGURED → MEASURED，`metric_families_present` 5 族 → 8 族。单测钉住：recover 三分支各 inc 对应计数器 + 评估器 2 次 run 1 次 retry → retry_rate=0.5 MEASURED + 驱动异常时 SKIPPED 组仍保留 MEASURED 速率。验证：三个测试文件 52 passed + 全量单测 1486 passed + ruff/mypy src 干净。注：`line_coverage_percent` NOT_CONFIGURED（pytest-cov 工具缺口）为阶段收尾独立事项，overall 翻转需 7.4/7.5 完成后重生成报告）
+
 **目标**：把 `AgentState` 里已有的 `retry_count`/`replan_count` 与放弃路径上到 Prometheus，闭合 D2 缺口「retry_rate/recovery_rate NOT_CONFIGURED」。
 
 **交付物**：

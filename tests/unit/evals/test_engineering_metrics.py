@@ -149,13 +149,28 @@ class TestCollectE2ERuntime:
         assert names["execution_success_rate"]["value"] == 0.5
         assert names["execution_success_rate"]["status"] == FAIL
 
-    def test_reports_honest_gaps_even_when_driver_succeeds(self) -> None:
-        result = collect_e2e_runtime(driver=lambda: {"happy_path_success": True})
+    def test_retry_and_recovery_rates_measured_from_counters(self) -> None:
+        # Task 7.3: the D2 structural gap is closed — the counters exist and the
+        # evaluator reads their actual values. 2 runs, 1 retry -> retry_rate 0.5.
+        metrics = create_metrics()
+        metrics.runs_created.inc()
+        metrics.runs_created.inc()
+        metrics.runs_retries.inc()
+        result = collect_e2e_runtime(
+            driver=lambda: {
+                "happy_path_success": True,
+                "timeout_detected": True,
+                "phase_latency_ms": {},
+            },
+            metrics=metrics,
+        )
         names = {m["name"]: m for m in result["metrics"]}
-        assert names["retry_rate"]["status"] == NOT_CONFIGURED
-        assert names["recovery_rate"]["status"] == NOT_CONFIGURED
+        assert names["retry_rate"]["status"] == MEASURED
+        assert names["retry_rate"]["value"] == 0.5
+        assert names["recovery_rate"]["status"] == MEASURED
+        assert names["recovery_rate"]["value"] == 0.0
 
-    def test_driver_failure_marks_group_skipped_but_keeps_gaps(self) -> None:
+    def test_driver_failure_marks_group_skipped_but_keeps_rate_metrics(self) -> None:
         def _boom() -> dict[str, object]:
             raise RuntimeError("database unreachable")
 
@@ -163,7 +178,10 @@ class TestCollectE2ERuntime:
         assert result["status"] == SKIPPED
         names = {m["name"]: m for m in result["metrics"]}
         assert names["happy_path_success"]["status"] == SKIPPED
-        assert names["retry_rate"]["status"] == NOT_CONFIGURED
+        # The counters are wired regardless of the driver, so the rates stay
+        # measurable even when the e2e run itself could not complete.
+        assert names["retry_rate"]["status"] == MEASURED
+        assert names["recovery_rate"]["status"] == MEASURED
 
 
 class TestCollectObservability:
