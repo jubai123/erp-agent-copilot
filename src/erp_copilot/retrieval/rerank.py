@@ -113,7 +113,11 @@ class CrossEncoderReranker:
     min_relevance: float | None = None
 
     def __init__(self, model_name: str) -> None:
-        from sentence_transformers import CrossEncoder
+        # sentence-transformers lives in the optional `rerank` extra; no default
+        # path constructs this class (build_reranker wires DashScopeReranker and
+        # the deterministic heuristic only). Lazy import keeps the runtime light
+        # when the extra is absent, and the ignore is the opt-in marker mypy needs.
+        from sentence_transformers import CrossEncoder  # type: ignore[import-not-found]
 
         self._model = CrossEncoder(model_name)
 
