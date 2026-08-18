@@ -1827,6 +1827,8 @@
 
 ## 任务 7.5：修复 phase_latency 的 plan/verify 测量
 
+> **状态：✅ 已完成**（2026-08-19，根因是 Windows 上 `time.monotonic()` 为 GetTickCount64（~15.6ms 粒度），plan/verify 是快同步节点（<15.6ms），`time.monotonic() - start` 恰好为 0.0 → 直方图 count>0 但 sum=0 → 均值渲染 0ms。`_observe_phase` 同步/异步两分支改用 `time.perf_counter()`（QPC ~100ns）。单测钉住：真实图调用断言三相位 count≥1 **且 sum>0**（count 断言太弱，原版本就放过此 bug）。验证：e2e 探针 plan 0.073ms / verify 0.049ms / execute 755ms 全非零；822 目标测试 + ruff 干净。教学：`monotonic` 保证单调不保证分辨率，`perf_counter` 才是短间隔计时工具；指标存在 ≠ 指标有数据——有计数但均值为 0 正是"接线失败"信号）
+
 **目标**：修正 `engineering_metrics.json` 中 plan=0ms / verify=0ms 的埋点问题，让阶段延迟真正可信。
 
 **交付物**：

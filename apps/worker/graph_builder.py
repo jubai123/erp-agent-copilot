@@ -76,13 +76,19 @@ def _observe_phase(phase: str, node: Callable[..., Any]) -> Callable[..., Any]:
     execute node keeps its coroutine shape through the wrapper (LangGraph and
     the checkpoint wrapper branch on iscoroutinefunction). The measured span is
     the node body only — checkpoint persistence runs outside it.
+
+    Timing uses time.perf_counter, not time.monotonic: monotonic's clock on
+    Windows is GetTickCount64 (~15.6ms ticks), so a fast sync phase node (plan /
+    verify) measures exactly 0.0s and the phase histogram's sum stays 0 —
+    perf_counter is the high-resolution interval clock (QPC, ~100ns ticks) and
+    the correct tool for measuring short durations.
     """
     if inspect.iscoroutinefunction(node):
 
         async def _async_wrapped(state: AgentState) -> dict[str, Any]:
-            start = time.monotonic()
+            start = time.perf_counter()
             updates = await node(state)
-            METRICS.phase_latency.labels(phase=phase).observe(time.monotonic() - start)
+            METRICS.phase_latency.labels(phase=phase).observe(time.perf_counter() - start)
             if not isinstance(updates, dict):
                 raise TypeError(f"phase node returned {type(updates).__name__}, expected dict")
             return updates
@@ -90,9 +96,9 @@ def _observe_phase(phase: str, node: Callable[..., Any]) -> Callable[..., Any]:
         return _async_wrapped
 
     def _sync_wrapped(state: AgentState) -> dict[str, Any]:
-        start = time.monotonic()
+        start = time.perf_counter()
         updates = node(state)
-        METRICS.phase_latency.labels(phase=phase).observe(time.monotonic() - start)
+        METRICS.phase_latency.labels(phase=phase).observe(time.perf_counter() - start)
         if not isinstance(updates, dict):
             raise TypeError(f"phase node returned {type(updates).__name__}, expected dict")
         return updates
@@ -186,8 +192,10 @@ def build_worker_graph(
     """
     if retrieve_node is None:
         retrieve_node = build_worker_retrieve_node(session, run_id=run_id)
-    llm_node = None if llm_plan_node is None else node_span("build_plan_llm")(
-        _observe_phase("plan_llm", llm_plan_node)
+    llm_node = (
+        None
+        if llm_plan_node is None
+        else node_span("build_plan_llm")(_observe_phase("plan_llm", llm_plan_node))
     )
     # Task 7.1: every injected node is wrapped in node_span (task 6.2) so a real
     # run emits one OTel span per node — the node_name matches the graph node
@@ -198,9 +206,7 @@ def build_worker_graph(
         retrieve_node=(
             node_span("retrieve_context")(retrieve_node) if retrieve_node is not None else None
         ),
-        plan_node=node_span("build_plan")(
-            _observe_phase("plan", build_deterministic_plan_node())
-        ),
+        plan_node=node_span("build_plan")(_observe_phase("plan", build_deterministic_plan_node())),
         llm_plan_node=llm_node,
         validate_node=node_span("validate_plan")(
             build_validate_plan_node(tool_schemas=WORKER_TOOL_SCHEMAS)

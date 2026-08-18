@@ -54,7 +54,7 @@ from erp_copilot.domain.entities import (  # noqa: E402
     UserRole,
 )
 from erp_copilot.memory.checkpoint import CheckpointSaver  # noqa: E402
-from erp_copilot.observability.metrics import METRICS, generate_latest  # noqa: E402
+from erp_copilot.observability.metrics import METRICS, create_metrics, generate_latest  # noqa: E402
 from erp_copilot.observability.tracing import setup_tracing  # noqa: E402
 from erp_copilot.security.approval import (  # noqa: E402
     ApprovalDecisionService,
@@ -637,3 +637,65 @@ class TestWorkerGraphNodeSpans:
         assert "build_plan" in by_node
         assert "execute_ready_steps" in by_node
         assert "verify_results" in by_node
+
+
+def _phase_count(text: str, phase: str) -> float:
+    """Read a histogram's count sample for one phase from the exposition text."""
+    for line in text.splitlines():
+        if line.startswith("erp_phase_latency_seconds_count") and f'phase="{phase}"' in line:
+            return float(line.split()[-1])
+    return 0.0
+
+
+def _phase_sum(text: str, phase: str) -> float:
+    """Read a histogram's sum sample for one phase from the exposition text."""
+    for line in text.splitlines():
+        if line.startswith("erp_phase_latency_seconds_sum") and f'phase="{phase}"' in line:
+            return float(line.split()[-1])
+    return 0.0
+
+
+class TestWorkerPhaseLatency:
+    """Task 7.5: a real run records non-zero plan/execute/verify latency.
+
+    Mirrors TestWorkerGraphNodeSpans but reads the phase-latency histogram
+    instead of spans — the acceptance for phase_latency_plan_ms/verify_ms being
+    non-zero in the engineering-metrics report. The module-global METRICS is
+    swapped for a fresh registry so the assertion sees only this run's
+    observations; execute is an async node while plan/verify are sync, so the
+    sync/async dual-path in _observe_phase is what's under test. Both count and
+    sum are asserted: a counter that fires but measures 0.0 (time.monotonic's
+    coarse GetTickCount64 granularity on Windows) is exactly the bug this guard
+    exists for.
+    """
+
+    def test_real_run_records_nonzero_latency_for_all_three_phases(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import apps.worker.graph_builder as gb
+
+        metrics = create_metrics()
+        monkeypatch.setattr(gb, "METRICS", metrics)
+        tenant = _make_tenant(session)
+        user_id = _make_reader_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
+
+        graph = build_worker_graph(session, CheckpointSaver(session), run_id=run.id)
+        final = asyncio.run(
+            graph.ainvoke(
+                AgentState(
+                    run_id=run.id,
+                    tenant_id=tenant.id,
+                    user_id=user_id,
+                    query="查询苹果库存",
+                ).model_dump()
+            )
+        )
+        assert final["status"] == "succeeded"
+
+        text = generate_latest(metrics)
+        for phase in ("plan", "execute", "verify"):
+            assert _phase_count(text, phase) >= 1, f"phase {phase!r} not observed"
+            assert _phase_sum(text, phase) > 0.0, (
+                f"phase {phase!r} measured 0.0s — monotonic-clock granularity bug"
+            )
