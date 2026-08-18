@@ -49,6 +49,17 @@ os.environ.setdefault("API_KEY_PEPPER", "")
 os.environ.setdefault("ERP_API_BASE_URL", "")
 os.environ.setdefault("ERP_API_KEY", "")
 
+# Same hermeticity pin for the LLM planner: resolve_llm_plan_node only injects a
+# real Tier2/Tier3 client when Settings discovers an API key. A key in the
+# developer's shell (LLM/DASHSCOPE/DEEPSEEK) would otherwise make worker tests
+# build a live client and break the offline ROUTED_TIER23_NO_LLM contract.
+# Force-set (not setdefault) all three discovery envs empty — unlike the ERP
+# vars above, LLM keys are commonly exported in dev shells and setdefault would
+# not override them. Tests that need a key opt in explicitly via monkeypatch.
+os.environ["LLM_API_KEY"] = ""
+os.environ["DASHSCOPE_API_KEY"] = ""
+os.environ["DEEPSEEK_API_KEY"] = ""
+
 
 def _ensure_test_database(url: str) -> str:
     """Create the test database (and pgvector) if missing; return *url*.

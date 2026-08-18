@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from apps.api.schemas.runs import ApproveRunRequest, CreateRunRequest, RunResponse
 from apps.worker.executor import resolve_erp_executor
 from apps.worker.graph_builder import build_worker_graph
+from apps.worker.llm_planner import resolve_llm_plan_node
 from erp_copilot.agent.nodes.classify_intent import classify_intent
 from erp_copilot.agent.state import AgentState, AgentStatus, ApprovalStatus
 from erp_copilot.application.events import append_run_event
@@ -232,12 +233,14 @@ async def approve_run(
 
         decision = ApprovalStatus.APPROVED if body.decision == "APPROVE" else ApprovalStatus.DENIED
         saver = CheckpointSaver(session, event_sink=make_status_event_sink(session))
+        settings = Settings()  # type: ignore[call-arg]
         decided, result = await decide_and_resume(
             build_worker_graph(
                 session,
                 saver,
                 run_id=run_id,
-                executor=resolve_erp_executor(Settings()),
+                executor=resolve_erp_executor(settings),  # type: ignore[call-arg]
+                llm_plan_node=resolve_llm_plan_node(settings),
             ),
             saver,
             session,

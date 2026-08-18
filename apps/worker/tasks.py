@@ -24,6 +24,7 @@ from langgraph.graph.state import CompiledStateGraph
 from apps.worker.celery_app import celery_app
 from apps.worker.executor import resolve_erp_executor
 from apps.worker.graph_builder import build_worker_graph
+from apps.worker.llm_planner import resolve_llm_plan_node
 from erp_copilot.agent.recovery import RunRecovery
 from erp_copilot.agent.state import AgentState
 from erp_copilot.application.run_persistence import make_status_event_sink, persist_run
@@ -113,11 +114,13 @@ def execute_run(
         session.commit()
 
         saver = CheckpointSaver(session, event_sink=make_status_event_sink(session))
+        settings = Settings()  # type: ignore[call-arg]
         graph = build_worker_graph(
             session,
             saver,
             run_id=run.id,
-            executor=resolve_erp_executor(Settings()),
+            executor=resolve_erp_executor(settings),  # type: ignore[call-arg]
+            llm_plan_node=resolve_llm_plan_node(settings),
         )
 
         # Task 5.8: a run that was mid-flight when the worker (re)started resumes

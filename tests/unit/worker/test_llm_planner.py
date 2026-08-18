@@ -1,0 +1,131 @@
+"""Unit tests for the worker's real-LLM plan-node wiring (Tier2/Tier3 funnel).
+
+``resolve_llm_plan_node`` is the worker's seam for the three-layer funnel's
+Tier2/Tier3 planner: it builds the real ``build_plan_node`` backed by an
+OpenAI-compatible chat client (DeepSeek) from Settings, wrapped in ``llm_call``
+so every planning call lands on an OTel span, an ``LLM_CALL`` log line and a
+Langfuse generation. Mirroring ``resolve_erp_executor``'s "configured or
+offline fallback" pattern, an empty ``llm_api_key`` returns ``None`` so the
+worker stays offline and tier2/3 queries keep failing honestly
+(``ROUTED_TIER23_NO_LLM``) instead of over-grabbing.
+
+The shared ``build_real_llm_complete`` factory (moved here from the eval so
+eval and worker share the A/B-proven client configuration) is exercised with a
+fake client, so no network is ever touched.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from pydantic import SecretStr
+
+import apps.worker.llm_planner as llm_planner
+from apps.worker.graph_builder import WORKER_TOOL_SCHEMAS
+from apps.worker.llm_planner import build_real_llm_complete, resolve_llm_plan_node
+from erp_copilot.infrastructure.config import Settings
+
+
+def _settings_with_key() -> Settings:
+    return Settings(llm_api_key=SecretStr("fake-key"))
+
+
+class _FakeUsage:
+    prompt_tokens = 5
+    completion_tokens = 7
+
+
+class _FakeMessage:
+    content = "{}"
+
+
+class _FakeChoice:
+    message = _FakeMessage()
+
+
+class _FakeResponse:
+    choices = [_FakeChoice()]
+    usage = _FakeUsage()
+
+
+class _FakeCompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def create(self, **kwargs: Any) -> _FakeResponse:
+        self.calls.append(kwargs)
+        return _FakeResponse()
+
+
+class _FakeChat:
+    def __init__(self) -> None:
+        self.completions = _FakeCompletions()
+
+
+class _FakeClient:
+    def __init__(self) -> None:
+        self.chat = _FakeChat()
+
+
+def test_resolve_returns_none_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _should_not_build(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("must not build a plan node without an LLM key")
+
+    monkeypatch.setattr(llm_planner, "build_plan_node", _should_not_build)
+
+    assert resolve_llm_plan_node(Settings()) is None
+
+
+def test_resolve_wires_worker_tool_schemas(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def _capture_build(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return lambda state: {}
+
+    monkeypatch.setattr(llm_planner, "build_plan_node", _capture_build)
+
+    node = resolve_llm_plan_node(_settings_with_key())
+
+    assert callable(node)
+    assert captured["available_tools"] == set(WORKER_TOOL_SCHEMAS)
+    assert captured["tool_schemas"] == WORKER_TOOL_SCHEMAS
+    assert callable(captured["llm_complete"])
+
+
+def test_resolve_llm_complete_calls_through_observability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _capture_build(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return lambda state: {}
+
+    monkeypatch.setattr(llm_planner, "build_plan_node", _capture_build)
+    monkeypatch.setattr(llm_planner, "_build_client", lambda _settings: _FakeClient())
+    monkeypatch.setattr(llm_planner, "_chat_once", lambda _c, _m, p: ("{}", None))
+
+    resolve_llm_plan_node(_settings_with_key())
+
+    # The llm_call wrapper must pass the completion through untouched.
+    assert captured["llm_complete"]("prompt-1") == "{}"
+
+
+def test_build_real_llm_complete_uses_proven_client_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient()
+    monkeypatch.setattr(llm_planner, "_build_client", lambda _settings: client)
+
+    settings = _settings_with_key()
+    llm_complete = build_real_llm_complete(settings)
+
+    assert llm_complete("查苹果库存") == "{}"
+    calls = client.chat.completions.calls
+    assert len(calls) == 1
+    assert calls[0]["model"] == settings.llm_model
+    assert calls[0]["temperature"] == 0.2
+    assert calls[0]["messages"] == [{"role": "user", "content": "查苹果库存"}]
+    assert calls[0]["response_format"] == {"type": "json_object"}

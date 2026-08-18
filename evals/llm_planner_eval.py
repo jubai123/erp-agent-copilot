@@ -20,7 +20,6 @@ import argparse
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from erp_copilot.agent.nodes.build_plan import SYSTEM_PROMPT, build_plan_node
 from erp_copilot.agent.nodes.classify_intent import classify_intent_node
@@ -33,9 +32,6 @@ from evals.harness import (
     run_category,
     write_report,
 )
-
-if TYPE_CHECKING:
-    from erp_copilot.infrastructure.config import Settings
 
 REPORT_DIR = Path(__file__).resolve().parent / "reports"
 
@@ -160,30 +156,6 @@ def evaluate_cases(
     }
 
 
-def build_real_llm_complete(settings: Settings) -> Callable[[str], str]:
-    """OpenAI-compatible chat client (DeepSeek) backed by Settings."""
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=settings.llm_api_key.get_secret_value(),
-        base_url=settings.llm_base_url,
-    )
-
-    def llm_complete(prompt: str) -> str:
-        resp = client.chat.completions.create(
-            model=settings.llm_model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            # DeepSeek JSON mode: fixes the baseline's 2 unparseable outputs
-            # (plan-047/048). The prompt already names JSON, which the mode
-            # requires.
-            response_format={"type": "json_object"},
-        )
-        return resp.choices[0].message.content or ""
-
-    return llm_complete
-
-
 def _print_summary(category: dict, num_cases: int) -> None:
     print(f"LLM planner eval over planning_50 ({num_cases} cases, mode={category['mode']})")
     print(f"  选型准确率 (tool_set_exact): {category['primary_score']:.2%}")
@@ -208,6 +180,7 @@ def main() -> None:
     args = parser.parse_args()
 
     from apps.worker.graph_builder import WORKER_TOOL_SCHEMAS
+    from apps.worker.llm_planner import build_real_llm_complete
     from erp_copilot.infrastructure.config import Settings
 
     settings = Settings()

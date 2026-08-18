@@ -269,7 +269,10 @@ class TestScenarios:
         session.refresh(run)
         assert json.loads(run.steps[0].output)["stock"] == 0
 
-    def test_query_without_product_fails_with_empty_plan(self, session: Session) -> None:
+    def test_query_without_product_fails_when_no_llm(self, session: Session) -> None:
+        # No product entity -> EMPTY_PLAN -> routed tier2 -> no injected LLM
+        # node in the offline worker -> honest fail (never over-grabbed by the
+        # deterministic layer).
         tenant = _make_tenant(session)
         run = _make_run(session, tenant.id)
 
@@ -278,7 +281,7 @@ class TestScenarios:
         assert result["status"] == "FAILED"
         session.refresh(run)
         assert run.status == "FAILED"
-        assert run.failure_code == "EMPTY_PLAN"
+        assert run.failure_code == "ROUTED_TIER23_NO_LLM"
 
 
 class TestDeadlineAndCancel:
@@ -440,13 +443,13 @@ class TestRecoveryAndFailureQueue:
         assert result["status"] == "FAILED"
         session.refresh(run)
         assert run.status == "FAILED"
-        assert run.failure_code == "EMPTY_PLAN"
+        assert run.failure_code == "ROUTED_TIER23_NO_LLM"
         assert run.failure_reason
         assert run.suggested_action
         event = session.query(RunEvent).filter_by(run_id=run.id, event_type="RUN_FAILED").first()
         assert event is not None
         payload = json.loads(event.payload)
-        assert payload["error_code"] == "EMPTY_PLAN"
+        assert payload["error_code"] == "ROUTED_TIER23_NO_LLM"
         assert payload["suggested_action"] == run.suggested_action
         queue = FailureQueue(session).list_needing_intervention(tenant.id)
         assert [q.id for q in queue] == [run.id]

@@ -93,16 +93,12 @@ class TestScorePlan:
         # contract-valid — passed stays True (selection + contract both hold).
         plan = Plan(
             steps=[
-                PlanStep(
-                    step_id="1", tool_name="getOrderByOrderId", arguments={"order_id": "x"}
-                ),
+                PlanStep(step_id="1", tool_name="getOrderByOrderId", arguments={"order_id": "x"}),
                 PlanStep(step_id="2", tool_name="getProductByName", arguments={"name": "苹果"}),
             ]
         )
         validation = validate_plan(plan, TOOLS)
-        s = score_plan(
-            _case(["getProductByName", "getOrderByOrderId"]), plan, validation
-        )
+        s = score_plan(_case(["getProductByName", "getOrderByOrderId"]), plan, validation)
         assert s["tool_seq_exact"] is False
         assert s["tool_set_exact"] is True
         assert s["contract_valid"] is True
