@@ -50,7 +50,7 @@
 | 故障注入 | **3/3 PASS**（崩溃恢复 / 超时重试 / 订单幂等；负例证明 harness 不虚绿） | `uv run python tests/performance/fault_injection.py` |
 | 安全评测 | 25 条：**拦截率 100%（20/20）、误报率 0%（0/5）**，确定性守卫伪 DNS | `uv run python evals/scripts/run_security_eval.py` |
 | 评测集 | 175 条 / 5 类（40+40+50+20+25）；五分类全部跑真实逻辑（tool_retrieval/planning/recover_or_replan/security 为 deterministic，knowledge_rag 为 retrieval_pipeline） | `uv run evals/run_all.py` |
-| 代码规模 | src 65 .py + apps 29 .py + tests 103 .py；git 329 跟踪文件；tag `v1.0.0` | `git ls-files \| wc -l` |
+| 代码规模 | src 69 .py + apps 34 .py + tests 120 .py；git 398 跟踪文件；tag `v1.0.0` | `git ls-files \| wc -l` |
 | 负载测试 | 50 并发 / 60s：**1385 请求 0 失败，吞吐 23.25 req/s，P50 20ms / P95 44ms / P99 57ms**（2026-08-11 本机实测，测试库） | `tests/performance/locustfile.py` |
 
 ## 5. 未完成项与诚实边界

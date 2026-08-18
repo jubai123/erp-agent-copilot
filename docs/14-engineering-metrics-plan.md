@@ -70,7 +70,7 @@
 
 | 指标 | 定义 | 测量方法 | 验收标准 | 当前基线 |
 |---|---|---|---|---|
-| 代码规模 | src/apps/tests 的 .py 数与总行数 | ast/Path 统计（零依赖） | 记录 | src 67 / apps 33 / tests 116 |
+| 代码规模 | src/apps/tests 的 .py 数与总行数 | ast/Path 统计（零依赖） | 记录 | src 69 / apps 34 / tests 120 |
 | 单测函数数 | `def test_*` 数量 | ast 扫描 tests/ | 记录 | 1266 |
 | 行覆盖率 | 被测代码行占比 | pytest-cov（需依赖） | ≥ 80% | **未测** |
 | 类型覆盖 | mypy 干净文件数 | `mypy src/ apps/` | 100 文件 | 100 |
