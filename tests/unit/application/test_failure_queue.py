@@ -22,9 +22,17 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from erp_copilot.application.failure_queue import FailureQueue
-from erp_copilot.domain.entities import Run, RunEvent
+from erp_copilot.agent.state import AgentState, AgentStatus, Plan, PlanStep
+from erp_copilot.application.failure_queue import FailureQueue, ResolveDecision
+from erp_copilot.domain.entities import (
+    AgentCheckpoint,
+    IdempotencyRecord,
+    Run,
+    RunEvent,
+)
+from erp_copilot.domain.enums import ToolRiskLevel
 from erp_copilot.domain.errors import CopilotError, NotFoundError
+from erp_copilot.memory.checkpoint import CheckpointSaver
 
 
 @pytest.fixture()
@@ -204,3 +212,173 @@ class TestListNeedingIntervention:
         )
 
         assert [r.id for r in queue.list_needing_intervention("t1")] == [second.id, first.id]
+
+
+class TestResolve:
+    """Human intervention on a queued failure: confirm the write's outcome and
+    requeue the run so the worker resumes with a settled idempotency record.
+
+    confirmed_applied finalizes the ledger as COMPLETED (the resumed graph
+    replays it, never re-running the tool); confirmed_not_applied marks it
+    FAILED (the resumed graph safely retries). The run leaves the intervention
+    queue — status QUEUED, failure detail cleared — and a RUN_RESOLVED event is
+    appended (docs/03 §3: every state change appends a run_event).
+    """
+
+    @pytest.fixture()
+    def session(self, tmp_path) -> Iterator[Session]:
+        engine = create_engine(f"sqlite:///{tmp_path / 'resolve.db'}")
+        Run.__table__.create(engine)
+        RunEvent.__table__.create(engine)
+        AgentCheckpoint.__table__.create(engine)
+        IdempotencyRecord.__table__.create(engine)
+        with Session(engine) as db:
+            yield db
+        engine.dispose()
+
+    def _failed_run(self, session: Session) -> Run:
+        run = Run(
+            id="r1",  # must match the checkpoint/record run_id below
+            tenant_id="t1",
+            title="订单创建",
+            status="FAILED",
+            failure_code="RECOVERY_RECONCILIATION_REQUIRED",
+            failure_reason="写步骤 s1 执行状态不确定",
+            suggested_action="人工对账幂等记录后再继续",
+        )
+        session.add(run)
+        session.commit()
+        return run
+
+    def _checkpoint_with_pending_write(self, session: Session) -> None:
+        state = AgentState(
+            run_id="r1",
+            tenant_id="t1",
+            query="创建订单",
+            status=AgentStatus.EXECUTING,
+            plan=Plan(
+                steps=[
+                    PlanStep(
+                        step_id="s1",
+                        tool_name="createOrder",
+                        risk_level=ToolRiskLevel.WRITE,
+                        idempotency_key="k1",
+                    )
+                ]
+            ),
+        )
+        CheckpointSaver(session).save("execute_ready_steps", state)
+
+    def _pending_record(self, session: Session) -> IdempotencyRecord:
+        record = IdempotencyRecord(
+            tenant_id="t1",
+            run_id="r1",
+            step_id="s1",
+            idempotency_key="k1",
+            status="PENDING",
+            request_payload="{}",
+        )
+        session.add(record)
+        session.commit()
+        return record
+
+    def test_confirmed_applied_requeues_and_completes_record(self, session: Session) -> None:
+        run = self._failed_run(session)
+        self._checkpoint_with_pending_write(session)
+        self._pending_record(session)
+
+        updated = FailureQueue(session).resolve(
+            run_id=run.id,
+            tenant_id="t1",
+            step_id="s1",
+            decision=ResolveDecision.CONFIRMED_APPLIED,
+            decided_by="operator@example.com",
+            reason="人工确认外部订单已创建",
+        )
+
+        assert updated.status == "QUEUED"
+        assert updated.failure_code is None
+        assert updated.failure_reason is None
+        assert updated.suggested_action is None
+        assert updated.completed_at is None
+        record = session.query(IdempotencyRecord).filter_by(idempotency_key="k1").one()
+        assert record.status == "COMPLETED"
+        assert record.result_payload == "{}"
+        events = session.query(RunEvent).filter_by(run_id=run.id).all()
+        assert len(events) == 1
+        assert events[0].event_type == "RUN_RESOLVED"
+        payload = json.loads(events[0].payload)
+        assert payload["step_id"] == "s1"
+        assert payload["decision"] == "confirmed_applied"
+        assert payload["decided_by"] == "operator@example.com"
+
+    def test_confirmed_not_applied_requeues_and_fails_record(self, session: Session) -> None:
+        run = self._failed_run(session)
+        self._checkpoint_with_pending_write(session)
+        self._pending_record(session)
+
+        updated = FailureQueue(session).resolve(
+            run_id=run.id,
+            tenant_id="t1",
+            step_id="s1",
+            decision=ResolveDecision.CONFIRMED_NOT_APPLIED,
+            decided_by="operator@example.com",
+        )
+
+        assert updated.status == "QUEUED"
+        record = session.query(IdempotencyRecord).filter_by(idempotency_key="k1").one()
+        assert record.status == "FAILED"
+        assert record.error_message is not None
+
+    def test_rejects_run_not_in_intervention_queue(self, session: Session) -> None:
+        run = Run(tenant_id="t1", title="x", status="COMPLETED")
+        session.add(run)
+        session.commit()
+
+        with pytest.raises(CopilotError) as exc:
+            FailureQueue(session).resolve(
+                run_id=run.id,
+                tenant_id="t1",
+                step_id="s1",
+                decision=ResolveDecision.CONFIRMED_APPLIED,
+                decided_by="op",
+            )
+        assert exc.value.code == "NOT_IN_INTERVENTION_QUEUE"
+
+    def test_rejects_unknown_step(self, session: Session) -> None:
+        run = self._failed_run(session)
+        self._checkpoint_with_pending_write(session)
+        self._pending_record(session)
+
+        with pytest.raises(CopilotError) as exc:
+            FailureQueue(session).resolve(
+                run_id=run.id,
+                tenant_id="t1",
+                step_id="nope",
+                decision=ResolveDecision.CONFIRMED_APPLIED,
+                decided_by="op",
+            )
+        assert exc.value.code == "STEP_NOT_FOUND"
+
+    def test_missing_run_is_not_found(self, session: Session) -> None:
+        with pytest.raises(NotFoundError):
+            FailureQueue(session).resolve(
+                run_id="ghost",
+                tenant_id="t1",
+                step_id="s1",
+                decision=ResolveDecision.CONFIRMED_APPLIED,
+                decided_by="op",
+            )
+
+    def test_tenant_isolation(self, session: Session) -> None:
+        run = self._failed_run(session)
+        self._checkpoint_with_pending_write(session)
+
+        with pytest.raises(NotFoundError):
+            FailureQueue(session).resolve(
+                run_id=run.id,
+                tenant_id="t2",
+                step_id="s1",
+                decision=ResolveDecision.CONFIRMED_APPLIED,
+                decided_by="op",
+            )
