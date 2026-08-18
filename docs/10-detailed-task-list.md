@@ -1715,6 +1715,253 @@
 
 ---
 
+# 阶段七：AI 生产指标与可观测性接线（预计 11 个任务）
+
+> **阶段教学引言**
+>
+> v1.0 已把「离线/确定性」评测做到全绿，但这回答不了一个问题：**线上 AI 到底做得好不好**？
+> 离线 175 条评测证明的是"固定用例下逻辑正确"，而生产判断依据必须回答：
+> 真实 Run 的成功率、重试率、人工介入率、成本、延迟——这些只能靠**生产指标采集**。
+>
+> `evals/reports/engineering_metrics.json` 的 `overall_status: FAIL` 已诚实标出四个缺口：
+> Trace/LLM 生产接线为 0 调用点、retry/recovery 无指标。本阶段把它们全部闭合，
+> 并把「在线 AI 行为指标」与「业务价值指标」补上，形成判断 AI 应用生产可行性的完整依据。
+>
+> 这个阶段你会学到：
+> - **离线评测 vs 在线遥测**：离线测"逻辑对不对"，在线测"真实流量下表现如何"，两者互补不可替代
+> - **带标签计数器**：同一条 Counter 加 `tier`/`phase` 标签，就能按维度切分成功率——不加标签的计数器没有诊断力
+> - **指标接线与指标定义的差别**：装饰器/采集器存在 ≠ 生产链路通了，`node_span`/`llm_call` 的 0 调用点就是"测试绿 ≠ 端到端通"的实证
+> - **Copilot 北极星指标**：计划采纳率、人工介入率（自动化率）是判断"AI 是否真的被用起来"的核心 KPI
+
+---
+
+## 任务 7.1：worker 图节点挂 `node_span`（Trace 生产接线）
+
+**目标**：让真实 Run 在 LangGraph 每个节点产生 OTel span，闭合 D3 缺口「Trace 生产接线 0 调用点」。
+
+**交付物**：
+- `apps/worker/graph_builder.py`（图节点注册处统一挂 `@node_span(node_name=...)`）
+
+**验收标准**：
+- 静态扫描生产代码 `node_span(` 调用点 ≥ 1（`evals/reports/engineering_metrics.json` 该指标从 FAIL → PASS）
+- 真实 Run 在 OTel 后端可见节点级 span 链（plan/execute/verify 均产生 span）
+- 新增单测钉住「节点被装饰后产出 span」而非仅装饰器存在
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 接线 vs 定义 | 6.2 已实现 `node_span` 装饰器并有单测，但生产图零调用点——单测证明"装饰器会记 span"，证明不了"真实 Run 产生了 span"。接线是把这个能力真正挂到生产代码上 |
+| 为什么必须"真实链路"验证 | 用注入的 `InMemorySpanExporter` 跑一次真实图调用，断言 span 树存在，而不是只测装饰器本身 |
+
+---
+
+## 任务 7.2：LLM 调用点接 `llm_call`（LLM 采集接线）
+
+**目标**：让真实 LLM 调用的 token/延迟/成本/模型落到 span、结构化日志与 Langfuse，闭合 D3 缺口「LLM 采集 0 调用点」。
+
+**交付物**：
+- `src/erp_copilot/agent/nodes/build_plan.py`（`llm_complete` seam 外包 `llm_call(...)` 上下文管理器，回填 token）
+- `tests/unit/observability/test_langfuse_wiring.py`（新增）
+
+**验收标准**：
+- 静态扫描生产代码 `llm_call(` 调用点 ≥ 1（D3 该指标 FAIL → PASS）
+- 一次真实（或录制重放）LLM 调用后，`LLM_CALL` JSON 日志含 model/input_tokens/output_tokens/latency_ms
+- Langfuse client 配置时产生 `generation` observation；无密钥 fail-open 不阻断调用
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| LLM 采集是"成本与质量的显微镜" | 每次调用的 token 数、延迟、成本是评估模型性价比与调优的基础——没有它，"贵不贵/慢不慢"只能靠猜 |
+| fail-open 设计 | 可观测性缺配置降级不采集、绝不断掉 LLM 主流程（与安全层 fail-closed 严格区分）——观测链路坏了不能拖垮业务 |
+
+---
+
+## 任务 7.3：重试/重规划/放弃率 Prometheus 计数器
+
+**目标**：把 `AgentState` 里已有的 `retry_count`/`replan_count` 与放弃路径上到 Prometheus，闭合 D2 缺口「retry_rate/recovery_rate NOT_CONFIGURED」。
+
+**交付物**：
+- `src/erp_copilot/observability/metrics.py`（新增 `erp_run_retries_total` / `erp_run_replans_total` / `erp_run_abandoned_total` 计数器）
+- `src/erp_copilot/agent/nodes/recover_or_replan.py`（retry/replan/give-up 三分支各自 `inc()`）
+
+**验收标准**：
+- `evals/reports/engineering_metrics.json` 中 retry_rate/recovery_rate 从 NOT_CONFIGURED → MEASURED
+- 三路决策各有一个单调计数器，按 run 终态可对账（Σ retries 语义 = 该 run 重试次数）
+- 单测钉住：recover 分支 inc retries、replan 分支 inc replans、give-up 分支 inc abandoned
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 重试率是 AI 质量的第一个信号 | "AI 一步到位" vs "AI 反复碰壁"直接反映规划质量；没有计数器，恢复逻辑再完善也无从度量 |
+| 带语义的计数器 | 计数器名字必须对应决策语义（retries/replans/abandoned 三路分开），聚合时才分得清"是重试多还是放弃多" |
+
+---
+
+## 任务 7.4：审批/人工介入率计数器
+
+**目标**：量化"AI 独立完成"与"需要人工"的比例——自动化率 = 1 − 介入率，Copilot 的核心价值指标。
+
+**交付物**：
+- `src/erp_copilot/observability/metrics.py`（新增 `erp_approval_requests_total`，标签 `outcome=approved/denied/pending`）
+- `src/erp_copilot/agent/nodes/request_approval.py`（暂停时 `inc`）+ `src/erp_copilot/security/approval.py`（决策时 `inc` 对应 outcome）
+
+**验收标准**：
+- 审批请求数与通过/拒绝比例可查，介入率 = 审批 Run 数 / 总 Run 数可计算
+- 单测钉住：request_approval 暂停 inc、decide APPROVED/DENIED 各 inc 对应 outcome
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 自动化率 ≠ 成功率 | 一个 100% 成功但每单都人工审批的系统，自动化率是 0——它对业务的价值是"降本"，而介入率直接衡量降了多少 |
+| 人工介入是信号不是失败 | 高介入率可能说明策略保守或 LLM 规划质量差，两者含义完全不同，需要结合 7.6 的分层成功率解读 |
+
+---
+
+## 任务 7.5：修复 phase_latency 的 plan/verify 测量
+
+**目标**：修正 `engineering_metrics.json` 中 plan=0ms / verify=0ms 的埋点问题，让阶段延迟真正可信。
+
+**交付物**：
+- `apps/worker/graph_builder.py`（`_observe_phase` 的 plan/execute/verify 包装排查与修正）
+
+**验收标准**：
+- 重跑工程化指标，phase_latency_plan_ms / phase_latency_verify_ms 为非 0 的实测值
+- 真实 Run 的 `/metrics` 中 `erp_phase_latency_seconds_bucket{phase="plan"}` 有计数
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 0ms 是接线失败而非"快得测不出" | 直方图有计数但均值为 0，说明该 phase 包装从未被真实执行路径触达——指标存在 ≠ 指标有数据 |
+| 为什么阶段分解重要 | plan/execute/verify 三段延迟分布能定位瓶颈在"想"（LLM 规划）还是在"做"（工具调用），是优化方向的唯一依据 |
+
+---
+
+## 任务 7.6：按路由分层（Tier）成功率 + 错误分类学
+
+**目标**：回答"AI 在哪些场景靠谱"——按 Tier1/2/3（确定性/LLM 约束/自由规划）分别统计成功率，并按错误码分类失败原因。
+
+**交付物**：
+- `src/erp_copilot/observability/metrics.py`（`runs_completed`/`runs_failed` 增加 `tier` 标签）
+- `src/erp_copilot/application/run_persistence.py`（终态落库时带 tier）
+- `evals/scripts/error_taxonomy.py`（新增：从 run_events 聚合错误码分布）
+
+**验收标准**：
+- 按 tier 切分的完成/失败率可查（PromQL `sum by (tier)`）
+- 错误码分布（PERMANENT_TOOL_ERROR / UNRESOLVED_REFERENCE / DEADLINE_EXCEEDED / ...）可报告 Top-N
+- 单测钉住：不同 tier 的 run 计入不同标签桶
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 分层成功率 | 不加标签的总成功率掩盖差异：Tier1 确定性 100% 与 Tier3 自由规划 80% 混在一起毫无诊断力。标签是"可切分的粒度" |
+| 错误分类学指导修复优先级 | "工具执行失败"与"计划被校验器拒绝"是两类完全不同的修复动作，Top-N 分布决定下一次迭代打哪里 |
+
+---
+
+## 任务 7.7：token/成本/单 Run LLM 调用次数聚合
+
+**目标**：从 `LLM_CALL` 日志与 Langfuse 聚合出单 Run 的 token 消耗、估算成本与 LLM 调用次数分布。
+
+**交付物**：
+- `evals/scripts/llm_usage_report.py`（新增：读结构化日志聚合 输入/输出 token、`estimate_cost`、每 Run 调用次数直方图）
+
+**验收标准**：
+- 输出单 Run 平均 token、平均成本、调用次数分布（P50/P95）
+- 7.2 接线后真实 LLM 调用可聚合出非空报告
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| token 预算与成本的乘积效应 | 单次调用 token × 调用次数 = 单 Run 成本；agent 循环越深成本越不可控，这个指标是"上下文预算（4.13）是否被突破"的线上验证 |
+| 结构化日志即数仓 | 6.1 的 JSON 日志（每行带 run_id）本身就是可聚合的数据源，无需额外埋点就能算分布——先有日志契约，再有报表 |
+
+---
+
+## 任务 7.8：计划采纳率/修正率埋点
+
+**目标**：记录用户对 AI 计划/审批的动作（直接接受 / 修改后执行 / 拒绝），得到 Copilot 北极星指标。
+
+**交付物**：
+- `apps/api/routes/runs.py`（approve/deny 已存在，补充「按原样接受 vs 带修改接受」的区分字段）
+- `src/erp_copilot/security/approval.py`（决策记录携带 `modified_plan` 标记）
+- `src/erp_copilot/observability/metrics.py`（`erp_plan_outcome_total`，标签 `outcome=accepted/edited/rejected`）
+
+**验收标准**：
+- 采纳率 = 接受计划数 / 计划总数可计算；可区分「原样接受」与「修改后接受」
+- 单测钉住：不同决策路径计入对应 outcome 桶
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 采纳率是 copilot 的北极星 | "用户信不信任 AI 的计划"是产品价值的终极体现；采纳率低说明计划质量或可信度有问题，比任何离线分数都真实 |
+| 原样接受 vs 修改后接受 | 两者含义不同：原样接受 = 完全信任；修改后接受 = 基本可用但要纠偏。分开统计才能看出"哪里错了" |
+
+---
+
+## 任务 7.9：在线 citation/groundedness 与无依据拒答率
+
+**目标**：验证线上答案是否真正基于检索引用（groundedness），以及"该拒答时是否拒答"（无依据拒答率）。
+
+**交付物**：
+- `src/erp_copilot/observability/metrics.py`（`erp_answer_grounded_total`，标签 `grounded=yes/no/refused`）
+- `src/erp_copilot/agent/nodes/finalize`（答案出站时按引用覆盖标记）
+
+**验收标准**：
+- 答案带引用且引用命中的比例、无依据拒答的次数可查
+- 单测钉住：有引用→grounded=yes、无依据→refused、引用与内容不符→grounded=no 三分
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| groundedness 是 RAG 幻觉的线上哨兵 | 离线 Recall@K 只测"检索到没"，不测"答案是否真用了检索结果"。引用可用率 = 答案内容有据可查的比例，直接对幻觉率 |
+| 拒答是特性不是缺陷 | 无依据拒答（should_answer=false 拒答、否则拒绝）是安全设计；拒答率过低说明可能"强行编造"，过高说明"该答不答"，都要看分布 |
+
+---
+
+## 任务 7.10：LLM 评测集扩展 + 分层置信区间 + 模型漂移基线
+
+**目标**：把 planning 评测从 50 条扩到 200+ 条、按单步/多步/难度分层给出置信区间，并建立模型漂移检测基线。
+
+**交付物**：
+- `evals/datasets/planning_200.json`（新增 150 条：按意图/难度/单步多步分层）
+- `evals/llm_planner_eval.py`（输出按层置信区间 + 与基线报告的漂移 delta）
+- `tests/unit/evals/test_planning_200.py`（新增，schema 校验）
+
+**验收标准**：
+- 每层样本量 ≥ 30（置信区间有意义），报告输出各层 score ± 区间
+- 与 `report_llm_planner_deepseek_real_20260818.json` 基线对比，drift 超阈值（如 tool_set_exact 跌 >0.02）报警
+- 数据集结构校验 + 种子锚定测试通过
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 样本量与置信区间 | 50 条里 98% 的置信区间约 ±4%，200 条才到 ±2%——"0.98 很高"在 50 条样本下统计意义有限 |
+| 漂移检测 | 模型/供应商升级后必须重跑同一评测集对比——Prompt 优化（session 54）已经证明这套流程有效（contract_valid 86%→94%），现在把它固化成回归基线 |
+
+---
+
+## 任务 7.11：写路径端到端启用（审批→幂等→对账闭环）
+
+**目标**：启用真实 WRITE 场景的完整闭环——WRITE 审批 → 幂等执行 → 对账确认，作为 7.4/7.8 业务指标的真实数据源。
+
+**交付物**：
+- `apps/worker/graph_builder.py`（写意图 `createOrder`/`cancelOrder`/`updateOrderStatus` 进入生产图）
+- `src/erp_copilot/application/reconciliation.py`（新增：对账服务，核对 ERP 最终状态与计划意图一致率）
+- 对账成功率指标（`erp_reconciliation_success_total`，标签 `outcome=consistent/mismatch`）
+
+**验收标准**：
+- 一个真实写场景（如下单）端到端跑通：审批 → 幂等创建 → 对账确认一致
+- 对账不一致率可查（写路径正确性的线上哨兵）
+- 新增单测：对账服务对"ERP 状态 ≠ 意图"判 mismatch
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 写路径是最危险的路径 | 读错只是答错，写错是业务事故。审批（5.2）+ 幂等（5.6）+ 对账三层缺一不可；对账是最后一层"AI 说做了，系统真的做了吗"的验证 |
+| 为什么把对账做成指标 | 对账不一致率是写路径正确性的直接测量——它把 5.8 的 `RECOVERY_RECONCILIATION_REQUIRED` 从"错误码"升级成"生产指标" |
+
+---
+
 # 任务统计
 
 | 阶段 | 任务数 | 预计天数（每天 3-4 小时） |
@@ -1725,7 +1972,8 @@
 | 四：Agent Runtime | 16 | D16-D22 |
 | 五：安全审批恢复 | 10 | D23-D26 |
 | 六：评测与交付 | 12 | D27-D30 |
-| **合计** | **76** | **30 天** |
+| 七：AI 生产指标与可观测性接线 | 11 | D31-D34 |
+| **合计** | **87** | **34 天** |
 
 ---
 

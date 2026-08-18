@@ -108,12 +108,22 @@ uv run python evals/run_engineering_metrics.py \
 
 ## 5. 缺口注册（已知限制，计划后续任务）
 
-| # | 缺口 | 现状 | 建议方案 |
+> 本表为四维工程化指标（D1-D4）的已知缺口。**承接计划**：`docs/10-detailed-task-list.md` 阶段七（7.1-7.11）已逐条落任务，本表「承接任务」列据此更新；未承接的缺口保持「计划后续任务」。
+
+| # | 缺口 | 现状 | 承接任务 |
 |---|---|---|---|
-| 1 | Trace/LLM 采集未端到端接线 | `node_span`/`llm_call` 生产零调用点（本次实测 0/0，FAIL） | 在 worker 图各节点挂 `@node_span`；LLM 调用点接 `llm_call` |
-| 2 | 无重试率/恢复率指标 | `retry_count`/`replan_count` 仅存于 AgentState | 新增 Prometheus 计数器（如 `erp_run_retries_total`、`erp_run_replans_total`），在 recover_or_replan 节点自增 |
-| 3 | 行覆盖率已测 | pytest-cov 已添加，实测 96.38% PASS（本次闭合） | — |
-| 4 | mypy 3 处既有错误（已闭合） | `rerank.py:116` 加 `# type: ignore[import-not-found]`（opt-in extra 惰性导入）；`tasks.py:120` / `runs.py:240` 加 `# type: ignore[call-arg]`（与全库 11 处既有惯例一致，pydantic-settings 环境注入） | 实测 `mypy src/ apps/` 100 文件 0 错误 |
+| 1 | Trace/LLM 采集未端到端接线 | `node_span`/`llm_call` 生产零调用点（本次实测 0/0，FAIL） | **任务 7.1**（worker 图节点挂 `@node_span`）+ **任务 7.2**（LLM 调用点接 `llm_call`，回填 token） |
+| 2 | 无重试率/恢复率指标 | `retry_count`/`replan_count` 仅存于 AgentState | **任务 7.3**（`erp_run_retries_total` / `erp_run_replans_total` / `erp_run_abandoned_total`，recover_or_replan 三分支自增） |
+| 3 | 行覆盖率已测（已闭合） | pytest-cov 已添加，实测 96.38% PASS | — |
+| 4 | mypy 3 处既有错误（已闭合） | 三处 `# type: ignore` 已与全库惯例一致，实测 `mypy src/ apps/` 100 文件 0 错误 | — |
+| 5 | 阶段延迟 plan/verify 未实测 | engineering_metrics 报告 plan=0ms / verify=0ms，埋点未触达真实执行路径 | **任务 7.5** |
+| 6 | 无审批/人工介入率指标 | request_approval 已落地，无介入率/自动化率量化 | **任务 7.4**（`erp_approval_requests_total` + outcome 标签） |
+| 7 | 无按 Tier 分层成功率 | runs 计数器无 tier 标签，无法区分确定性/LLM 场景表现 | **任务 7.6** |
+| 8 | 无 token/成本/单 Run LLM 调用次数 | `LLM_CALL` 日志已含字段，未聚合上报 | **任务 7.7** |
+| 9 | 无计划采纳率/修正率 | 审批决策未记录「原样接受 vs 修改后接受」 | **任务 7.8** |
+| 10 | 无在线 groundedness/拒答率 | 离线 Recall@K 不测「答案是否真用引用」「该拒答是否拒答」 | **任务 7.9** |
+| 11 | LLM 评测集规模不足（50 条） | planning_50 置信区间宽，无漂移基线 | **任务 7.10**（扩至 200+、分层置信区间、漂移检测） |
+| 12 | 写路径端到端未启用 | 审批→幂等→对账闭环未全量开，无对账一致率指标 | **任务 7.11**（`erp_reconciliation_success_total` + outcome 标签） |
 
 ## 6. 复现与报告
 
