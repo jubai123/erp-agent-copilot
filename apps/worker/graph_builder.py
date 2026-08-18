@@ -35,6 +35,7 @@ from erp_copilot.agent.retry_policy import AsyncRetryExecutor
 from erp_copilot.agent.state import AgentState, RetrievedDocument
 from erp_copilot.memory.checkpoint import CheckpointSaver
 from erp_copilot.observability.metrics import METRICS
+from erp_copilot.observability.tracing import node_span
 from erp_copilot.retrieval.embedding import EmbeddingProvider
 from erp_copilot.retrieval.fts import keyword_search as _keyword_search
 from erp_copilot.retrieval.pipeline import DeterministicEmbeddingProvider
@@ -185,21 +186,40 @@ def build_worker_graph(
     """
     if retrieve_node is None:
         retrieve_node = build_worker_retrieve_node(session, run_id=run_id)
-    llm_node = None if llm_plan_node is None else _observe_phase("plan_llm", llm_plan_node)
+    llm_node = None if llm_plan_node is None else node_span("build_plan_llm")(
+        _observe_phase("plan_llm", llm_plan_node)
+    )
+    # Task 7.1: every injected node is wrapped in node_span (task 6.2) so a real
+    # run emits one OTel span per node — the node_name matches the graph node
+    # identifier (graph.py NODE_NAMES) so spans correlate with checkpoint rows.
+    # retrieve_node stays None on non-PostgreSQL sessions (graph falls back to
+    # its no-op retrieve node), so it is only wrapped when a real node exists.
     return build_agent_graph(
-        retrieve_node=retrieve_node,
-        plan_node=_observe_phase("plan", build_deterministic_plan_node()),
-        llm_plan_node=llm_node,
-        validate_node=build_validate_plan_node(tool_schemas=WORKER_TOOL_SCHEMAS),
-        policy_node=build_policy_check_node(get_scopes=partial(resolve_user_scopes, session)),
-        execute_node=_observe_phase(
-            "execute",
-            build_execute_steps_node(
-                executor=executor or erp_simulator_executor,
-                idempotency_store=IdempotencyStore(session),
-                retry_executor=AsyncRetryExecutor(),
-            ),
+        retrieve_node=(
+            node_span("retrieve_context")(retrieve_node) if retrieve_node is not None else None
         ),
-        verify_node=_observe_phase("verify", build_verify_results_node()),
+        plan_node=node_span("build_plan")(
+            _observe_phase("plan", build_deterministic_plan_node())
+        ),
+        llm_plan_node=llm_node,
+        validate_node=node_span("validate_plan")(
+            build_validate_plan_node(tool_schemas=WORKER_TOOL_SCHEMAS)
+        ),
+        policy_node=node_span("policy_check")(
+            build_policy_check_node(get_scopes=partial(resolve_user_scopes, session))
+        ),
+        execute_node=node_span("execute_ready_steps")(
+            _observe_phase(
+                "execute",
+                build_execute_steps_node(
+                    executor=executor or erp_simulator_executor,
+                    idempotency_store=IdempotencyStore(session),
+                    retry_executor=AsyncRetryExecutor(),
+                ),
+            )
+        ),
+        verify_node=node_span("verify_results")(
+            _observe_phase("verify", build_verify_results_node())
+        ),
         checkpoint_saver=checkpoint_saver,
     )

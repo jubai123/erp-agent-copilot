@@ -135,7 +135,9 @@ def test_build_worker_graph_wires_retrieve_node_by_default(
 
     build_worker_graph(_FakeSession("postgresql"), checkpoint_saver=None, run_id="r1")
 
-    assert captured["retrieve_node"] is sentinel
+    # Task 7.1: the node is forwarded inside a node_span tracing wrapper; the
+    # original node stays reachable through functools' __wrapped__.
+    assert captured["retrieve_node"].__wrapped__ is sentinel
     assert helper_calls == [{"run_id": "r1"}]
 
 
@@ -158,7 +160,8 @@ def test_build_worker_graph_forwards_explicit_retrieve_node(
 
     build_worker_graph(_FakeSession("postgresql"), checkpoint_saver=None, retrieve_node=custom)
 
-    assert captured["retrieve_node"] is custom
+    # Task 7.1: the explicit node is preserved inside the node_span wrapper.
+    assert captured["retrieve_node"].__wrapped__ is custom
 
 
 def test_build_worker_graph_forwards_llm_plan_node(monkeypatch: pytest.MonkeyPatch) -> None:

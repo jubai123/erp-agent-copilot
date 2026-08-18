@@ -27,6 +27,9 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 import pytest  # noqa: E402
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: E402
+    InMemorySpanExporter,
+)
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
@@ -52,6 +55,7 @@ from erp_copilot.domain.entities import (  # noqa: E402
 )
 from erp_copilot.memory.checkpoint import CheckpointSaver  # noqa: E402
 from erp_copilot.observability.metrics import METRICS, generate_latest  # noqa: E402
+from erp_copilot.observability.tracing import setup_tracing  # noqa: E402
 from erp_copilot.security.approval import (  # noqa: E402
     ApprovalDecisionService,
     resume_run,
@@ -589,3 +593,47 @@ class TestWorkerRetrieveWiring:
         assert result["status"] == "COMPLETED"
         assert len(calls) == 1
         assert calls[0].run_id == run.id
+
+
+class TestWorkerGraphNodeSpans:
+    """Task 7.1: node_span is wired at node registration in build_worker_graph.
+
+    The tracing unit tests (test_tracing.py) prove the decorator records a span;
+    this test proves a *real* graph invocation emits one span per node with the
+    plan/execute/verify phase nodes present — the D3 acceptance ("真实 Run 产生
+    节点级 span 链") rather than decorator existence. The exporter is injected,
+    so no span reaches the console or the network.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_tracing(self) -> Iterator[None]:
+        import erp_copilot.observability.tracing as tracing_mod
+
+        tracing_mod._provider = None
+        yield
+        tracing_mod._provider = None
+
+    def test_real_invocation_emits_phase_node_spans(self, session: Session) -> None:
+        exporter = InMemorySpanExporter()
+        setup_tracing(service_name="svc", exporter=exporter)
+        tenant = _make_tenant(session)
+        user_id = _make_reader_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
+
+        graph = build_worker_graph(session, CheckpointSaver(session), run_id=run.id)
+        final = asyncio.run(
+            graph.ainvoke(
+                AgentState(
+                    run_id=run.id,
+                    tenant_id=tenant.id,
+                    user_id=user_id,
+                    query="查询苹果库存",
+                ).model_dump()
+            )
+        )
+
+        assert final["status"] == "succeeded"
+        by_node = {s.attributes.get("erp.node"): s for s in exporter.get_finished_spans()}
+        assert "build_plan" in by_node
+        assert "execute_ready_steps" in by_node
+        assert "verify_results" in by_node

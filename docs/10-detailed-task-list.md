@@ -1737,6 +1737,8 @@
 
 ## 任务 7.1：worker 图节点挂 `node_span`（Trace 生产接线）
 
+> **状态：✅ 已完成**（2026-08-19，`node_span` 升级为 async-aware（修复 sync 包 async 提前关 span 的 bug）+ `build_worker_graph` 7 节点统一接线，node_name 对齐 `graph.py NODE_NAMES`；单测钉住「真实图调用产出 plan/execute/verify span」而非仅装饰器存在；静态扫描 7 个调用点，D3 该指标 FAIL → PASS。注：engineering_metrics.json 需在阶段七收尾整体重生成（含 coverage/DB 依赖），此处记录确定性增量）
+
 **目标**：让真实 Run 在 LangGraph 每个节点产生 OTel span，闭合 D3 缺口「Trace 生产接线 0 调用点」。
 
 **交付物**：

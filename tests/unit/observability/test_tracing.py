@@ -12,6 +12,7 @@ no span is ever emitted to the console or the network.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 
 import pytest
@@ -127,6 +128,28 @@ class TestNodeSpan:
         assert finished.name == "classify_intent"
         assert finished.attributes["erp.node"] == "classify_intent"
         assert finished.attributes["run_id"] == "r1"
+
+    def test_wraps_async_node_so_the_span_covers_the_awaited_body(self) -> None:
+        # execute_ready_steps is an async node; a sync wrapper would close the
+        # span when the coroutine is *created* and the awaited body would run
+        # outside it. The body-ran event lands on the span only when the span
+        # is current during the awaited execution — the fix's acceptance.
+        exporter, _ = _exporter()
+
+        @node_span("execute_ready_steps")
+        async def node(state: dict[str, str]) -> dict[str, str]:
+            trace.get_current_span().add_event("body-ran")
+            return state
+
+        with trace_context(run_id="r1"):
+            result = asyncio.run(node({"query": "hi"}))
+
+        assert result == {"query": "hi"}
+        finished = exporter.get_finished_spans()[0]
+        assert finished.name == "execute_ready_steps"
+        assert finished.attributes["erp.node"] == "execute_ready_steps"
+        assert finished.attributes["run_id"] == "r1"
+        assert any(event.name == "body-ran" for event in finished.events)
 
 
 class TestPropagation:

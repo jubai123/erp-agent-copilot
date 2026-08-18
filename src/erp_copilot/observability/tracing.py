@@ -21,10 +21,11 @@ the code explicitly chooses to trace.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from functools import wraps
-from typing import Any, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar, cast
 
 from opentelemetry import trace
 from opentelemetry.context import Context
@@ -139,10 +140,25 @@ def node_span(node_name: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
     """Decorate a LangGraph node so each invocation becomes one span.
 
     The span name and the ``erp.node`` attribute both carry *node_name*, and
-    the run identity is attached automatically from the TraceContext.
+    the run identity is attached automatically from the TraceContext. The async
+    variant awaits inside the span context so an async node (execute_ready_steps)
+    records its whole execution — a sync wrapper would close the span when the
+    coroutine is *created* — mirroring the sync/async detection in
+    :func:`erp_copilot.memory.checkpoint.checkpointed`.
     """
 
     def decorator(fn: Callable[_P, _R]) -> Callable[_P, _R]:
+        if inspect.iscoroutinefunction(fn):
+
+            @wraps(fn)
+            async def async_wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+                with span(node_name, attributes={"erp.node": node_name}):
+                    # ParamSpec unpacking defeats return-type inference under
+                    # mypy (it sees Any); pin the awaited result to _R.
+                    return cast(_R, await fn(*args, **kwargs))
+
+            return cast(Callable[_P, _R], async_wrapper)
+
         @wraps(fn)
         def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             with span(node_name, attributes={"erp.node": node_name}):
