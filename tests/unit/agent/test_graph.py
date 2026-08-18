@@ -24,6 +24,8 @@ from erp_copilot.agent.state import (
     AgentStatus,
     ApprovalRequest,
     ApprovalStatus,
+    Plan,
+    PlanStep,
     StateError,
     StepResult,
 )
@@ -52,7 +54,7 @@ def _edge_pairs() -> set[tuple[str, str]]:
 
 
 class TestTopology:
-    def test_has_all_ten_nodes(self) -> None:
+    def test_has_all_named_nodes(self) -> None:
         assert set(NODE_NAMES) <= _node_names()
 
     def test_happy_path_chain_present(self) -> None:
@@ -60,7 +62,9 @@ class TestTopology:
         for source, target in [
             ("classify_intent", "retrieve_context"),
             ("retrieve_context", "build_plan"),
+            ("retrieve_context", "build_plan_llm"),
             ("build_plan", "validate_plan"),
+            ("build_plan_llm", "validate_plan"),
             ("policy_check", "request_approval"),
             ("execute_ready_steps", "verify_results"),
         ]:
@@ -87,7 +91,7 @@ class TestTopology:
 
     def test_recovery_can_route_three_ways(self) -> None:
         pairs = _edge_pairs()
-        for target in ("build_plan", "execute_ready_steps", "finalize"):
+        for target in ("build_plan", "build_plan_llm", "execute_ready_steps", "finalize"):
             assert ("recover_or_replan", target) in pairs
 
     def test_start_and_end_termination(self) -> None:
@@ -197,7 +201,7 @@ class TestSmoke:
                 "run_id": "r11",
                 "tenant_id": "t1",
                 "user_id": "u1",
-                "query": "创建订单",
+                "query": "帮我在上海下一单 1 KG 苹果",
                 "plan": {
                     "steps": [
                         {
@@ -226,7 +230,7 @@ class TestSmoke:
                 "run_id": "r12",
                 "tenant_id": "t1",
                 "user_id": "u1",
-                "query": "创建订单",
+                "query": "帮我在上海下一单 1 KG 苹果",
                 "plan": {
                     "steps": [
                         {
@@ -369,7 +373,7 @@ class TestSmoke:
             {
                 "run_id": "r2",
                 "tenant_id": "t1",
-                "query": "q",
+                "query": "查苹果库存",
                 "errors": [StateError(code="TRANSIENT_TOOL_ERROR", message="timeout")],
             }
         )
@@ -379,6 +383,105 @@ class TestSmoke:
         assert result["status"] == "succeeded"
         assert result["replan_count"] == 1
         assert result["errors"] == []
+
+
+class TestFunnelRouting:
+    """The three-layer funnel routes the query to the right plan node."""
+
+    def test_tier2_without_llm_node_fails_honestly(self) -> None:
+        # "随便聊聊" falls to product/query with no product entity -> EMPTY_PLAN
+        # -> route_query_layer tier2. With no injected LLM plan node the graph
+        # must fail honestly (ROUTED_TIER23_NO_LLM), never over-grab the query.
+        saver = _RecordingSaver()
+        graph = build_agent_graph(checkpoint_saver=saver)  # type: ignore[arg-type]
+        result = graph.invoke({"run_id": "r-t2", "tenant_id": "t1", "query": "随便聊聊"})
+        assert result["status"] == AgentStatus.FAILED
+        assert result["replan_count"] == MAX_REPLANS
+        names = [name for name, _ in saver.saved]
+        assert "build_plan_llm" in names
+        assert "build_plan" not in names
+
+    def test_tier2_with_injected_llm_node_uses_it(self) -> None:
+        calls: list[str] = []
+        plan = Plan(
+            steps=[
+                PlanStep(
+                    step_id="s1",
+                    tool_name="getProductById",
+                    description="按名称查询商品",
+                    arguments={"name": "苹果"},
+                )
+            ]
+        )
+
+        def fake_llm(state: AgentState) -> dict[str, object]:
+            calls.append(state.query)
+            return {"plan": plan, "candidate_tools": ["getProductById"]}
+
+        saver = _RecordingSaver()
+        graph = build_agent_graph(llm_plan_node=fake_llm, checkpoint_saver=saver)  # type: ignore[arg-type]
+        result = graph.invoke({"run_id": "r-t2llm", "tenant_id": "t1", "query": "随便聊聊"})
+        assert calls == ["随便聊聊"]
+        assert result["plan"].steps[0].tool_name == "getProductById"
+        assert result["status"] == AgentStatus.SUCCEEDED
+        names = [name for name, _ in saver.saved]
+        assert "build_plan_llm" in names
+        assert "build_plan" not in names
+
+    def test_tier1_routes_to_deterministic_plan_node(self) -> None:
+        plan_calls: list[str] = []
+        llm_calls: list[str] = []
+
+        def recording_plan(state: AgentState) -> dict[str, object]:
+            plan_calls.append(state.query)
+            return {}
+
+        def recording_llm(state: AgentState) -> dict[str, object]:
+            llm_calls.append(state.query)
+            return {"plan": None, "errors": []}
+
+        graph = build_agent_graph(plan_node=recording_plan, llm_plan_node=recording_llm)
+        result = graph.invoke({"run_id": "r-t1", "tenant_id": "t1", "query": "查苹果库存"})
+        assert plan_calls == ["查苹果库存"]
+        assert llm_calls == []
+        assert result["status"] == AgentStatus.SUCCEEDED
+
+    def test_resumed_run_with_existing_plan_skips_planner(self) -> None:
+        # A resumed run (checkpoint replay, approve/deny resume) already carries a
+        # validated plan approved by a human on a previous pass. Re-entering the
+        # planner — especially the LLM planner, whose step_ids are not positional —
+        # would orphan the approval records and could swap in a plan nobody
+        # approved, so the graph must route the state straight to re-validation.
+        plan_calls: list[str] = []
+        llm_calls: list[str] = []
+
+        def recording_plan(state: AgentState) -> dict[str, object]:
+            plan_calls.append(state.query)
+            return {}
+
+        def recording_llm(state: AgentState) -> dict[str, object]:
+            llm_calls.append(state.query)
+            return {"plan": None, "errors": []}
+
+        plan = Plan(
+            steps=[
+                PlanStep(
+                    step_id="s1",
+                    tool_name="getProductById",
+                    description="按名称查询商品",
+                    arguments={"name": "苹果"},
+                )
+            ]
+        )
+        graph = build_agent_graph(plan_node=recording_plan, llm_plan_node=recording_llm)
+        # "随便聊聊" routes to tier2, but the existing plan must win on resume.
+        result = graph.invoke(
+            {"run_id": "r-resume", "tenant_id": "t1", "query": "随便聊聊", "plan": plan}
+        )
+        assert plan_calls == []
+        assert llm_calls == []
+        assert result["plan"].steps[0].step_id == "s1"
+        assert result["status"] == AgentStatus.SUCCEEDED
 
 
 class TestDeadline:

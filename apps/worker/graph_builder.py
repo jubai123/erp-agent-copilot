@@ -153,6 +153,7 @@ def build_worker_graph(
     retrieve_node: Callable[[AgentState], dict[str, Any]] | None = None,
     run_id: str | None = None,
     executor: Callable[..., Any] | None = None,
+    llm_plan_node: Callable[[AgentState], dict[str, Any]] | None = None,
 ) -> CompiledStateGraph:
     """Build the worker graph with real nodes, write scope and idempotent writes.
 
@@ -173,12 +174,22 @@ def build_worker_graph(
     the in-process ERP simulator so offline/test builds make no network calls.
     Callers that want the cloud ERP pass resolve_erp_executor(settings) — see
     apps.worker.executor.
+
+    *llm_plan_node* is the three-layer funnel's Tier2/Tier3 planner (e.g.
+    build_plan_node bound to a real LLM client). Omitted by default so the
+    worker stays offline: tier1 queries use the deterministic planner and
+    tier2/3 queries fail honestly (ROUTED_TIER23_NO_LLM) instead of being
+    over-grabbed by the deterministic layer. When injected, it is observed
+    under the distinct "plan_llm" phase label so the latency histogram keeps
+    LLM planning separate from deterministic planning.
     """
     if retrieve_node is None:
         retrieve_node = build_worker_retrieve_node(session, run_id=run_id)
+    llm_node = None if llm_plan_node is None else _observe_phase("plan_llm", llm_plan_node)
     return build_agent_graph(
         retrieve_node=retrieve_node,
         plan_node=_observe_phase("plan", build_deterministic_plan_node()),
+        llm_plan_node=llm_node,
         validate_node=build_validate_plan_node(tool_schemas=WORKER_TOOL_SCHEMAS),
         policy_node=build_policy_check_node(get_scopes=partial(resolve_user_scopes, session)),
         execute_node=_observe_phase(

@@ -21,6 +21,7 @@ from erp_copilot.agent.nodes.request_approval import (
     pending_approval_step_ids,
     request_approval_node,
 )
+from erp_copilot.agent.routing import route_query_layer
 from erp_copilot.agent.state import AgentState, AgentStatus, StateError
 from erp_copilot.memory.checkpoint import CheckpointSaver, checkpointed
 
@@ -31,6 +32,7 @@ NODE_NAMES: tuple[str, ...] = (
     "classify_intent",
     "retrieve_context",
     "build_plan",
+    "build_plan_llm",
     "validate_plan",
     "policy_check",
     "request_approval",
@@ -98,6 +100,28 @@ def _verify_results_noop(state: AgentState) -> dict[str, Any]:
     return {"status": AgentStatus.SUCCEEDED}
 
 
+def _llm_plan_noop(state: AgentState) -> dict[str, Any]:
+    """Honest fail for tier2/3 queries when no LLM plan node is injected.
+
+    The three-layer funnel's boundary is enforced here: a query the
+    deterministic layer cannot faithfully serve (route_query_layer != tier1)
+    must not be grabbed by it. With no injected LLM planner the graph reports
+    ROUTED_TIER23_NO_LLM and the run fails honestly instead of producing a
+    wrong plan; the worker injects the real LLM node (build_plan_node) when
+    one is configured.
+    """
+    return {
+        "plan": None,
+        "errors": [
+            *state.errors,
+            StateError(
+                code="ROUTED_TIER23_NO_LLM",
+                message="该查询需要 Tier2/Tier3 LLM 规划，但 graph 未注入 LLM 规划节点",
+            ),
+        ],
+    }
+
+
 def check_deadline(state: AgentState) -> dict[str, Any]:
     """Terminate a run whose deadline has passed (task 4.15).
 
@@ -148,20 +172,38 @@ def _route_after_verify(state: AgentState) -> str:
     return "recover_or_replan" if state.errors else "finalize"
 
 
+def _route_to_planner(state: AgentState) -> str:
+    # The three-layer funnel's plan-node choice: tier1 serves the deterministic
+    # planner (fast, offline), tier2/tier3 route to the injected LLM planner.
+    # route_query_layer is pure and deterministic, so the forward edge and the
+    # replan edge (recover_or_replan PLANNING -> here) agree.
+    # A resumed run already carries a validated plan approved by a human on a
+    # previous pass; re-planning it — especially via the LLM, whose step_ids are
+    # not positional — would orphan the approval records (they reference the old
+    # step_ids) and could swap in a plan nobody approved. Skip straight to
+    # re-validating the existing plan. recover_or_replan's PLANNING branch sets
+    # plan to None before routing back, so a genuine re-plan still re-enters the
+    # planner.
+    if state.plan is not None:
+        return "validate_plan"
+    return "build_plan" if route_query_layer(state.query) == "tier1" else "build_plan_llm"
+
+
 def _route_after_recover(state: AgentState) -> str:
     # recover_or_replan sets the next status: EXECUTING -> retry the failed
-    # steps, PLANNING -> regenerate the plan; anything else (FAILED after give
-    # up, or a no-op status) ends at finalize.
+    # steps, PLANNING -> regenerate the plan (re-entering the layer router);
+    # anything else (FAILED after give up, or a no-op status) ends at finalize.
     if state.status == AgentStatus.EXECUTING:
         return "execute_ready_steps"
     if state.status == AgentStatus.PLANNING:
-        return "build_plan"
+        return _route_to_planner(state)
     return "finalize"
 
 
 def build_agent_graph(
     retrieve_node: Callable[[AgentState], dict[str, Any]] | None = None,
     plan_node: Callable[[AgentState], dict[str, Any]] | None = None,
+    llm_plan_node: Callable[[AgentState], dict[str, Any]] | None = None,
     validate_node: Callable[[AgentState], dict[str, Any]] | None = None,
     policy_node: Callable[[AgentState], dict[str, Any]] | None = None,
     execute_node: Callable[[AgentState], Awaitable[dict[str, Any]]] | None = None,
@@ -172,13 +214,17 @@ def build_agent_graph(
 
     *retrieve_node* injects the real retrieve_context implementation (task
     4.4), *plan_node* the real build_plan implementation (task 4.6),
+    *llm_plan_node* the real Tier2/Tier3 LLM build_plan implementation (the
+    three-layer funnel: the graph routes a query to *plan_node* when
+    route_query_layer says tier1, else to *llm_plan_node*),
     *validate_node* the real validate_plan implementation (task 4.7),
     *policy_node* the real policy_check implementation (task 4.8),
     *execute_node* the real execute_ready_steps implementation (task 4.9) and
     *verify_node* the real verify_results implementation (task 4.11). When
     omitted, no-ops keep topology/smoke tests free of database, LLM,
     tool-schema, security-subsystem, executor and success-condition
-    dependencies.
+    dependencies. An omitted *llm_plan_node* reports ROUTED_TIER23_NO_LLM for
+    tier2/3 queries — the funnel refuses to overgrab rather than guess.
 
     *checkpoint_saver* (task 4.12) wraps every node so its post-node state is
     persisted before the graph advances; omitted in tests, injected by the
@@ -193,6 +239,10 @@ def build_agent_graph(
             retrieve_node if retrieve_node is not None else _retrieve_context_noop,
         ),
         ("build_plan", plan_node if plan_node is not None else _build_plan_noop),
+        (
+            "build_plan_llm",
+            llm_plan_node if llm_plan_node is not None else _llm_plan_noop,
+        ),
         ("validate_plan", validate_node if validate_node is not None else _validate_plan_noop),
         ("policy_check", policy_node if policy_node is not None else _policy_check_noop),
         ("request_approval", request_approval_node),
@@ -218,8 +268,17 @@ def build_agent_graph(
         {"finalize": "finalize", "classify_intent": "classify_intent"},
     )
     builder.add_edge("classify_intent", "retrieve_context")
-    builder.add_edge("retrieve_context", "build_plan")
+    builder.add_conditional_edges(
+        "retrieve_context",
+        _route_to_planner,
+        {
+            "build_plan": "build_plan",
+            "build_plan_llm": "build_plan_llm",
+            "validate_plan": "validate_plan",
+        },
+    )
     builder.add_edge("build_plan", "validate_plan")
+    builder.add_edge("build_plan_llm", "validate_plan")
     builder.add_conditional_edges(
         "validate_plan",
         _route_after_validate,
@@ -243,6 +302,7 @@ def build_agent_graph(
         {
             "execute_ready_steps": "execute_ready_steps",
             "build_plan": "build_plan",
+            "build_plan_llm": "build_plan_llm",
             "finalize": "finalize",
         },
     )

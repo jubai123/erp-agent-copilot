@@ -159,3 +159,42 @@ def test_build_worker_graph_forwards_explicit_retrieve_node(
     build_worker_graph(_FakeSession("postgresql"), checkpoint_saver=None, retrieve_node=custom)
 
     assert captured["retrieve_node"] is custom
+
+
+def test_build_worker_graph_forwards_llm_plan_node(monkeypatch: pytest.MonkeyPatch) -> None:
+    custom = lambda state: {"plan": None, "errors": []}  # noqa: E731
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "apps.worker.graph_builder.build_worker_retrieve_node",
+        lambda *args, **kwargs: lambda state: {},
+    )
+    monkeypatch.setattr(
+        "apps.worker.graph_builder.build_agent_graph",
+        lambda **kw: captured.update(kw) or object(),
+    )
+
+    build_worker_graph(_FakeSession("postgresql"), checkpoint_saver=None, llm_plan_node=custom)
+
+    # The injected node is wrapped (phase observation) but must call through.
+    assert captured["llm_plan_node"] is not None
+    updates = captured["llm_plan_node"](AgentState(run_id="r1", tenant_id="t1", query="查苹果库存"))
+    assert updates == {"plan": None, "errors": []}
+
+
+def test_build_worker_graph_defaults_llm_plan_node_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "apps.worker.graph_builder.build_worker_retrieve_node",
+        lambda *args, **kwargs: lambda state: {},
+    )
+    monkeypatch.setattr(
+        "apps.worker.graph_builder.build_agent_graph",
+        lambda **kw: captured.update(kw) or object(),
+    )
+
+    build_worker_graph(_FakeSession("postgresql"), checkpoint_saver=None)
+
+    # No LLM configured -> the graph's tier2/3 node honest-fails (ROUTED_TIER23_NO_LLM).
+    assert captured["llm_plan_node"] is None

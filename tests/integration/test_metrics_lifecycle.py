@@ -159,8 +159,9 @@ class TestRunLifecycleMetrics:
         client = TestClient(create_app())
         failed_before = _counter("erp_runs_failed_total")
 
-        # "查询库存" carries no product/region entity, so the deterministic
-        # planner emits EMPTY_PLAN and the run fails into the human queue.
+        # "查询库存" carries no product/region entity, so the funnel routes it
+        # to tier2; with no LLM node the run honest-fails (ROUTED_TIER23_NO_LLM)
+        # into the human queue.
         response = client.post(
             "/v1/runs",
             json={"tenant_id": tenant_id, "title": "metrics-fail", "query": "查询库存"},

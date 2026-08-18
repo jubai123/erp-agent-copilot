@@ -274,9 +274,10 @@ class TestApproveRun:
     def test_failed_resume_enters_human_queue(self) -> None:
         from apps.api.main import create_app
 
-        # "创建订单" carries no product/region entity, so on resume the
-        # deterministic planner emits EMPTY_PLAN and the run fails into the
-        # human-intervention queue (task 5.9) instead of completing.
+        # "创建订单" carries no product/region entity, so the funnel routes it to
+        # tier2 on resume; with no LLM node injected the graph honest-fails
+        # (ROUTED_TIER23_NO_LLM) and the run fails into the human-intervention
+        # queue (task 5.9) instead of completing.
         tenant_id = _create_tenant("Approve Fail", "approve-fail")
         run_id = _create_paused_run(tenant_id)
         _save_paused_checkpoint(run_id, tenant_id, query="创建订单", step_id="s1")
@@ -296,7 +297,7 @@ class TestApproveRun:
             run = session.query(Run).filter_by(id=run_id).first()
             assert run is not None
             assert run.status == "FAILED"
-            assert run.failure_code == "EMPTY_PLAN"
+            assert run.failure_code == "ROUTED_TIER23_NO_LLM"
             assert run.failure_reason
             assert run.suggested_action
 
@@ -304,7 +305,7 @@ class TestApproveRun:
                 session.query(RunEvent).filter_by(run_id=run_id, event_type="RUN_FAILED").first()
             )
             assert event is not None
-            assert json.loads(event.payload)["error_code"] == "EMPTY_PLAN"
+            assert json.loads(event.payload)["error_code"] == "ROUTED_TIER23_NO_LLM"
 
             queue = FailureQueue(session).list_needing_intervention(tenant_id)
             assert [q.id for q in queue] == [run_id]
