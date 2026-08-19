@@ -35,6 +35,7 @@ _METRIC_NAMES = {
     "erp_run_replans",
     "erp_run_abandoned",
     "erp_approval_requests",
+    "erp_plan_outcome",
     "erp_phase_latency_seconds",
     "erp_worker_queue_length",
 }
@@ -49,7 +50,7 @@ def _value_lines(text: str, metric: str) -> list[str]:
 
 
 class TestCreateMetrics:
-    def test_registers_all_nine_collectors(self) -> None:
+    def test_registers_all_collectors(self) -> None:
         metrics = create_metrics()
         assert _family_names(metrics) == _METRIC_NAMES
 
@@ -120,6 +121,23 @@ class TestCounters:
         ]
         assert _value_lines(text, 'erp_approval_requests_total{outcome="pending"}') == [
             'erp_approval_requests_total{outcome="pending"} 2.0'
+        ]
+
+    def test_plan_outcome_labels_increment(self) -> None:
+        metrics = create_metrics()
+        metrics.plan_outcomes.labels(outcome="accepted").inc()
+        metrics.plan_outcomes.labels(outcome="accepted").inc()
+        metrics.plan_outcomes.labels(outcome="edited").inc()
+        metrics.plan_outcomes.labels(outcome="rejected").inc()
+        text = generate_latest(metrics)
+        assert _value_lines(text, 'erp_plan_outcome_total{outcome="accepted"}') == [
+            'erp_plan_outcome_total{outcome="accepted"} 2.0'
+        ]
+        assert _value_lines(text, 'erp_plan_outcome_total{outcome="edited"}') == [
+            'erp_plan_outcome_total{outcome="edited"} 1.0'
+        ]
+        assert _value_lines(text, 'erp_plan_outcome_total{outcome="rejected"}') == [
+            'erp_plan_outcome_total{outcome="rejected"} 1.0'
         ]
 
     def test_output_has_help_and_type_lines(self) -> None:

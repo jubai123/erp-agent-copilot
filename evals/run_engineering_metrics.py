@@ -80,7 +80,7 @@ REPORT_DIR = Path(__file__).resolve().parent / "reports"
 _NODE_SPAN_DEF_FILE = SRC_DIR / "observability" / "tracing.py"
 _LLM_CALL_DEF_FILE = SRC_DIR / "observability" / "langfuse.py"
 
-# The nine Prometheus families the platform exposes (observability/metrics.py).
+# The ten Prometheus families the platform exposes (observability/metrics.py).
 METRIC_FAMILIES = (
     "erp_runs_created_total",
     "erp_runs_completed_total",
@@ -89,6 +89,7 @@ METRIC_FAMILIES = (
     "erp_run_replans_total",
     "erp_run_abandoned_total",
     "erp_approval_requests_total",
+    "erp_plan_outcome_total",
     "erp_phase_latency_seconds",
     "erp_worker_queue_length",
 )

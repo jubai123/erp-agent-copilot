@@ -34,3 +34,6 @@ class ApproveRunRequest(BaseModel):
     decided_by: str
     reason: str | None = None
     trace_id: str | None = None
+    # The user's edited plan (task 7.8): absent/empty means the plan was
+    # accepted as-is; a non-empty value distinguishes "approved with edits".
+    modified_plan: str | None = None

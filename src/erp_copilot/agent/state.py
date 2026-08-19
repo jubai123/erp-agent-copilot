@@ -187,6 +187,9 @@ class ApprovalRequest(_StrictModel):
     decided_by: str | None = None
     decided_at: datetime | None = None
     reason: str | None = None
+    # The user's edited plan (task 7.8): None/empty means the plan was accepted
+    # as-is; a non-empty value records "approved with these edits" for audit.
+    modified_plan: str | None = None
 
 
 class PlanValidation(_StrictModel):

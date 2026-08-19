@@ -56,13 +56,17 @@ class ApprovalDecisionService:
         decision: ApprovalStatus,
         decided_by: str,
         reason: str | None = None,
+        modified_plan: str | None = None,
     ) -> ApprovalRequest:
         """Resolve one PENDING request and save the decided state as a checkpoint.
 
         The saved checkpoint is what resume_run replays: re-invoking the graph
         from the decided state routes the step onward. Returns the decided
-        record so callers (HTTP layer, audit) see who/when/why without a
-        second read.
+        record so callers (HTTP layer, audit) see who/when/why without a second
+        read. *modified_plan* (task 7.8) is the user's edited plan when approving
+        with changes — recorded on the decided record for audit and mapped to
+        the plan-outcome bucket (approved -> accepted, approved+edits -> edited,
+        denied -> rejected).
         """
         if decision not in _DECIDABLE:
             raise CopilotError(
@@ -100,6 +104,7 @@ class ApprovalDecisionService:
                 "decided_by": decided_by,
                 "decided_at": self._clock(),
                 "reason": reason,
+                "modified_plan": modified_plan,
             }
         )
         approvals = [decided if r.step_id == step_id else r for r in state.approvals]
@@ -107,9 +112,13 @@ class ApprovalDecisionService:
             "approval_decision",
             state.model_copy(update={"approvals": approvals}),
         )
-        # Task 7.4: inc after the checkpoint save — a failed persist leaves no
-        # record and no count, so metrics stay consistent with the audit trail.
+        # Tasks 7.4/7.8: inc after the checkpoint save — a failed persist leaves
+        # no record and no count, so metrics stay consistent with the audit trail.
         METRICS.approval_requests.labels(outcome=decision.value).inc()
+        outcome = "rejected" if decision == ApprovalStatus.DENIED else (
+            "edited" if modified_plan else "accepted"
+        )
+        METRICS.plan_outcomes.labels(outcome=outcome).inc()
         return decided
 
 
@@ -177,6 +186,7 @@ async def decide_and_resume(
     decision: ApprovalStatus,
     decided_by: str,
     reason: str | None = None,
+    modified_plan: str | None = None,
     ip: str | None = None,
     trace_id: str | None = None,
 ) -> tuple[ApprovalRequest, dict[str, Any]]:
@@ -193,6 +203,7 @@ async def decide_and_resume(
         decision=decision,
         decided_by=decided_by,
         reason=reason,
+        modified_plan=modified_plan,
     )
     record_audit_log(
         session,

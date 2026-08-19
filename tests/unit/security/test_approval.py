@@ -442,6 +442,28 @@ class TestDecideAndResume:
         assert logs[0].result == "denied"
         assert logs[0].ip is None
 
+    def test_approve_with_modified_plan_passes_through(self, session: Session) -> None:
+        # Task 7.8: the HTTP layer forwards the user's edited plan through
+        # decide_and_resume; the decided record must carry it for the audit trail.
+        saver = _save_paused(session)
+        decided, _result = asyncio.run(
+            decide_and_resume(
+                _resume_graph(),
+                saver,
+                session,
+                run_id="r1",
+                tenant_id="t1",
+                step_id="s1",
+                decision=ApprovalStatus.APPROVED,
+                decided_by="manager",
+                modified_plan="把数量改成 2 KG",
+            )
+        )
+        assert decided.modified_plan == "把数量改成 2 KG"
+        restored = saver.load_latest("r1", "t1")
+        assert restored is not None
+        assert restored.approvals[0].modified_plan == "把数量改成 2 KG"
+
 
 class TestApprovalMetrics:
     """Task 7.4: deciding a request incs the matching outcome label.
@@ -490,3 +512,96 @@ class TestApprovalMetrics:
         text = generate_latest(metrics)
         assert 'erp_approval_requests_total{outcome="denied"} 1.0' in text
         assert 'outcome="approved"' not in text
+
+
+class TestPlanOutcomeMetrics:
+    """Task 7.8: deciding maps onto the plan-outcome funnel bucket.
+
+    accepted = approved without an edited plan; edited = approved carrying a
+    modified_plan; rejected = denied. The adoption rate (accepted / total
+    plans) is what the north-star metric expresses. The inc fires after the
+    checkpoint save, matching the task 7.4 discipline: no persisted decision,
+    no count.
+    """
+
+    def _wired(self, monkeypatch: pytest.MonkeyPatch) -> object:
+        metrics = create_metrics()
+        monkeypatch.setattr(approval_mod, "METRICS", metrics)
+        return metrics
+
+    def test_approve_without_edits_counts_accepted(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metrics = self._wired(monkeypatch)
+        saver = _save_paused(session)
+        _service(saver).decide(
+            run_id="r1",
+            tenant_id="t1",
+            step_id="s1",
+            decision=ApprovalStatus.APPROVED,
+            decided_by="ops",
+        )
+        text = generate_latest(metrics)
+        assert 'erp_plan_outcome_total{outcome="accepted"} 1.0' in text
+        assert 'outcome="edited"' not in text
+
+    def test_approve_with_modified_plan_counts_edited(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metrics = self._wired(monkeypatch)
+        saver = _save_paused(session)
+        _service(saver).decide(
+            run_id="r1",
+            tenant_id="t1",
+            step_id="s1",
+            decision=ApprovalStatus.APPROVED,
+            decided_by="ops",
+            modified_plan="把数量改成 2 KG",
+        )
+        text = generate_latest(metrics)
+        assert 'erp_plan_outcome_total{outcome="edited"} 1.0' in text
+        assert 'outcome="accepted"' not in text
+
+    def test_deny_counts_rejected(self, session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+        metrics = self._wired(monkeypatch)
+        saver = _save_paused(session)
+        _service(saver).decide(
+            run_id="r1",
+            tenant_id="t1",
+            step_id="s1",
+            decision=ApprovalStatus.DENIED,
+            decided_by="risk",
+        )
+        text = generate_latest(metrics)
+        assert 'erp_plan_outcome_total{outcome="rejected"} 1.0' in text
+
+    def test_edited_outcome_when_modified_plan_empty_string_counts_accepted(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metrics = self._wired(monkeypatch)
+        saver = _save_paused(session)
+        _service(saver).decide(
+            run_id="r1",
+            tenant_id="t1",
+            step_id="s1",
+            decision=ApprovalStatus.APPROVED,
+            decided_by="ops",
+            modified_plan="",
+        )
+        text = generate_latest(metrics)
+        assert 'erp_plan_outcome_total{outcome="accepted"} 1.0' in text
+
+    def test_modified_plan_stamped_on_decided_record(self, session: Session) -> None:
+        saver = _save_paused(session)
+        decided = _service(saver).decide(
+            run_id="r1",
+            tenant_id="t1",
+            step_id="s1",
+            decision=ApprovalStatus.APPROVED,
+            decided_by="ops",
+            modified_plan="把数量改成 2 KG",
+        )
+        assert decided.modified_plan == "把数量改成 2 KG"
+        restored = saver.load_latest("r1", "t1")
+        assert restored is not None
+        assert restored.approvals[0].modified_plan == "把数量改成 2 KG"

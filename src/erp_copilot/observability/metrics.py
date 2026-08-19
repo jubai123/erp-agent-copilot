@@ -44,6 +44,7 @@ class Metrics:
     runs_replans: prometheus_client.Counter
     runs_abandoned: prometheus_client.Counter
     approval_requests: prometheus_client.Counter
+    plan_outcomes: prometheus_client.Counter
     phase_latency: prometheus_client.Histogram
     worker_queue: prometheus_client.Gauge
 
@@ -93,6 +94,12 @@ def create_metrics() -> Metrics:
         approval_requests=prometheus_client.Counter(
             "erp_approval_requests_total",
             "Total number of human approval requests, labeled by outcome",
+            labelnames=["outcome"],
+            registry=registry,
+        ),
+        plan_outcomes=prometheus_client.Counter(
+            "erp_plan_outcome_total",
+            "Total number of user decisions on an AI plan, labeled by outcome",
             labelnames=["outcome"],
             registry=registry,
         ),

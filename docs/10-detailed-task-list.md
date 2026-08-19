@@ -1893,6 +1893,8 @@
 
 ## 任务 7.8：计划采纳率/修正率埋点
 
+> **状态：✅ 已完成**（2026-08-19，新增 `erp_plan_outcome_total` 计数器，标签 `outcome=accepted/edited/rejected`；`ApprovalDecisionService.decide` 新增可选 `modified_plan` 参数，盖章到已决 ApprovalRequest（state 新增字段，旧 checkpoint 反序列化向后兼容），并在 checkpoint 保存成功后按路径计入对应桶：DENIED→rejected、APPROVED 无 modified_plan→accepted、APPROVED 带 modified_plan→edited——沿用任务 7.4「先持久化后计数」纪律，采纳率 = (accepted+edited)/(accepted+edited+rejected) 可算；`POST /v1/runs/{run_id}/approve` 请求体新增可选 `modified_plan` 区分「原样接受 vs 修改后接受」并透传。范围外：modified_plan 只做埋点与审计标记，不改变恢复后的实际执行。单测钉住：三路决策计入对应桶 + 空字符串视为 accepted + record 携带标记 + decide_and_resume 透传；`run_engineering_metrics.METRIC_FAMILIES` 同步补上第 10 个 family（9→10）。验证：observability/security/agent/worker/api/evals/integration 合并回归 1087 passed + ruff/mypy 干净）
+
 **目标**：记录用户对 AI 计划/审批的动作（直接接受 / 修改后执行 / 拒绝），得到 Copilot 北极星指标。
 
 **交付物**：

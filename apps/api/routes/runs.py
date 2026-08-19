@@ -250,6 +250,7 @@ async def approve_run(
             decision=decision,
             decided_by=body.decided_by,
             reason=body.reason,
+            modified_plan=body.modified_plan,
             ip=request.client.host if request.client else None,
             trace_id=body.trace_id,
         )
