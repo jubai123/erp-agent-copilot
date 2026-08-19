@@ -1872,6 +1872,8 @@
 
 ## 任务 7.7：token/成本/单 Run LLM 调用次数聚合
 
+> **状态：✅ 已完成**（2026-08-19，新增 `evals/scripts/llm_usage_report.py`：解析 JsonFormatter 的 `LLM_CALL` JSON 日志行（run_id 顶层、tokens 在 extra）→ 按 run 聚合 token/成本/调用次数 → 输出单 Run 平均 token、平均成本、调用次数 P50/P95。成本不在日志里，用 `estimate_cost` 按价表重估；run 内任一调用无价 → 该 run 成本标 None（诚实不假装精确）。纯函数 parse/aggregate/percentile/format_report 单测钉住 14 用例。验证：evals 单元套件 227 passed + ruff/mypy 干净 + 样本日志实跑输出 2 runs/3 calls/平均 1504 tokens/$0.3/P50-P95）
+
 **目标**：从 `LLM_CALL` 日志与 Langfuse 聚合出单 Run 的 token 消耗、估算成本与 LLM 调用次数分布。
 
 **交付物**：
