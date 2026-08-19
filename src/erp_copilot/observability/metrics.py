@@ -45,6 +45,7 @@ class Metrics:
     runs_abandoned: prometheus_client.Counter
     approval_requests: prometheus_client.Counter
     plan_outcomes: prometheus_client.Counter
+    answer_grounded: prometheus_client.Counter
     phase_latency: prometheus_client.Histogram
     worker_queue: prometheus_client.Gauge
 
@@ -101,6 +102,12 @@ def create_metrics() -> Metrics:
             "erp_plan_outcome_total",
             "Total number of user decisions on an AI plan, labeled by outcome",
             labelnames=["outcome"],
+            registry=registry,
+        ),
+        answer_grounded=prometheus_client.Counter(
+            "erp_answer_grounded_total",
+            "Total number of terminal answers, labeled by groundedness verdict",
+            labelnames=["grounded"],
             registry=registry,
         ),
         phase_latency=prometheus_client.Histogram(

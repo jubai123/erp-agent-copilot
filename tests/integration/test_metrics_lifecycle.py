@@ -92,6 +92,7 @@ class TestRunLifecycleMetrics:
         client = TestClient(create_app())
         created_before = _counter("erp_runs_created_total")
         completed_before = _counter("erp_runs_completed_total")
+        grounded_before = _counter("erp_answer_grounded_total")
 
         response = client.post(
             "/v1/runs",
@@ -103,6 +104,9 @@ class TestRunLifecycleMetrics:
         assert response.json()["status"] == "COMPLETED"
         assert _counter("erp_runs_created_total") == created_before + 1
         assert _counter("erp_runs_completed_total") == completed_before + 1
+        # Task 7.9: a COMPLETED answer is judged grounded or not (either label)
+        # exactly once, riding out with persist_run's terminal counters.
+        assert _counter("erp_answer_grounded_total") == grounded_before + 1
 
     def test_completed_run_observes_all_three_phases(self) -> None:
         from apps.api.main import create_app
@@ -136,6 +140,7 @@ class TestRunLifecycleMetrics:
         client = TestClient(create_app())
         created_before = _counter("erp_runs_created_total")
         completed_before = _counter("erp_runs_completed_total")
+        grounded_before = _counter("erp_answer_grounded_total")
 
         response = client.post(
             "/v1/runs",
@@ -151,6 +156,8 @@ class TestRunLifecycleMetrics:
         assert response.json()["status"] == "WAITING_APPROVAL"
         assert _counter("erp_runs_created_total") == created_before + 1
         assert _counter("erp_runs_completed_total") == completed_before
+        # A paused run has no terminal answer yet, so groundedness is not judged.
+        assert _counter("erp_answer_grounded_total") == grounded_before
 
     def test_failed_run_increments_failed_counter(self) -> None:
         from apps.api.main import create_app
@@ -159,6 +166,7 @@ class TestRunLifecycleMetrics:
         user_id = _make_user(tenant_id, [("product", "read")])
         client = TestClient(create_app())
         failed_before = _counter("erp_runs_failed_total")
+        grounded_before = _counter("erp_answer_grounded_total")
 
         # "查询库存" carries no product/region entity, so the funnel routes it
         # to tier2; with no LLM node the run honest-fails (ROUTED_TIER23_NO_LLM)
@@ -172,3 +180,5 @@ class TestRunLifecycleMetrics:
         assert response.status_code == 202
         assert response.json()["status"] == "FAILED"
         assert _counter("erp_runs_failed_total") == failed_before + 1
+        # The funnel's honest refusal (no basis to answer) is counted as refused.
+        assert _counter("erp_answer_grounded_total") == grounded_before + 1

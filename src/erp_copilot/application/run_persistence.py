@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from erp_copilot.agent.groundedness import classify_answer_groundedness
 from erp_copilot.agent.routing import route_query_layer
 from erp_copilot.agent.state import AgentState, AgentStatus, StateError
 from erp_copilot.application.events import append_run_event
@@ -161,4 +162,12 @@ def persist_run(session: Session, run: Run, final: AgentState) -> str:
         METRICS.runs_completed.labels(tier=tier).inc()
     elif run.status == "FAILED":
         METRICS.runs_failed.labels(tier=tier).inc()
+    # Task 7.9: the groundedness verdict rides out with the terminal answer,
+    # counted only after the commit above lands. The classifier reads the
+    # runtime state, not run.status, because a refusal terminal leaves the
+    # runtime status QUEUED (mapped to FAILED above) yet must be counted as
+    # refused; technical failures classify to None and are not judged.
+    grounded = classify_answer_groundedness(final)
+    if grounded is not None:
+        METRICS.answer_grounded.labels(grounded=grounded).inc()
     return run.status
