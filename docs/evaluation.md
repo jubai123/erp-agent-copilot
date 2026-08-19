@@ -11,7 +11,7 @@ evals/
 ├── harness.py            # 加载数据集、run_category、overall_score、失败日志、报告
 ├── run_all.py            # 五个分类 runner 装配 + 一键入口
 ├── record_replay.py      # LLM Record/Replay（确定性回归）
-├── datasets/             # 9 个数据集，共 290 条
+├── datasets/             # 10 个数据集（五类离线 175 条接入 run_all；另有 recovery/failure/skill_follow 供单测消费、agent_routing 路由评测、planning_200 分层 LLM 评测）
 ├── scripts/              # run_security_eval.py / run_ablation.py / analyze_ablation.py / diagnose_keyword_search.py
 └── scorers/              # retrieval_scorer.py / skill_scorer.py
 ```
@@ -73,6 +73,14 @@ uv run python evals/scripts/run_security_eval.py --report report.json
 
 对同一 42 条查询评测三种检索配置的差异（Vector-only / Hybrid / Hybrid+Rerank），输出 `evals/reports/` 下的 JSON 报告。
 
+### 3.4 分层 LLM 评测与漂移基线（`evals/run_planner_eval.py`）
+
+阶段七（任务 7.10）把 planner 评测从 50 条扩到 **200 条**（`planning_200.json`），按 单步/多步 × easy/hard 分四层各 50（每层 ≥30 保证置信区间有意义）；报告输出各层 score ± 95% Wilson CI，并与 `report_llm_planner_deepseek_real_20260818.json` 实测基线在**共享 case 子集**上计算漂移 delta（`tool_set_exact` 跌 >0.02 告警）。这是"模型/供应商升级后必须重跑同一评测集对比"的回归基线——session 54 的 Prompt 优化已证明该流程有效（contract_valid 86%→94%）。
+
+```bash
+uv run python evals/run_planner_eval.py
+```
+
 ## 4. LLM Record/Replay（`evals/record_replay.py`）
 
 包裹注入的 `llm_complete` 接缝（prompt → completion），一次真实调用后离线重放：
@@ -89,7 +97,7 @@ uv run python evals/scripts/run_security_eval.py --report report.json
 |---|---|---|
 | 结构化日志 | `logging.py` | JSON 格式化，TraceContext（run_id/step_id/request_id）经 contextvars 贯穿 |
 | 分布式追踪 | `tracing.py` | `node_span()` 装饰器、W3C tracecontext 传播 |
-| 指标 | `metrics.py` | `runs_created/completed/failed`、`phase_latency` 直方图、`worker_queue`，经 `/metrics` 输出 Prometheus 文本格式 |
+| 指标 | `metrics.py` | **12 族**：run 生命周期（created/completed/failed，含 tier 标签）、恢复/审批/采纳率/groundedness/对账计数器、`phase_latency` 直方图、`worker_queue`，经 `/metrics` 输出 Prometheus 文本格式（家族清单见 docs/14） |
 | LLM 调用采集 | `langfuse.py` | 采集模型、token、耗时与估算成本，经官方 Langfuse SDK 上报 generation observation（未配置 LANGFUSE_* 时降级不采集，fail-open） |
 
 ## 6. 评测与可观测的关系
@@ -104,6 +112,6 @@ uv run python evals/scripts/run_security_eval.py --report report.json
 uv run evals/run_all.py                 # 175 条五大分类评测
 uv run python evals/scripts/run_security_eval.py   # 25 条安全守卫评测
 uv run python evals/scripts/run_ablation.py        # 42 条检索消融
-uv run pytest tests/unit                # 单元测试（1451 条通过）
+uv run pytest tests/ -q                 # 单元测试（1691 条通过）
 uv run python tests/performance/fault_injection.py # 故障注入 3/3 PASS
 ```

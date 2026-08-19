@@ -29,7 +29,7 @@
 | 指标 | 定义 | 测量方法 | 验收标准 | 当前基线 |
 |---|---|---|---|---|
 | 评测集正确率 | 五分类 175 条加权通过率 | `run_all(CATEGORY_RUNNERS)` | ≥ 0.95 | 待本次实测 |
-| 单测通过 | `pytest tests/` 失败数 | 子进程 | 0 failed | 1562 passed |
+| 单测通过 | `pytest tests/` 失败数 | 子进程 | 0 failed | 1691 passed |
 | 类型检查 | `mypy src/ apps/` 干净文件数 | 子进程 | 0 error | 103 文件 |
 | 静态检查 | `ruff check` / `ruff format --check` | 子进程 | 0 error | 通过 |
 | 故障注入 | 三场景 pass/total | `fault_injection.run_all()` | 3/3 PASS | 3/3 |
@@ -44,10 +44,10 @@
 | 指标 | 定义 | 测量方法 | 验收标准 | 当前基线 |
 |---|---|---|---|---|
 | happy_path 成功率 | 真实 Run 达 COMPLETED | TestClient + Celery eager 驱动 | 100% | 单测覆盖 |
-| 阶段延迟分解 | plan/execute/verify 均值 | 读 `erp_phase_latency_seconds` 直方图 | 记录 | **待实测** |
+| 阶段延迟分解 | plan/execute/verify 均值 | 读 `erp_phase_latency_seconds` 直方图 | 记录 | **已接线**（任务 7.5 改 `perf_counter` 修复 Win11 时钟粒度） |
 | 失败路径识别 | timeout 场景正确 FAILED | 驱动 timeout 场景 | 正确 FAILED | 单测覆盖 |
 | 执行成功率 | `(happy_ok + timeout_ok) / 2`，场景到达**预期终态**比例（happy→COMPLETED、timeout→FAILED 各记 1 分） | e2e 驱动逐场景判定 | 1.0 | 实测 |
-| 重试率 / 恢复率 | retry_count/replan_count 占比 | **缺口：无生产指标** | 待新增 | 无 |
+| 重试率 / 恢复率 | retry_count/replan_count 占比 | `erp_run_retries_total`/`erp_run_replans_total`/`erp_run_abandoned_total`（任务 7.3） | MEASURED | retry_rate 4.0 / recovery_rate 1.5 |
 
 **教学点**：为什么阶段延迟从 Prometheus 直方图读而非自己计时？评测脚本与生产埋点用**同一个**采集器（`graph_builder._observe_phase` 写 `METRICS.phase_latency`），测得的就是线上会看到的值；若脚本自己计时，埋点漂移就测不出来。读法用 `generate_latest` 文本解析 `_sum{phase=..}`/`_count{phase=..}`，这是公共 API，不碰私有 `_sum` 字段。
 
@@ -60,8 +60,8 @@
 | 指标族暴露 | 5 族计数器/直方图/仪表齐全 | 进程内 `create_metrics()` 注册表 | 5 族齐全 | 单测覆盖 |
 | phase_latency 标签 | histogram 的 phase 标签 | 检查 labelnames | plan/execute/verify | 单测覆盖 |
 | `/metrics` 路由 | API 暴露 Prometheus 文本 | 扫描 `apps/api/routes/metrics.py` | 已注册 | 有 |
-| Trace 端到端接线 | 生产代码 `node_span(` 调用点 | 静态扫描 src/ + apps/ | **≥1 处** | **0 处（缺口）** |
-| LLM 采集接线 | 生产代码 `llm_call(` 调用点 | 静态扫描 src/ + apps/ | **≥1 处** | **0 处（缺口）** |
+| Trace 端到端接线 | 生产代码 `node_span(` 调用点 | 静态扫描 src/ + apps/ | **≥1 处** | **7 处**（任务 7.1：worker 图 7 节点统一接线） |
+| LLM 采集接线 | 生产代码 `llm_call(` 调用点 | 静态扫描 src/ + apps/ | **≥1 处** | **已接线**（任务 7.2：LLM 调用点接 `llm_call`，token 回填经生产走线） |
 | 结构化日志 | TraceContext 贯穿 JSON 日志 | 复用现有单测 | 覆盖 | 覆盖 |
 
 **教学点**：可观测性指标不是"指标本身的值"，而是"采集链路是否真的通了"。`node_span`/`llm_call` 已有实现与单测，但生产代码无调用点——单测只能证明"装饰器会记 span"，证明不了"真实 Run 产生了 span"。这是"测试绿 ≠ 端到端通"的典型例子，必须诚实标为缺口。
@@ -70,10 +70,10 @@
 
 | 指标 | 定义 | 测量方法 | 验收标准 | 当前基线 |
 |---|---|---|---|---|
-| 代码规模 | src/apps/tests 的 .py 数与总行数 | ast/Path 统计（零依赖） | 记录 | src 69 / apps 34 / tests 120 |
-| 单测函数数 | `def test_*` 数量 | ast 扫描 tests/ | 记录 | 1266 |
-| 行覆盖率 | 被测代码行占比 | pytest-cov（需依赖） | ≥ 80% | **未测** |
-| 类型覆盖 | mypy 干净文件数 | `mypy src/ apps/` | 100 文件 | 100 |
+| 代码规模 | src/apps/tests 的 .py 数与总行数 | ast/Path 统计（零依赖） | 记录 | src 71 / apps 36 / tests 126 |
+| 单测函数数 | `def test_*` 数量 | ast 扫描 tests/ | 记录 | 1445 |
+| 行覆盖率 | 被测代码行占比 | pytest-cov（需依赖） | ≥ 80% | **96.14% PASS** |
+| 类型覆盖 | mypy 干净文件数 | `mypy src/ apps/` | 103 文件 | 103 |
 | 大函数数 | 超过 50 行的函数 | ast 扫描 | 记录 | 无 |
 
 **教学点**：为什么覆盖率用 ast 手工统计代码规模、用 pytest-cov 测覆盖率？代码规模是纯静态事实，用标准库 `ast`/`Path` 即可，零依赖、快；覆盖率需要跟踪**执行轨迹**，必须靠插桩工具（pytest-cov 封装 `coverage.py`）。`coverage.py` 原理是字节码级插桩——每个 `line` 事件计数，结束时按文件汇总"执行过的行/总行"。这解释了为什么"未测到"与"不存在"不同：覆盖率 80% 意味着有 20% 的行从未执行，它们是潜在的隐藏 bug 区。
@@ -110,20 +110,22 @@ uv run python evals/run_engineering_metrics.py \
 
 > 本表为四维工程化指标（D1-D4）的已知缺口。**承接计划**：`docs/10-detailed-task-list.md` 阶段七（7.1-7.11）已逐条落任务，本表「承接任务」列据此更新；未承接的缺口保持「计划后续任务」。
 
-| # | 缺口 | 现状 | 承接任务 |
+> **状态（2026-08-20）**：阶段七（7.1-7.11）已全部完成，下表缺口**全部闭合**；D1-D4 四组 `engineering_metrics.json` overall **PASS**、gaps 0。
+
+| # | 缺口 | 承接任务 | 状态 |
 |---|---|---|---|
-| 1 | Trace/LLM 采集未端到端接线 | `node_span`/`llm_call` 生产零调用点（本次实测 0/0，FAIL） | **任务 7.1**（worker 图节点挂 `@node_span`）+ **任务 7.2**（LLM 调用点接 `llm_call`，回填 token） |
-| 2 | 无重试率/恢复率指标 | `retry_count`/`replan_count` 仅存于 AgentState | **任务 7.3**（`erp_run_retries_total` / `erp_run_replans_total` / `erp_run_abandoned_total`，recover_or_replan 三分支自增） |
-| 3 | 行覆盖率已测（已闭合） | pytest-cov 已添加，实测 96.38% PASS | — |
-| 4 | mypy 3 处既有错误（已闭合） | 三处 `# type: ignore` 已与全库惯例一致，实测 `mypy src/ apps/` 100 文件 0 错误 | — |
-| 5 | 阶段延迟 plan/verify 未实测 | engineering_metrics 报告 plan=0ms / verify=0ms，埋点未触达真实执行路径 | **任务 7.5** |
-| 6 | 无审批/人工介入率指标 | request_approval 已落地，无介入率/自动化率量化 | **任务 7.4**（`erp_approval_requests_total` + outcome 标签） |
-| 7 | 无按 Tier 分层成功率 | runs 计数器无 tier 标签，无法区分确定性/LLM 场景表现 | **任务 7.6** |
-| 8 | 无 token/成本/单 Run LLM 调用次数 | `LLM_CALL` 日志已含字段，未聚合上报 | **任务 7.7** |
-| 9 | 无计划采纳率/修正率 | 审批决策未记录「原样接受 vs 修改后接受」 | **任务 7.8** |
-| 10 | 无在线 groundedness/拒答率 | 离线 Recall@K 不测「答案是否真用引用」「该拒答是否拒答」 | **任务 7.9** |
-| 11 | LLM 评测集规模不足（50 条） | planning_50 置信区间宽，无漂移基线 | **任务 7.10**（扩至 200+、分层置信区间、漂移检测） |
-| 12 | 写路径端到端未启用 | 审批→幂等→对账闭环未全量开，无对账一致率指标 | **任务 7.11**（`erp_reconciliation_success_total` + outcome 标签） |
+| 1 | Trace/LLM 采集未端到端接线 | **任务 7.1**（worker 图 7 节点挂 `@node_span`）+ **任务 7.2**（LLM 调用点接 `llm_call`，回填 token） | ✅ 已闭合 |
+| 2 | 无重试率/恢复率指标 | **任务 7.3**（`erp_run_retries_total` / `erp_run_replans_total` / `erp_run_abandoned_total`，recover_or_replan 三分支自增） | ✅ 已闭合 |
+| 3 | 行覆盖率 | pytest-cov，实测 96.14% PASS | ✅ 已闭合 |
+| 4 | mypy 既有错误 | `mypy src/ apps/` 103 文件 0 错误 | ✅ 已闭合 |
+| 5 | 阶段延迟 plan/verify 未实测 | **任务 7.5**（`perf_counter` 修复 Win11 时钟粒度 0ms 假象） | ✅ 已闭合 |
+| 6 | 无审批/人工介入率指标 | **任务 7.4**（`erp_approval_requests_total` + outcome 标签） | ✅ 已闭合 |
+| 7 | 无按 Tier 分层成功率 | **任务 7.6**（runs 计数器加 tier 标签 + `error_taxonomy.py` 聚合） | ✅ 已闭合 |
+| 8 | 无 token/成本/单 Run LLM 调用次数 | **任务 7.7**（`llm_usage_report.py` 按价表重估） | ✅ 已闭合 |
+| 9 | 无计划采纳率/修正率 | **任务 7.8**（`erp_plan_outcome_total{accepted/edited/rejected}`） | ✅ 已闭合 |
+| 10 | 无在线 groundedness/拒答率 | **任务 7.9**（`erp_answer_grounded_total{yes/no/refused}`，`classify_answer_groundedness`） | ✅ 已闭合 |
+| 11 | LLM 评测集规模不足（50 条） | **任务 7.10**（扩至 200+、分层 CI、漂移检测） | ✅ 已闭合 |
+| 12 | 写路径端到端未启用 | **任务 7.11**（`erp_reconciliation_success_total{consistent/mismatch}`，审批→幂等→对账） | ✅ 已闭合 |
 
 ## 6. 复现与报告
 

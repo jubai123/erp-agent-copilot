@@ -78,7 +78,7 @@ uv run python evals/scripts/run_security_eval.py
 
 | 风险 | 状态 |
 |---|---|
-| `/v1/knowledge/search` 检索管线未接入 HTTP 层（STUB），知识层 quarantine 处置点尚未触发 | 待集成 |
-| Celery worker 未接入完整 LangGraph 图，`policy_check`/`request_approval` 在 worker 执行链路上未生效 | 待集成 |
+| `/v1/knowledge/search` 检索管线未接入 HTTP 层（STUB），知识层 quarantine 处置点尚未触发 | 已集成（2026-08-11 起接入完整检索管线：embed→vector→FTS→RRF→rerank）；quarantine 处置点仍待触发 |
+| Celery worker 未接入完整 LangGraph 图，`policy_check`/`request_approval` 在 worker 执行链路上未生效 | 已集成（2026-08-11 起 `execute_run` 由 `build_agent_graph(checkpoint_saver=...)` 驱动，Policy 门 / 审批分支 / 恢复汇点在 worker 链路生效） |
 | SSRF 的 TOCTOU 间隙（守卫与连接各自解析） | 已知局限 |
 | 注入守卫是"窄检测器"：识别经典三族，不做通用恶意意图分类 | 设计取舍 |
