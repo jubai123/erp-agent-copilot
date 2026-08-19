@@ -1916,6 +1916,8 @@
 
 ## 任务 7.9：在线 citation/groundedness 与无依据拒答率
 
+> **状态：✅ 已完成**（2026-08-20，新增 `src/erp_copilot/agent/groundedness.py`：`classify_answer_groundedness` 纯函数，按引用覆盖对终态答案打标——`refused`=拒答类终态错误码（EMPTY_PLAN / ROUTED_TIER23_NO_LLM / NO_INTENT）、`yes`=答案叶子值被检索引用覆盖 ≥0.5（`_COVERAGE_THRESHOLD`）、`no`=无引用或覆盖不足（含全步跳过）、`None`=技术性失败（timeout/deadline/budget）不判；埋点在 `run_persistence.persist_run` 答案出站处，计入 `erp_answer_grounded_total{grounded=yes/no/refused}`；None-skip 纪律保证指标只裁决"答案与拒答"，技术故障绝不进标签。单测：`tests/unit/agent/test_groundedness.py` 12 项（三分 + 无引用判 no + 全步跳过判 no + 技术性失败不计 + 阈值边界 + 只取 COMPLETED 步结果），`test_metrics`/`test_metrics_routes` 同步登记第 11 个 family（10→11）。验证：全量单测通过 + ruff/mypy 干净）
+
 **目标**：验证线上答案是否真正基于检索引用（groundedness），以及"该拒答时是否拒答"（无依据拒答率）。
 
 **交付物**：
