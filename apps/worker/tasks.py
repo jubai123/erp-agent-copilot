@@ -28,6 +28,7 @@ from apps.worker.llm_planner import resolve_llm_plan_node
 from erp_copilot.agent.recovery import RunRecovery, build_write_reconciler
 from erp_copilot.agent.routing import route_query_layer
 from erp_copilot.agent.state import AgentState
+from erp_copilot.application.reconciliation import build_terminal_reconciler
 from erp_copilot.application.run_persistence import make_status_event_sink, persist_run
 from erp_copilot.domain.entities import Run
 from erp_copilot.infrastructure.config import Settings
@@ -116,11 +117,12 @@ def execute_run(
 
         saver = CheckpointSaver(session, event_sink=make_status_event_sink(session))
         settings = Settings()  # type: ignore[call-arg]
+        executor = resolve_erp_executor(settings)
         graph = build_worker_graph(
             session,
             saver,
             run_id=run.id,
-            executor=resolve_erp_executor(settings),  # type: ignore[call-arg]
+            executor=executor,  # type: ignore[call-arg]
             llm_plan_node=resolve_llm_plan_node(settings),
         )
 
@@ -135,7 +137,7 @@ def execute_run(
         recovery = RunRecovery(
             session,
             saver=saver,
-            reconciler=build_write_reconciler(resolve_erp_executor(settings)),
+            reconciler=build_write_reconciler(executor),
         )
         resumed = recovery.load(run.id, run.tenant_id)
         if resumed.resumed and resumed.state is not None:
@@ -157,7 +159,16 @@ def execute_run(
                 ),
             )
         final = _invoke_graph(graph, state)
-        status = persist_run(session, run, final)
+        # Task 7.11: the terminal reconciler verifies each executed write step
+        # against the ERP's actual state (getOrderByOrderId) and counts the
+        # verdict — the write-path correctness sentinel. It is failure-tolerant:
+        # a read-back outage skips a step, it never fails the run.
+        status = persist_run(
+            session,
+            run,
+            final,
+            reconciler=build_terminal_reconciler(executor),
+        )
         logger.info("Run %s finished with status %s", run_id, status)
         return {"status": status, "run_id": run.id}
     except Exception:

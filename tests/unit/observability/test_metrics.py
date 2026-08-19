@@ -37,6 +37,7 @@ _METRIC_NAMES = {
     "erp_approval_requests",
     "erp_plan_outcome",
     "erp_answer_grounded",
+    "erp_reconciliation_success",
     "erp_phase_latency_seconds",
     "erp_worker_queue_length",
 }

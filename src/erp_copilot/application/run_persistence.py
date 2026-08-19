@@ -23,6 +23,7 @@ from erp_copilot.agent.routing import route_query_layer
 from erp_copilot.agent.state import AgentState, AgentStatus, StateError
 from erp_copilot.application.events import append_run_event
 from erp_copilot.application.failure_queue import FailureQueue
+from erp_copilot.application.reconciliation import StepReconciliation
 from erp_copilot.domain.entities import Run, RunStep
 from erp_copilot.domain.enums import StepStatus
 from erp_copilot.observability.metrics import METRICS
@@ -102,7 +103,12 @@ def make_status_event_sink(session: Session) -> Callable[[str, AgentState], None
     return sink
 
 
-def persist_run(session: Session, run: Run, final: AgentState) -> str:
+def persist_run(
+    session: Session,
+    run: Run,
+    final: AgentState,
+    reconciler: Callable[[AgentState], list[StepReconciliation]] | None = None,
+) -> str:
     """Map the terminal AgentState onto the Run row and RunStep rows.
 
     The run row is re-read first so a cancel that landed while the graph ran
@@ -110,6 +116,10 @@ def persist_run(session: Session, run: Run, final: AgentState) -> str:
     settled-run rule FailureQueue enforces). A FAILED/EXPIRED terminal routes
     through FailureQueue.record, which sets the three diagnostic fields, bumps
     version and appends the RUN_FAILED event.
+
+    *reconciler*, when injected, verifies each executed write step against the
+    ERP's actual state (task 7.11) and records the verdict on the reconciliation
+    metric — after the commit lands, so the counter only reflects persisted runs.
     """
     fresh = session.query(Run).filter_by(id=run.id).first()
     if fresh is None or fresh.status == "CANCELLED":
@@ -170,4 +180,10 @@ def persist_run(session: Session, run: Run, final: AgentState) -> str:
     grounded = classify_answer_groundedness(final)
     if grounded is not None:
         METRICS.answer_grounded.labels(grounded=grounded).inc()
+    # Task 7.11: reconcile executed write steps against the ERP's actual state
+    # (injectable read-back) and count the verdict — the "AI 说做了，系统真的
+    # 做了吗" sentinel for write-path correctness. A run cancelled while the
+    # graph ran returned early above, so it never reaches the reconciler.
+    if reconciler is not None:
+        reconciler(final)
     return run.status

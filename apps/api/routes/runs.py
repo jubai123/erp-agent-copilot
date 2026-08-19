@@ -18,6 +18,7 @@ from apps.worker.llm_planner import resolve_llm_plan_node
 from erp_copilot.agent.nodes.classify_intent import classify_intent
 from erp_copilot.agent.state import AgentState, AgentStatus, ApprovalStatus
 from erp_copilot.application.events import append_run_event
+from erp_copilot.application.reconciliation import build_terminal_reconciler
 from erp_copilot.application.run_persistence import make_status_event_sink, persist_run
 from erp_copilot.domain.entities import Run, RunEvent
 from erp_copilot.domain.errors import CopilotError, NotFoundError
@@ -234,12 +235,13 @@ async def approve_run(
         decision = ApprovalStatus.APPROVED if body.decision == "APPROVE" else ApprovalStatus.DENIED
         saver = CheckpointSaver(session, event_sink=make_status_event_sink(session))
         settings = Settings()  # type: ignore[call-arg]
+        executor = resolve_erp_executor(settings)
         decided, result = await decide_and_resume(
             build_worker_graph(
                 session,
                 saver,
                 run_id=run_id,
-                executor=resolve_erp_executor(settings),  # type: ignore[call-arg]
+                executor=executor,  # type: ignore[call-arg]
                 llm_plan_node=resolve_llm_plan_node(settings),
             ),
             saver,
@@ -254,7 +256,12 @@ async def approve_run(
             ip=request.client.host if request.client else None,
             trace_id=body.trace_id,
         )
-        persist_run(session, run, AgentState.model_validate(result))
+        persist_run(
+            session,
+            run,
+            AgentState.model_validate(result),
+            reconciler=build_terminal_reconciler(executor),
+        )
         return {
             "run_id": run_id,
             "step_id": body.step_id,

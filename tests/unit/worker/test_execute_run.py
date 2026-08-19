@@ -36,10 +36,12 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from apps.erp_simulator.data.orders import get_by_idempotency_key  # noqa: E402
 from apps.erp_simulator.data.products import PRODUCT_BY_NAME  # noqa: E402
+from apps.worker.executor import erp_simulator_executor  # noqa: E402
 from apps.worker.graph_builder import build_worker_graph  # noqa: E402
 from apps.worker.tasks import execute_run  # noqa: E402
 from erp_copilot.agent.state import AgentState, AgentStatus, ApprovalStatus  # noqa: E402
 from erp_copilot.application.failure_queue import FailureQueue  # noqa: E402
+from erp_copilot.application.reconciliation import build_terminal_reconciler  # noqa: E402
 from erp_copilot.application.run_persistence import persist_run  # noqa: E402
 from erp_copilot.domain.entities import (  # noqa: E402
     AgentCheckpoint,
@@ -393,6 +395,76 @@ class TestWritePathEndToEnd:
             assert record.status == "COMPLETED"
         finally:
             product.quantity_in_stock = original_stock
+
+
+class TestTerminalReconciliation:
+    """Task 7.11: the terminal reconciler verifies executed writes end-to-end.
+
+    The write path's three layers — 审批 (approval pause), 幂等 (at-most-once
+    create), 对账 (reconciliation) — run against the real in-process simulator:
+    resume lands the order, then build_terminal_reconciler reads it back via
+    getOrderByOrderId and counts outcome=consistent. Flipping the stored order's
+    quantity simulates ERP drift so the same reconciler counts a mismatch — the
+    sentinel proving "AI 说做了，系统真的做了吗" against the real store, not a stub.
+    """
+
+    def test_resume_write_counts_consistent_then_mismatch_on_drift(
+        self, session: Session
+    ) -> None:
+        tenant = _make_tenant(session)
+        user_id = _make_writer_user(session, tenant.id)
+        run = _make_run(session, tenant.id, user_id=user_id)
+        product = PRODUCT_BY_NAME["苹果"]
+        original_stock = product.quantity_in_stock
+        original_quantity: int | None = None
+        try:
+            result = execute_run(run.id, "苹果", query="帮我在上海下一单 1 KG 苹果")
+            assert result["status"] == "WAITING_APPROVAL"
+
+            ApprovalDecisionService(CheckpointSaver(session)).decide(
+                run_id=run.id,
+                tenant_id=tenant.id,
+                step_id="s3",
+                decision=ApprovalStatus.APPROVED,
+                decided_by="tester",
+            )
+            saver = CheckpointSaver(session)
+            final = asyncio.run(
+                resume_run(
+                    build_worker_graph(session, saver),
+                    saver,
+                    run_id=run.id,
+                    tenant_id=tenant.id,
+                )
+            )
+            assert final["status"] == "succeeded"
+            order = get_by_idempotency_key(f"{run.id}:s3")
+            assert order is not None and order.status == "CREATED"
+            original_quantity = order.quantity
+
+            metrics = create_metrics()
+            reconciler = build_terminal_reconciler(erp_simulator_executor, metrics=metrics)
+            state = AgentState.model_validate(final)
+            persist_run(session, run, state, reconciler=reconciler)
+            assert (
+                metrics.reconciliation_success.labels(outcome="consistent")._value.get() == 1.0
+            )
+            assert (
+                metrics.reconciliation_success.labels(outcome="mismatch")._value.get() == 0.0
+            )
+
+            # ERP drift: the stored order's quantity diverges from the intent.
+            order.quantity = 9
+            verdicts = reconciler(state)
+            assert [v.verdict for v in verdicts] == ["mismatch"]
+            assert (
+                metrics.reconciliation_success.labels(outcome="mismatch")._value.get() == 1.0
+            )
+        finally:
+            product.quantity_in_stock = original_stock
+            order = get_by_idempotency_key(f"{run.id}:s3")
+            if order is not None and original_quantity is not None:
+                order.quantity = original_quantity
 
 
 class TestRecoveryAndFailureQueue:
