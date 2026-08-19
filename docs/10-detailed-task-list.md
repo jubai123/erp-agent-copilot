@@ -1960,7 +1960,7 @@
 
 ## 任务 7.11：写路径端到端启用（审批→幂等→对账闭环）
 
-> **状态：✅ 已完成**（2026-08-20。交付物 1 `graph_builder.py` 的写意图进生产图由任务 4.17 提前满足，无需改动；新增 `src/erp_copilot/application/reconciliation.py` 对账服务：仅对 COMPLETED WRITE/DANGEROUS 步判定，用与执行器相同的 `resolve_arguments` 解析跨步来源（`step:s1`）后的真实意图值与 ERP 回读订单比对，写句柄从 step result 的 `order_id` 或已解析参数派生；`build_terminal_reconciler` 接入 `persist_run`（worker 与 API 审批恢复两条终态路径单源），回读用 `getOrderByOrderId` 注入式适配，读回失败/无句柄的步跳过不计数（None-skip，避免 ERP 抖动伪造 mismatch）。新增指标族 `erp_reconciliation_success_total`（outcome=consistent/mismatch）。单测：`tests/unit/application/test_reconciliation.py` 16 项（纯判定/链式解析/回读适配/指标接线）+ `tests/unit/worker/test_execute_run.py::TestTerminalReconciliation` 1 项端到端：真实模拟器上"审批→幂等创建→对账一致"，再注入 ERP 漂移（订单数量改 9）判 mismatch——验收三标准全齐。全量单测 1571 passed / 1 failed（唯一失败即 `_METRIC_NAMES` 未含新族，已在本任务记账修复）。）
+> **状态：✅ 已完成**（2026-08-20。交付物 1 `graph_builder.py` 的写意图进生产图由任务 4.17 提前满足，无需改动；新增 `src/erp_copilot/application/reconciliation.py` 对账服务：仅对 COMPLETED WRITE/DANGEROUS 步判定，用与执行器相同的 `resolve_arguments` 解析跨步来源（`step:s1`）后的真实意图值与 ERP 回读订单比对，写句柄从 step result 的 `order_id` 或已解析参数派生；`build_terminal_reconciler` 接入 `persist_run`（worker 与 API 审批恢复两条终态路径单源），回读用 `getOrderByOrderId` 注入式适配，读回失败/无句柄的步跳过不计数（None-skip，避免 ERP 抖动伪造 mismatch）。新增指标族 `erp_reconciliation_success_total`（outcome=consistent/mismatch）。单测：`tests/unit/application/test_reconciliation.py` 16 项（纯判定/链式解析/回读适配/指标接线）+ `tests/unit/worker/test_execute_run.py::TestTerminalReconciliation` 1 项端到端：真实模拟器上"审批→幂等创建→对账一致"，再注入 ERP 漂移（订单数量改 9）判 mismatch——验收三标准全齐。全量单测 1572 passed / 0 failed。）
 
 **目标**：启用真实 WRITE 场景的完整闭环——WRITE 审批 → 幂等执行 → 对账确认，作为 7.4/7.8 业务指标的真实数据源。
 
