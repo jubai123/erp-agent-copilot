@@ -1936,6 +1936,8 @@
 
 ## 任务 7.10：LLM 评测集扩展 + 分层置信区间 + 模型漂移基线
 
+> **状态：✅ 已完成**（2026-08-20，`evals/datasets/planning_200.json` 由 50 扩到 200：四个分层各 50（single/multi × easy/hard，每层 ≥30 保证置信区间有意义）；`evals/llm_planner_eval.py` 新增 `wilson_ci`/`_layer_metrics`/`load_baseline_report`/`baseline_overlap_metrics`/`compute_drift`，报告输出各层 score ± 95% Wilson CI，并与 `report_llm_planner_deepseek_real_20260818.json` 基线在**共享 case 子集**上算漂移 delta（`tool_set_exact` 跌 >0.02 告警）；原 50 条 plan-001..050 工具语义原样保留，漂移对比 apples-to-apples；`main()` 手工构造 category 以保留 layers/drift 键（run_category 会丢弃）。单测：新增 `tests/unit/evals/test_planning_200.py` 25 项（schema/依赖引用/种子锚定/分层/Wilson CI/漂移/层聚合），全量单测 1555 passed。验收齐：每层 ≥30 ✓、各层 score ± 区间 ✓、drift 超阈值报警 ✓、结构校验 + 种子锚定 ✓）
+
 **目标**：把 planning 评测从 50 条扩到 200+ 条、按单步/多步/难度分层给出置信区间，并建立模型漂移检测基线。
 
 **交付物**：
