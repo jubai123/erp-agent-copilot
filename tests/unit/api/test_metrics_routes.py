@@ -11,6 +11,8 @@ _METRIC_NAMES = (
     "erp_runs_created_total",
     "erp_runs_completed_total",
     "erp_runs_failed_total",
+    "erp_answer_grounded_total",
+    "erp_reconciliation_success_total",
     "erp_phase_latency_seconds",
     "erp_worker_queue_length",
 )

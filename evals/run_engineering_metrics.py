@@ -80,7 +80,9 @@ REPORT_DIR = Path(__file__).resolve().parent / "reports"
 _NODE_SPAN_DEF_FILE = SRC_DIR / "observability" / "tracing.py"
 _LLM_CALL_DEF_FILE = SRC_DIR / "observability" / "langfuse.py"
 
-# The ten Prometheus families the platform exposes (observability/metrics.py).
+# The Prometheus families the platform exposes (observability/metrics.py).
+# answer_grounded (task 7.9) and reconciliation_success (task 7.11) ride out
+# with the terminal state in persist_run, so they belong to the same check.
 METRIC_FAMILIES = (
     "erp_runs_created_total",
     "erp_runs_completed_total",
@@ -90,6 +92,8 @@ METRIC_FAMILIES = (
     "erp_run_abandoned_total",
     "erp_approval_requests_total",
     "erp_plan_outcome_total",
+    "erp_answer_grounded_total",
+    "erp_reconciliation_success_total",
     "erp_phase_latency_seconds",
     "erp_worker_queue_length",
 )
@@ -657,9 +661,9 @@ def collect_observability(
             "metric_families_present",
             f"{len(METRIC_FAMILIES) - len(missing)}/{len(METRIC_FAMILIES)}",
             "families",
-            "9 族",
+            f"{len(METRIC_FAMILIES)} 族",
             PASS if not missing else FAIL,
-            f"缺失: {missing}" if missing else "9 族齐全",
+            f"缺失: {missing}" if missing else f"{len(METRIC_FAMILIES)} 族齐全",
         ),
         _metric(
             "phase_latency_phase_label",
