@@ -66,11 +66,12 @@ def _make_user(tenant_id: str, scopes: list[tuple[str, str]]) -> str:
 
 
 def _counter(name: str) -> float:
-    """Read a cumulative counter value from the shared registry."""
+    """Sum a cumulative counter value across label variants."""
+    total = 0.0
     for line in generate_latest(METRICS).splitlines():
-        if line.startswith(f"{name} "):
-            return float(line.split()[-1])
-    return 0.0
+        if line.startswith(name) and line[len(name) : len(name) + 1] in (" ", "{"):
+            total += float(line.split()[-1])
+    return total
 
 
 def _phase_count(phase: str) -> float:

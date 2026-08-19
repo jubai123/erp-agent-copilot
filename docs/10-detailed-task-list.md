@@ -1848,6 +1848,8 @@
 
 ## 任务 7.6：按路由分层（Tier）成功率 + 错误分类学
 
+> **状态：✅ 已完成**（2026-08-19，`erp_runs_completed_total`/`erp_runs_failed_total` 增加 `tier` 标签；`persist_run` 终态用与生产图同源的纯函数 `route_query_layer(final.query)` 推导 tier 后 `.labels(tier=...).inc()`；worker 崩溃分支同步带 tier（`"state" in locals()` 兜底）；新增 `evals/scripts/error_taxonomy.py` 从 run_events 的 RUN_FAILED 事件聚合 error_code 分布输出 Top-N，纯聚合函数单测钉住。受标签改动涟漪：测试 `_counter`/评估器 `_counter_value` 改为跨标签聚合（sum）。单测钉住：不同 tier 计入不同标签桶 + 错误码聚合正确。验证：observability/evals/worker/application/integration 合并回归 501 passed + ruff/mypy src/apps 干净 + 脚本实跑读测试库输出 Top-N。注：Tier2/3 运行时未区分（同走 LLM 规划节点），tier 标签如实反映 `route_query_layer` 的路由决策而非实际执行层）
+
 **目标**：回答"AI 在哪些场景靠谱"——按 Tier1/2/3（确定性/LLM 约束/自由规划）分别统计成功率，并按错误码分类失败原因。
 
 **交付物**：

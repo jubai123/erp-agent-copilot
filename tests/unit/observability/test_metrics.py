@@ -68,15 +68,30 @@ class TestCounters:
         metrics = create_metrics()
         metrics.runs_created.inc()
         metrics.runs_created.inc()
-        metrics.runs_completed.inc()
+        metrics.runs_completed.labels(tier="tier1").inc()
         assert _value_lines(generate_latest(metrics), "erp_runs_created_total") == [
             "erp_runs_created_total 2.0"
         ]
-        assert _value_lines(generate_latest(metrics), "erp_runs_completed_total") == [
-            "erp_runs_completed_total 1.0"
+        assert _value_lines(generate_latest(metrics), 'erp_runs_completed_total{tier="tier1"}') == [
+            'erp_runs_completed_total{tier="tier1"} 1.0'
         ]
-        assert _value_lines(generate_latest(metrics), "erp_runs_failed_total") == [
-            "erp_runs_failed_total 0.0"
+        assert _value_lines(generate_latest(metrics), "erp_runs_failed_total") == []
+
+    def test_tier_label_buckets_separate_per_tier(self) -> None:
+        metrics = create_metrics()
+        metrics.runs_completed.labels(tier="tier1").inc()
+        metrics.runs_completed.labels(tier="tier1").inc()
+        metrics.runs_completed.labels(tier="tier3").inc()
+        metrics.runs_failed.labels(tier="tier2").inc()
+        text = generate_latest(metrics)
+        assert _value_lines(text, 'erp_runs_completed_total{tier="tier1"}') == [
+            'erp_runs_completed_total{tier="tier1"} 2.0'
+        ]
+        assert _value_lines(text, 'erp_runs_completed_total{tier="tier3"}') == [
+            'erp_runs_completed_total{tier="tier3"} 1.0'
+        ]
+        assert _value_lines(text, 'erp_runs_failed_total{tier="tier2"}') == [
+            'erp_runs_failed_total{tier="tier2"} 1.0'
         ]
 
     def test_recovery_counters_increment(self) -> None:

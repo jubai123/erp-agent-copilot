@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from erp_copilot.agent.routing import route_query_layer
 from erp_copilot.agent.state import AgentState, AgentStatus, StateError
 from erp_copilot.application.events import append_run_event
 from erp_copilot.application.failure_queue import FailureQueue
@@ -152,9 +153,12 @@ def persist_run(session: Session, run: Run, final: AgentState) -> str:
     session.commit()
     # Only a terminal run counts: a run pausing at WAITING_APPROVAL is created
     # but not yet settled, and a run cancelled while the graph ran returned
-    # early above, so neither reaches the counters here.
+    # early above, so neither reaches the counters here. The tier label comes
+    # from the same pure route_query_layer the graph routes on (task 7.6), so
+    # per-tier completion/failure rates stay sliceable by PromQL sum by (tier).
+    tier = route_query_layer(final.query)
     if run.status == "COMPLETED":
-        METRICS.runs_completed.inc()
+        METRICS.runs_completed.labels(tier=tier).inc()
     elif run.status == "FAILED":
-        METRICS.runs_failed.inc()
+        METRICS.runs_failed.labels(tier=tier).inc()
     return run.status

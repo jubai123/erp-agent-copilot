@@ -502,11 +502,12 @@ class TestRecoveryAndFailureQueue:
 
 
 def _counter(name: str) -> float:
-    """Read a cumulative counter from the shared module registry (delta reads)."""
+    """Sum a cumulative counter across label variants (delta reads)."""
+    total = 0.0
     for line in generate_latest(METRICS).splitlines():
-        if line.startswith(f"{name} "):
-            return float(line.split()[-1])
-    return 0.0
+        if line.startswith(name) and line[len(name) : len(name) + 1] in (" ", "{"):
+            total += float(line.split()[-1])
+    return total
 
 
 class TestCrashBranchFailedMetric:

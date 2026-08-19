@@ -65,12 +65,14 @@ def create_metrics() -> Metrics:
         ),
         runs_completed=prometheus_client.Counter(
             "erp_runs_completed_total",
-            "Total number of runs completed",
+            "Total number of runs completed, labeled by funnel tier",
+            labelnames=["tier"],
             registry=registry,
         ),
         runs_failed=prometheus_client.Counter(
             "erp_runs_failed_total",
-            "Total number of runs failed",
+            "Total number of runs failed, labeled by funnel tier",
+            labelnames=["tier"],
             registry=registry,
         ),
         runs_retries=prometheus_client.Counter(

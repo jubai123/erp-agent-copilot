@@ -143,14 +143,15 @@ def _metric_family_names(text: str) -> set[str]:
 
 
 def _counter_value(text: str, family: str) -> float:
-    """Current value of one counter family from exposition text (0 if absent)."""
+    """Sum one counter family's samples (all label variants) from exposition text."""
+    total = 0.0
     for line in text.splitlines():
-        if line.startswith(family + " "):
+        if line.startswith(family) and line[len(family) : len(family) + 1] in (" ", "{"):
             try:
-                return float(line.split()[1])
+                total += float(line.split()[-1])
             except (ValueError, IndexError):
-                return 0.0
-    return 0.0
+                continue
+    return total
 
 
 def _recovery_rate_metrics(metrics: Metrics) -> list[Metric]:
@@ -252,11 +253,12 @@ def _count_test_functions(tests_dir: Path) -> int:
 
 
 def _counter_value(text: str, family: str) -> float:
-    """Read an unlabelled cumulative counter value from the exposition text."""
+    """Sum one counter family's samples (all label variants) from exposition text."""
+    total = 0.0
     for line in text.splitlines():
-        if line.startswith(f"{family} "):
-            return float(line.split()[-1])
-    return 0.0
+        if line.startswith(family) and line[len(family) : len(family) + 1] in (" ", "{"):
+            total += float(line.split()[-1])
+    return total
 
 
 def _read_phase_latency_ms(text: str) -> dict[str, float]:

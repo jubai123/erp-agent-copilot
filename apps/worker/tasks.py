@@ -26,6 +26,7 @@ from apps.worker.executor import resolve_erp_executor
 from apps.worker.graph_builder import build_worker_graph
 from apps.worker.llm_planner import resolve_llm_plan_node
 from erp_copilot.agent.recovery import RunRecovery, build_write_reconciler
+from erp_copilot.agent.routing import route_query_layer
 from erp_copilot.agent.state import AgentState
 from erp_copilot.application.run_persistence import make_status_event_sink, persist_run
 from erp_copilot.domain.entities import Run
@@ -173,7 +174,10 @@ def execute_run(
                 # The crash bypassed persist_run (it is what took us down), so
                 # this direct FAILED write is the one failure never counted by
                 # persist_run — bump the counter only after the commit lands.
-                METRICS.runs_failed.inc()
+                # The tier mirrors persist_run; the "state" guard covers the
+                # (unreachable-in-practice) crash before the state was built.
+                tier = route_query_layer(state.query) if "state" in locals() else "tier1"
+                METRICS.runs_failed.labels(tier=tier).inc()
         except Exception:
             session.rollback()
         raise
