@@ -21,7 +21,7 @@ V6 不在 V5 的 Flask、MongoDB 和进程内任务模型上继续堆功能，�
 - [01-product-and-scenarios.md](01-product-and-scenarios.md)：产品范围、演示故事和验收标准。
 - [02-system-architecture.md](02-system-architecture.md)：系统边界、组件、部署和依赖方向。
 - [03-agent-runtime.md](03-agent-runtime.md)：AgentState、Plan DAG、状态机、Checkpoint和恢复。
-- [04-knowledge-and-retrieval.md](04-knowledge-and-retrieval.md)：知识分层（L1 Skill + L2 RAG）、混合检索、Rerank和引用。
+- [04-knowledge-and-retrieval.md](04-knowledge-and-retrieval.md)：知识分层（L1 Rules + L2 RAG）、混合检索、Rerank和引用。
 - [05-tools-mcp-and-simulator.md](05-tools-mcp-and-simulator.md)：Tool Registry、工具候选过滤、MCP Gateway、ERP Simulator和接口限额处理。
 - [06-security-approval-and-recovery.md](06-security-approval-and-recovery.md)：RBAC、审批、SSRF、幂等、安全和故障恢复。
 - [07-data-model-and-api-contracts.md](07-data-model-and-api-contracts.md)：核心数据表、API、事件和错误契约。
@@ -34,7 +34,7 @@ V6 不在 V5 的 Flask、MongoDB 和进程内任务模型上继续堆功能，�
 
 ### 数据集构建
 
-- [data/01-knowledge-base-dataset.md](data/01-knowledge-base-dataset.md)：ERP业务知识库的数据来源与构建方法（L1 Skill + L2 文档）。
+- [data/01-knowledge-base-dataset.md](data/01-knowledge-base-dataset.md)：ERP业务知识库的数据来源与构建方法（L1 Rules + L2 文档）。
 - [data/02-simulator-dataset.md](data/02-simulator-dataset.md)：商品、库存、供应商、订单和异常场景数据构建。
 - [data/03-evaluation-dataset.md](data/03-evaluation-dataset.md)：200条评测数据的Schema、标注、切分和质量控制。
 
@@ -59,7 +59,7 @@ erp-agent-copilot-v6/
 │   └── infrastructure/
 ├── datasets/
 │   ├── knowledge/
-│   │   ├── skills/           # L1：结构化 Skill + 意图→Skill 映射表
+│   │   ├── rules/           # L1：结构化 Rules + 意图→Rule 映射表
 │   │   └── domain-model/...  # L2：知识文档
 │   ├── simulator/
 │   └── evaluation/

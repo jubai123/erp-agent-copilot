@@ -514,7 +514,7 @@
 > 这些知识存储在知识库中，Agent 需要**检索**出最相关的内容。
 >
 > 这个阶段你会学到：
-> - **知识分层**：规则类知识（L1 Skill，确定性注入）与描述类知识（L2 RAG，语义检索）分开
+> - **知识分层**：规则类知识（L1 Rules，确定性注入）与描述类知识（L2 RAG，语义检索）分开
 > - **向量检索（Vector Search）**：把文本转成数字向量，语义相近的向量距离近
 > - **全文检索（Full-Text Search）**：传统搜索引擎用的关键词匹配
 > - **混合检索（Hybrid Search）**：向量 + 全文，取两者之长
@@ -543,25 +543,25 @@
 
 ---
 
-## 任务 3.2：定义 L1 Skill 和意图→Skill 映射表
+## 任务 3.2：定义 L1 Rules 和意图→Rule 映射表
 
-**目标**：把能写成"如果 A 则 B"的规则提取为结构化 Skill，由意图精确触发，确定性注入。
+**目标**：把能写成"如果 A 则 B"的规则提取为结构化 Rules，由意图精确触发，确定性注入。
 
 **交付物**：
-- `datasets/knowledge/skills/skills.yaml`（10-15 个 Skill：状态机、参数约束、审批策略）
-- `datasets/knowledge/skills/intent_skill_map.yaml`（`(domain, action)` → skill 列表）
-- `src/erp_copilot/retrieval/skill_matcher.py`（确定性匹配，不走向量检索）
-- `tests/unit/retrieval/test_skill_matcher.py`
+- `datasets/knowledge/rules/rules.yaml`（10-15 个 Rules：状态机、参数约束、审批策略）
+- `datasets/knowledge/rules/intent_rule_map.yaml`（`(domain, action)` → rule 列表）
+- `src/erp_copilot/retrieval/rule_matcher.py`（确定性匹配，不走向量检索）
+- `tests/unit/retrieval/test_rule_matcher.py`
 
 **验收标准**：
-- 每个意图 `(domain, action)` 精确命中 1-4 个 Skill，无误匹配
+- 每个意图 `(domain, action)` 精确命中 1-4 个 Rules，无误匹配
 - 订单状态机、region 枚举约束、审批策略都在 L1 中定义
 - 这些知识不进入 L2 检索
 
 **教学要点**：
 | 概念 | 讲解内容 |
 |------|---------|
-| 确定性 vs 概率 | Skill 匹配是精确查找（100% 命中），RAG 是语义召回（概率命中）。安全关键路径用确定性 |
+| 确定性 vs 概率 | Rule 匹配是精确查找（100% 命中），RAG 是语义召回（概率命中）。安全关键路径用确定性 |
 
 ---
 
@@ -738,18 +738,18 @@
 
 > **状态：✅ 已完成**（2026-08-07，Phase 3 收尾）
 
-**目标**：建立 L2 RAG 检索评测数据集，并为 L1 Skill 建立遵循评测。
+**目标**：建立 L2 RAG 检索评测数据集，并为 L1 Rules 建立遵循评测。
 
 **交付物**（实际落地）：
 - `datasets/eval/retrieval_queries.yaml`（42 条查询+标注的相关文档 ID，即任务原定的 retrieval_40.json，格式为 YAML、字段为 `relevant_docs`）
-- `evals/datasets/skill_follow_20.json`（20 条 L1 遵循评测：给定意图，检查 LLM 是否遵循注入的约束）
+- `evals/datasets/rule_follow_20.json`（20 条 L1 遵循评测：给定意图，检查 LLM 是否遵循注入的约束）
 - `evals/scorers/retrieval_scorer.py`（输出 Recall@1、Recall@5、MRR、NDCG@5、Precision@5、P50/P95 延迟，指标算法与 `evals/scripts/run_ablation.py` 逐位一致）
-- `evals/scorers/skill_scorer.py`（输出约束遵循率、误触发率）
+- `evals/scorers/rule_scorer.py`（输出约束遵循率、误触发率）
 
 **验收标准**（落地核对）：
 - ✅ 每条数据有 query、relevant_docs（相关文档 ID 为 `source` 字段值，与消融报告的 doc 级评测口径一致）
 - ✅ 混淆负向：`evals/datasets/knowledge_rag_40.json` 34 条可答查询均显式标注 `hard_negative_docs`（语义相近但不该命中的文档 ID，与 relevant_docs 无交集）；评测 runner 命中硬负例即判该 case 失败（2026-08-13 增量闭合，`tests/unit/evals/test_hard_negative.py` 钉死消费逻辑）
-- ✅ L1 遵循评测包含非法状态转换、非法 region 值等必须拒绝的场景（`tests/unit/evals/test_skill_follow_dataset.py::TestDatasetConsistency::test_includes_mandatory_reject_scenarios` 钉死，15 REJECT / 5 FOLLOW）
+- ✅ L1 遵循评测包含非法状态转换、非法 region 值等必须拒绝的场景（`tests/unit/evals/test_rule_follow_dataset.py::TestDatasetConsistency::test_includes_mandatory_reject_scenarios` 钉死，15 REJECT / 5 FOLLOW）
 - ✅ 评分器输出 Recall@1、Recall@5、MRR、NDCG
 
 **教学要点**：
@@ -764,7 +764,7 @@
 
 ## 任务 3.13：检索消融实验
 
-**目标**：对比 Vector-only、Hybrid、Hybrid+Rerank 三组效果，并对比 L1 Skill 开关。
+**目标**：对比 Vector-only、Hybrid、Hybrid+Rerank 三组效果，并对比 L1 Rules 开关。
 
 **交付物**：
 - `evals/scripts/run_ablation.py`
@@ -772,7 +772,7 @@
 **验收标准**：
 - 一组命令运行三种配置并输出对比表格
 - 每种配置跑完 40 条 RAG 评测集
-- 额外跑 L1 Skill 开/关对比，验证确定性注入的增益
+- 额外跑 L1 Rules 开/关对比，验证确定性注入的增益
 
 ---
 
@@ -913,7 +913,7 @@
 - **L1/L2 注入顺序**：System → L1 硬约束规则 → L2 Retrieved Knowledge（参考）→ 候选工具 → User Query
 - 检测 L1 约束被违反时（如非法状态转换），直接拒绝生成对应 Step
 
-> **状态：✅ 已完成**（2026-08-08，LLM Plan DAG 生成 + System→L1→L2→候选→Query 注入顺序 + 严格 Schema 解析 + L1 非法转换拒绝；LLM 以 callable 注入，candidate_filter/skill_matcher 首次接线进图）
+> **状态：✅ 已完成**（2026-08-08，LLM Plan DAG 生成 + System→L1→L2→候选→Query 注入顺序 + 严格 Schema 解析 + L1 非法转换拒绝；LLM 以 callable 注入，candidate_filter/rule_matcher 首次接线进图）
 
 ---
 

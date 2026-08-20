@@ -17,7 +17,7 @@
 | 层 | 已实现模块 |
 |---|---|
 | 工具层 | OpenAPI 3.x 导入校验、Tool/ToolVersion 版本化、风险分级（read/write/dangerous）、候选过滤（`candidate_filter` 9 工具确定性分类学）、MCP Gateway、统一 `ToolResult`/`ToolError` |
-| 检索层 | L1 Skill 确定性注入（`skill_matcher`，意图→技能映射 42/42 命中）+ L2 RAG（`ingestion`→pgvector 向量 + PostgreSQL FTS 混合→RRF→Cross-Encoder Rerank）+ 引用与无依据拒答；**生产配置 = Hybrid+Rerank**（消融定案，ADR 决策七） |
+| 检索层 | L1 Rules 确定性注入（`rule_matcher`，意图→规则映射 42/42 命中）+ L2 RAG（`ingestion`→pgvector 向量 + PostgreSQL FTS 混合→RRF→Cross-Encoder Rerank）+ 引用与无依据拒答；**生产配置 = Hybrid+Rerank**（消融定案，ADR 决策七） |
 | Agent 层 | 强类型 `AgentState` + 12 节点 LangGraph：确定性意图分类、三层漏斗路由（Tier1 确定性 / Tier2 LLM 约束 / Tier3 自由规划，**词表外查询默认走 LLM**，`LLM_PLANNING_ENABLED=false` 切回离线诚实失败 `ROUTED_TIER23_NO_LLM`）、Plan DAG 校验（Kahn 拓扑 + 波动分组：READ 并行 / WRITE 串行）、Policy Scope 门、写审批分支、语义验证门（AST 白名单安全 eval）、Checkpoint 恢复、recover_or_replan 图内恢复汇点 |
 | 安全层 | 五层防护：注入守卫 / SSRF 守卫 / Policy 门控 / 审批 / 输出脱敏；幂等键 at-most-once；退避重试；失败队列；安全事件与审计 |
 | 可观测层 | 结构化日志、OpenTelemetry Trace（`node_span` 生产接线 7 节点）、Prometheus 指标（**12 族**）、Langfuse、Record/Replay 评测；**AI 生产指标闭环**（阶段七，见 §2.1） |
@@ -48,7 +48,7 @@
 |---|---|---|
 | 一：工程骨架 | 12 | ✅ 全部完成（uv/pyproject、领域模型、App 工厂、Celery、CI、Alembic） |
 | 二：工具与模拟器 | 12 | ✅ 全部完成（Tool Registry、OpenAPI 导入、ERP Simulator 商品/供应商/订单/场景、导入与 Run API、e2e） |
-| 三：知识检索 | 14 | ✅ 完成（统一事实表、L1 Skill、知识库文档、导入分块、混合检索、Rerank、引用、评测集、消融定案） |
+| 三：知识检索 | 14 | ✅ 完成（统一事实表、L1 Rules、知识库文档、导入分块、混合检索、Rerank、引用、评测集、消融定案） |
 | 四：Agent Runtime | 16 | ✅ 全部完成（4.13 上下文预算 / 4.14 SSE / 4.15 取消超时 / 4.16 图端到端演示 / 4.17 写意图进生产图） |
 | 五：安全审批恢复 | 10 | ✅ 全部完成（RBAC Scope、审批、SSRF、注入守卫、Redaction、幂等、退避重试、恢复、失败队列、安全评测） |
 | 六：评测与交付 | 12 | ✅ 全部完成（可观测、175 条评测、Harness、Record/Replay、Locust、故障注入、文档、清理 Release、[REDACTED]讲稿） |

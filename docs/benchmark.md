@@ -28,7 +28,7 @@
 - **Rerank 的增量在 Recall@5**：0.7381 → 0.9167（+0.18），因为 Cross-Encoder 把关键词误召回的高分噪声压下、把相关文档顶到前 5。
 - **Rerank 的代价是延迟**：P50 从 ~53ms 涨到 ~226ms（约 4 倍）。这是本地 CPU 推理 Cross-Encoder 的实测值。
 - **Vector-only 的 Recall@1 反而最高（0.3968）**：说明语义向量对"第一个最相关文档"最敏锐；混合把 FTS 命中混进来后首位置被噪声稀释，Rerank 又部分找回。消融的价值正在于此——不跑数据，"Rerank 一定更好"是错觉。
-- **L1 Skill 覆盖率：1.0**（42/42 查询均命中 `intent_skill_map.yaml` 的意图→技能映射）。
+- **L1 Rules 覆盖率：1.0**（42/42 查询均命中 `intent_rule_map.yaml` 的意图→规则映射）。
 
 复现：
 

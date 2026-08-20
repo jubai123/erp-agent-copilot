@@ -22,7 +22,7 @@ ERP Agent Copilot 面向需要跨库存、物流供应商和订单系统办理�
 ## 3. 产品目标（已实现能力）
 
 - **工具注册与执行**：OpenAPI 3.x 导入、Tool/ToolVersion/Parameter 版本化、风险分级、MCP Gateway 持久连接与统一 `ToolResult`/`ToolError`。
-- **知识检索**：L1 Skill（意图→技能确定性匹配）+ L2 RAG（pgvector + PostgreSQL FTS 混合检索 + Rerank），带引用与无依据拒答。
+- **知识检索**：L1 Rules（意图→规则确定性匹配）+ L2 RAG（pgvector + PostgreSQL FTS 混合检索 + Rerank），带引用与无依据拒答。
 - **多步编排**：强类型 `AgentState` + LangGraph 状态机、Plan DAG 校验、只读步骤并行、写步骤串行。
 - **安全与审批**：RBAC + Tool Scope、`policy_check` 门控、写操作人工审批、SSRF 出口控制、Prompt Injection 检测、输出 Redaction。
 - **恢复与一致性**：Checkpoint 持久化、幂等键 at-most-once、指数退避重试、Worker 崩溃后对账恢复。

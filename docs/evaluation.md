@@ -11,9 +11,9 @@ evals/
 ├── harness.py            # 加载数据集、run_category、overall_score、失败日志、报告
 ├── run_all.py            # 五个分类 runner 装配 + 一键入口
 ├── record_replay.py      # LLM Record/Replay（确定性回归）
-├── datasets/             # 10 个数据集（五类离线 175 条接入 run_all；另有 recovery/failure/skill_follow 供单测消费、agent_routing 路由评测、planning_200 分层 LLM 评测）
+├── datasets/             # 10 个数据集（五类离线 175 条接入 run_all；另有 recovery/failure/rule_follow 供单测消费、agent_routing 路由评测、planning_200 分层 LLM 评测）
 ├── scripts/              # run_security_eval.py / run_ablation.py / analyze_ablation.py / diagnose_keyword_search.py
-└── scorers/              # retrieval_scorer.py / skill_scorer.py
+└── scorers/              # retrieval_scorer.py / rule_scorer.py
 ```
 
 一键运行：
@@ -25,7 +25,7 @@ uv run evals/run_all.py --report evals/reports/report.json
 
 ## 2. 数据集与 Runner 来源（诚实标注）
 
-`harness.py` 的 `DATASET_SPECS` 装配 5 个分类 = **175 条**（旧 `recovery_25.json` / `failure_20.json` 已退出评测、保留供 `decide_recovery_action` / `decide_failure_behavior` 单测消费；`skill_follow_20.json` 未接入 run_all，由 skill_scorer 单独使用）。每个分类的 runner **标注来源**，一个数字绝不会被误认作它本不是的东西：
+`harness.py` 的 `DATASET_SPECS` 装配 5 个分类 = **175 条**（旧 `recovery_25.json` / `failure_20.json` 已退出评测、保留供 `decide_recovery_action` / `decide_failure_behavior` 单测消费；`rule_follow_20.json` 未接入 run_all，由 rule_scorer 单独使用）。每个分类的 runner **标注来源**，一个数字绝不会被误认作它本不是的东西：
 
 | 分类 | 文件 | 条数 | Runner 模式 | 说明 |
 |---|---|---|---|---|

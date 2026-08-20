@@ -52,7 +52,7 @@ application/    用例与事务边界（Tool 导入、失败队列）
 agent/          AgentState、LangGraph 状态机、Plan DAG、重试策略、崩溃恢复
 agent/nodes/    classify_intent / retrieve_context / build_plan / validate_plan
                 / policy_check / execute_steps / verify_results / request_approval
-retrieval/      L1 Skill 匹配、文档导入、Embedding、混合检索、Rerank、引用、指标
+retrieval/      L1 Rules 匹配、文档导入、Embedding、混合检索、Rerank、引用、指标
 tools/          Tool Registry、OpenAPI 导入、候选过滤、幂等存储、ToolResult、MCP 网关
 memory/         Checkpoint 持久化与恢复
 security/       SSRF 出口控制、审批决策、Prompt Injection 检测、输出 Redaction
@@ -86,7 +86,7 @@ infrastructure/ 数据库引擎、Settings、Celery 配置
 
 ## 6. 知识检索
 
-两层：**L1 Skill**（`skill_matcher` 用 `intent_skill_map.yaml` 确定性匹配意图→技能）→ **L2 RAG**（文档导入分块 → Embedding 入 pgvector + jieba 分词 FTS → RRF 融合 → Rerank → 引用装配）。离线指标 `recall_at_k / MRR / NDCG / precision_at_k` 见 `retrieval/metrics.py`，实测消融见 `docs/benchmark.md`。
+两层：**L1 Rules**（`rule_matcher` 用 `intent_rule_map.yaml` 确定性匹配意图→规则）→ **L2 RAG**（文档导入分块 → Embedding 入 pgvector + jieba 分词 FTS → RRF 融合 → Rerank → 引用装配）。离线指标 `recall_at_k / MRR / NDCG / precision_at_k` 见 `retrieval/metrics.py`，实测消融见 `docs/benchmark.md`。
 
 ## 7. 工具与 MCP
 
