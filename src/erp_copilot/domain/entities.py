@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -467,3 +467,87 @@ class ApiKey(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     tenant: Mapped[Tenant] = relationship("Tenant", back_populates="api_keys")
+
+
+class VocabularyTerm(Base):
+    """An approved vocabulary entry extending the manifest.yaml seed.
+
+    The runtime vocabulary loader merges these terms into the entity catalogs
+    (products / regions / units) after the approved-proposal gate. canonical is
+    the runtime term; aliases is a JSON list of recorded variants. tenant_id
+    None means global (v1); a future tenant-scoped term filters on
+    ``tenant_id IN (NULL, tenant)`` at merge time with no migration.
+    """
+
+    __tablename__ = "vocabulary_terms"
+    __table_args__ = (
+        UniqueConstraint(
+            "vocab_type", "canonical", name="uq_vocabulary_terms_type_canonical"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    vocab_type: Mapped[str] = mapped_column(String(20), nullable=False)  # product | region | unit
+    canonical: Mapped[str] = mapped_column(String(255), nullable=False)
+    aliases: Mapped[str] = mapped_column(Text, default="[]")
+    tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # None = global (v1)
+    source: Mapped[str] = mapped_column(String(50), default="approved_proposal")
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class VocabularyObservation(Base):
+    """A terminal run whose query may contain unknown vocabulary.
+
+    Captured on persist_run when the query reaches tier2/3 with no known
+    product/region/unit entity extracted — the raw material the batch LLM
+    extractor consumes. One row per (run_id, tenant_id) so a replayed run does
+    not double-count.
+    """
+
+    __tablename__ = "vocabulary_observations"
+    __table_args__ = (
+        UniqueConstraint("run_id", "tenant_id", name="uq_vocabulary_obs_run_tenant"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    tier: Mapped[str] = mapped_column(String(10), nullable=False)
+    processed: Mapped[bool] = mapped_column(default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class VocabularyProposal(Base):
+    """An LLM-proposed term awaiting human approval (PENDING → APPROVED/REJECTED).
+
+    LLM output is never authoritative: a proposal only enters vocabulary_terms
+    after an operator approves it. proposal_key (sha1 of type + normalized
+    canonical) makes the batch task idempotent — re-extracting the same
+    candidate updates the PENDING row instead of duplicating it.
+    """
+
+    __tablename__ = "vocabulary_proposals"
+    __table_args__ = (
+        UniqueConstraint("proposal_key", name="uq_vocabulary_proposals_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    proposal_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    vocab_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    canonical: Mapped[str] = mapped_column(String(255), nullable=False)
+    aliases: Mapped[str] = mapped_column(Text, default="[]")
+    evidence: Mapped[str] = mapped_column(Text, default="[]")
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", index=True)
+    decided_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
