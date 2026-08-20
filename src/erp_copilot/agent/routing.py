@@ -19,8 +19,8 @@ signals:
   beyond the grammar's expressive power and routes straight to tier3,
   regardless of what plan the chain would produce.
 - **uncovered region** — a supplier query scoped by a real city outside the
-  classifier's delivery vocabulary (``_REGIONS``) cannot be answered honestly
-  by tier1; route to tier2.
+  merged delivery vocabulary (vocabulary loader) cannot be answered honestly by
+  tier1; route to tier2.
 
 Every trigger keyword below is pinned against the 50-case routing oracle
 (evals/datasets/agent_routing_50.json) by tests/unit/agent/test_routing.py: the
@@ -34,13 +34,10 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from erp_copilot.agent.nodes.classify_intent import (
-    _PRODUCT_NAMES,
-    _REGIONS,
-    classify_intent,
-)
+from erp_copilot.agent.nodes.classify_intent import classify_intent
 from erp_copilot.agent.planner import build_plan_from_intent
 from erp_copilot.agent.state import IntentClassification
+from erp_copilot.vocabulary.loader import get_catalog, get_product_association_pattern
 
 Layer = Literal["tier1", "tier2", "tier3"]
 
@@ -61,13 +58,13 @@ _CONDITION: tuple[str, ...] = ("如果", "只要", "换成", "卖完")
 # The order id between 先 and 再 stretches the span ("先取消订单 3f2a9c1d 再…").
 _MULTI_INTENT_RE = re.compile(r"先.{0,20}再")
 # Product-supplier association is "X的供应商" with X a product — NOT the
-# grammatical particle in "正常状态的供应商" (a status query, tier1).
-_PRODUCT_ASSOCIATION_RE = re.compile(r"(?:" + "|".join(_PRODUCT_NAMES) + r")的供应商")
+# grammatical particle in "正常状态的供应商" (a status query, tier1). The
+# pattern is compiled per call from the loader catalog (get_product_association_pattern).
 _ASSOCIATION: tuple[str, ...] = ("供应商是哪家", "供应商是谁")
 _FUZZY: tuple[str, ...] = ("能不能", "分期", "推荐一", "安排", "计划")
 _TIME: tuple[str, ...] = ("今天", "明天", "后天", "本周", "下周", "近期")
 
-# Real cities the classifier's _REGIONS vocabulary does not cover. A supplier
+# Real cities the merged delivery vocabulary does not cover (yet). A supplier
 # query scoped by one of these cannot be answered by the deterministic layer —
 # which would silently grab getSupplierByStatus — so route to tier2.
 _UNCOVERED_CITY_HINTS: tuple[str, ...] = (
@@ -92,11 +89,14 @@ def _complexity(query: str) -> Layer | None:
         return "tier3"
     if _MULTI_INTENT_RE.search(query):
         return "tier3"
-    if sum(1 for product in _PRODUCT_NAMES if product in query) >= 2:
+    catalog = get_catalog()
+    if sum(1 for product in catalog.products if product in query) >= 2:
         return "tier3"
-    if sum(1 for region in _REGIONS if region in query) >= 2:
+    if sum(1 for region in catalog.regions if region in query) >= 2:
         return "tier3"
-    if _PRODUCT_ASSOCIATION_RE.search(query) or any(token in query for token in _ASSOCIATION):
+    if get_product_association_pattern(catalog.products).search(query) or any(
+        token in query for token in _ASSOCIATION
+    ):
         return "tier3"
     if any(token in query for token in _FUZZY) or any(token in query for token in _TIME):
         return "tier3"
@@ -104,11 +104,18 @@ def _complexity(query: str) -> Layer | None:
 
 
 def _unknown_region(query: str, intent: IntentClassification) -> bool:
-    """True when a supplier query is scoped by a city outside _REGIONS."""
+    """True when a supplier query is scoped by a city outside the merged regions.
+
+    A region newly approved into the catalog drops out of the uncovered set
+    automatically (``if city not in regions``); an unknown city still routes up.
+    Over-grading is safe: a known region routing to tier2 is harmless, an
+    unknown one must route up.
+    """
+    regions = get_catalog().regions
     return (
         intent.domain == "supplier"
         and intent.action == "query"
-        and any(city in query for city in _UNCOVERED_CITY_HINTS)
+        and any(city in query for city in _UNCOVERED_CITY_HINTS if city not in regions)
     )
 
 

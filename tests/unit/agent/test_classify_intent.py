@@ -11,9 +11,15 @@ intent instead of raising.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+import yaml
+
 from erp_copilot.agent.nodes.classify_intent import classify_intent, classify_intent_node
 from erp_copilot.agent.state import AgentState, AgentStatus
 from erp_copilot.domain.enums import ToolRiskLevel
+from erp_copilot.vocabulary import loader
 
 
 class TestIntentMapping:
@@ -126,3 +132,49 @@ class TestClassifyIntentNode:
         state = AgentState(run_id="r2", tenant_id="t1", query="随便聊聊")
         result = classify_intent_node(state)
         assert result["intent"].domain == "product"
+
+
+@pytest.fixture(autouse=True)
+def _reset_vocab_cache():
+    """classify_intent reads the process-global vocabulary cache; leave it clean."""
+    yield
+    loader.invalidate()
+
+
+def _raw_manifest() -> dict:
+    with open(loader._MANIFEST_PATH, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+class TestCatalogDrivenEntities:
+    """Entity extraction reads the merged catalog, not hardcoded tuples."""
+
+    def test_oov_product_extracts_no_product_entity(self) -> None:
+        assert "product" not in classify_intent("榴莲多少钱").entities
+
+    def test_oov_region_extracts_no_region_entity(self) -> None:
+        assert "region" not in classify_intent("苏州有哪些供应商").entities
+
+    def test_new_catalog_product_is_extracted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _raw_manifest()
+        raw["products"].append({"name": "榴莲"})
+        manifest = tmp_path / "manifest.yaml"
+        manifest.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+        monkeypatch.setattr(loader, "_MANIFEST_PATH", manifest)
+        loader.invalidate()
+        assert classify_intent("榴莲多少钱").entities["product"] == "榴莲"
+
+    def test_new_catalog_unit_updates_quantity_parser(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _raw_manifest()
+        raw["product_unit_enum"].append("箱")
+        manifest = tmp_path / "manifest.yaml"
+        manifest.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+        monkeypatch.setattr(loader, "_MANIFEST_PATH", manifest)
+        loader.invalidate()
+        entities = classify_intent("下单购买3箱苹果").entities
+        assert entities["quantity"] == 3
+        assert entities["unit"] == "箱"

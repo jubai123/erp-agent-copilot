@@ -19,8 +19,10 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from erp_copilot.agent.routing import _complexity, _unknown_region, route_query_layer
+from erp_copilot.vocabulary import loader
 
 _DATASET = Path(__file__).resolve().parents[3] / "evals" / "datasets" / "agent_routing_50.json"
 _LAYERS = {"tier1", "tier2", "tier3"}
@@ -115,3 +117,34 @@ class TestBoundaries:
     def test_known_single_step_tier1(self) -> None:
         assert route_query_layer("苹果多少钱") == "tier1"
         assert route_query_layer("取消订单 3f2a9c1d") == "tier1"
+
+
+@pytest.fixture(autouse=True)
+def _reset_vocab_cache():
+    """The router reads the process-global vocabulary cache; leave it clean."""
+    yield
+    loader.invalidate()
+
+
+def _raw_manifest() -> dict:
+    with open(loader._MANIFEST_PATH, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+class TestCatalogDrivenRouting:
+    """The router reads the merged catalog — approving a region lifts tier2."""
+
+    def test_approved_region_leaves_uncovered_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _raw_manifest()
+        raw["supplier_region_enum"].append("苏州")
+        manifest = tmp_path / "manifest.yaml"
+        manifest.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+        monkeypatch.setattr(loader, "_MANIFEST_PATH", manifest)
+        loader.invalidate()
+        assert route_query_layer("苏州有哪些供应商") == "tier1"
+
+    def test_unapproved_region_still_routes_up(self) -> None:
+        # 昆明 is in _UNCOVERED_CITY_HINTS and not in the seed catalog.
+        assert route_query_layer("昆明有哪些供应商") == "tier2"

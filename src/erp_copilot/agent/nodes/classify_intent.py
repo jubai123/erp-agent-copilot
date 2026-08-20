@@ -7,12 +7,14 @@ downstream deterministic layers — skill_matcher (L1 skill injection) and
 candidate_filter (tool candidate filtering) — both of which require exact key
 hits, so a probabilistic classifier here would break their 100%-hit promise.
 
-The entity catalogs below mirror datasets/knowledge/manifest.yaml, the
-authority for product / region / unit / order-id formats.  An unrecognized
-query falls back to the lowest-risk read-only intent (product/query) rather
-than raising, keeping the pipeline deterministic and recoverable.  This pure
-function is the seam for a future LLM classifier: swap its body, the node and
-graph topology stay unchanged.
+The entity catalogs (products / regions / units) are loaded at runtime from
+datasets/knowledge/manifest.yaml through the vocabulary loader — the single
+runtime authority — not hardcoded mirrors.  The order-status verb map stays
+hardcoded: the manifest carries only the state enum, not the Chinese verbs.
+An unrecognized query falls back to the lowest-risk read-only intent
+(product/query) rather than raising, keeping the pipeline deterministic and
+recoverable.  This pure function is the seam for a future LLM classifier: swap
+its body, the node and graph topology stay unchanged.
 """
 
 from __future__ import annotations
@@ -22,30 +24,15 @@ from typing import Any
 
 from erp_copilot.agent.state import AgentState, AgentStatus, IntentClassification
 from erp_copilot.domain.enums import ToolRiskLevel
-
-# Entity catalogs — mirror datasets/knowledge/manifest.yaml.
-_PRODUCT_NAMES: tuple[str, ...] = ("苹果", "香蕉", "橙子", "电脑", "键盘", "鼠标")
-_REGIONS: tuple[str, ...] = (
-    "上海",
-    "南京",
-    "北京",
-    "天津",
-    "广州",
-    "深圳",
-    "成都",
-    "重庆",
-    "西安",
-    "兰州",
-)
-_UNITS: tuple[str, ...] = ("KG", "台", "件")
+from erp_copilot.vocabulary.loader import get_catalog, get_quantity_pattern
 
 # order_id is a lowercase hex string (manifest order_fields says 12 chars; the
 # planning dataset uses shorter ids like 3f2a9c1d / a1b2c3 / 20260809001).
 _ORDER_ID_RE = re.compile(r"[0-9a-f]{6,12}")
 _PRODUCT_ID_RE = re.compile(r"商品\s*(\d+)\s*号|编号\s*(\d+)")
-_QUANTITY_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(" + "|".join(_UNITS) + r")?")
-# New quantity in a modify query ("数量从 10 改成 20" -> 20). Distinct from
-# _QUANTITY_RE, which keeps the *first* number as the original quantity.
+# New quantity in a modify query ("数量从 10 改成 20" -> 20). Distinct from the
+# loader-built quantity pattern, which keeps the *first* number as the original
+# quantity.
 _NEW_QUANTITY_RE = re.compile(r"(?:改成|改为)\s*(\d+)")
 
 # Order-status verbs -> ERP status string (ordered: English tokens win, then
@@ -125,7 +112,7 @@ def _match_intent(query: str) -> tuple[str, str, ToolRiskLevel]:
 
 
 def _extract_quantity(query: str) -> tuple[int | float | None, str | None]:
-    match = _QUANTITY_RE.search(query)
+    match = get_quantity_pattern(get_catalog().units).search(query)
     if match is None:
         return None, None
     num_text = match.group(1)
@@ -160,11 +147,12 @@ def _extract_new_quantity(query: str) -> int | None:
 
 def _extract_entities(query: str) -> dict[str, Any]:
     entities: dict[str, Any] = {}
-    for name in _PRODUCT_NAMES:
+    catalog = get_catalog()
+    for name in catalog.products:
         if name in query:
             entities["product"] = name
             break
-    for region in _REGIONS:
+    for region in catalog.regions:
         if region in query:
             entities["region"] = region
             break
