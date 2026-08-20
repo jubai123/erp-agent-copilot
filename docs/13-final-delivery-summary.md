@@ -67,7 +67,7 @@
 | 评测集 | 175 条 / 5 类（40+40+50+20+25）；五分类全部跑真实逻辑（tool_retrieval/planning/recover_or_replan/security 为 deterministic，knowledge_rag 为 retrieval_pipeline） | `uv run evals/run_all.py` |
 | LLM 评测 | **200 例分层** planning 评测，各层 score ± 95% Wilson CI，与 DeepSeek 实测基线对比漂移 | `uv run python evals/run_planner_eval.py` |
 | 工程化指标 | `run_engineering_metrics.py` **overall PASS**（D1-D4 四组全 PASS，gaps 0；coverage 96.14%，metric_families 12/12，retry_rate 4.0 / recovery_rate 1.5 MEASURED） | `uv run python evals/run_engineering_metrics.py` |
-| 代码规模 | src 71 .py + apps 36 .py + tests 126 .py；git 418 跟踪文件；tag `v1.0.0` | `git ls-files \| wc -l` |
+| 代码规模 | src 71 .py + apps 36 .py + tests 126 .py；git 418 跟踪文件；tag `v1.2` | `git ls-files \| wc -l` |
 | 负载测试 | 50 并发 / 60s：**1385 请求 0 失败，吞吐 23.25 req/s，P50 20ms / P95 44ms / P99 57ms**（2026-08-11 本机实测，测试库） | `tests/performance/locustfile.py` |
 
 ## 5. 未完成项与诚实边界
@@ -97,8 +97,8 @@
 
 ## 6. 仓库与发布状态
 
-- **git**：分支 `main`（默认分支）；`v1.0.0` 注解标签指向 2026-08-09 的 `0954377`，当前 HEAD `99120f4` 位于标签后 162 个提交（含 v1.1 检索管线/确定性规划器/恢复闭环与阶段七 11 项）；工作树干净。
-- **远端**：`origin` → `https://github.com/jubai123/erp-agent-copilot.git`，本地领先 `origin/main` 18+ 提交未推送。
+- **git**：分支 `main`（默认分支）；`v1.0.0` 注解标签指向 2026-08-09 的 `0954377`（阶段六收尾）；**`v1.2` 注解标签指向当前 HEAD（2026-08-20，阶段七 AI 生产指标闭环 / 87 任务全部完成）**；工作树干净。
+- **远端**：`origin` → `https://github.com/jubai123/erp-agent-copilot.git`，本地领先 `origin/main` 21+ 提交未推送。
 - **门禁**：`uv run pytest tests/ -q` **1691 通过**、`uv run mypy src/ apps/` 干净（103 文件）、`uv run ruff check` / `format` 全绿。
 
 ## 7. 复现全部数字
