@@ -1,37 +1,37 @@
-# Intent → Skill mapping table.
+# Intent → Rule mapping table.
 #
-# Maps (domain, action) pairs to a deterministic list of L1 skill IDs.
-# The skill_matcher uses this table for O(1) lookups — no vector search.
+# Maps (domain, action) pairs to a deterministic list of L1 rule IDs.
+# The rule_matcher uses this table for O(1) lookups — no vector search.
 #
 # When adding a new intent, ensure:
 #  1. The intent key is unique.
-#  2. All referenced skill_ids exist in skills.yaml.
-#  3. Skills that are safety-critical (approval, idempotency, stock-check)
+#  2. All referenced rule_ids exist in rules.yaml.
+#  3. Rules that are safety-critical (approval, idempotency, stock-check)
 #     are included for every relevant write intent.
 
 intents:
   - domain: product
     action: query
-    skills:
+    rules:
       - product-unit-constraint
       - product-fields
 
   - domain: product
     action: check_stock
-    skills:
+    rules:
       - product-fields
       - scenario-awareness
 
   - domain: supplier
     action: query
-    skills:
+    rules:
       - region-enum-constraint
       - supplier-status-constraint
       - supplier-fields
 
   - domain: order
     action: create
-    skills:
+    rules:
       - order-param-constraints
       - stock-check-rule
       - supplier-availability-rule
@@ -42,13 +42,13 @@ intents:
 
   - domain: order
     action: query
-    skills:
+    rules:
       - order-state-machine
       - order-param-constraints
 
   - domain: order
     action: cancel
-    skills:
+    rules:
       - order-state-machine
       - order-cancel-constraint
       - approval-policy
@@ -56,23 +56,23 @@ intents:
 
   - domain: order
     action: update_status
-    skills:
+    rules:
       - order-state-machine
       - approval-policy
 
   - domain: order
     action: modify
-    skills:
+    rules:
       - order-modify-constraint
       - order-state-machine
       - approval-policy
 
   - domain: security
     action: data_access
-    skills:
+    rules:
       - data-security-policy
 
   - domain: system
     action: scenario
-    skills:
+    rules:
       - scenario-awareness

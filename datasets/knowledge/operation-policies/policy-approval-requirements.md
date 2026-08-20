@@ -80,7 +80,7 @@ source_reference: null
 
 - [标准下单流程](../processes/process-order-creation.md)
 - [订单取消流程](../processes/process-order-cancellation.md)
-- [L1 审批策略技能](../skills/skills.yaml#approval-policy)
+- [L1 审批策略规则](../rules/rules.yaml#approval-policy)
 
 ## 验证标准
 

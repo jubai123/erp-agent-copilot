@@ -84,7 +84,7 @@ POST /orders 返回 504 后，使用**相同 key** 重试：
 
 - [超时重试案例](../business-cases/case-timeout-retry.md)
 - [订单模型](../domain-model/order-model.md)
-- [L1 幂等性规则技能](../skills/skills.yaml#idempotency-rule)
+- [L1 幂等性规则](../rules/rules.yaml#idempotency-rule)
 
 ## 验证标准
 

@@ -1,17 +1,17 @@
-# L1 Skills — deterministic, rule-based knowledge injected by intent matching.
+# L1 Rules — deterministic, rule-based knowledge injected by intent matching.
 #
-# Each skill captures a business rule that can be written as "if A then B".
+# Each rule captures a business rule that can be written as "if A then B".
 # These are NOT retrieved via vector search; they are matched by
-# intent_skill_map.yaml and injected directly into the build_plan prompt.
+# intent_rule_map.yaml and injected directly into the build_plan prompt.
 #
-# Skills are ordered by business domain.
+# Rules are ordered by business domain.
 
-- skill_id: product-unit-constraint
+- rule_id: product-unit-constraint
   content: |
     Product unit 必须是枚举值之一：KG、台、件。
     不接受"千克""公斤""个"等模糊单位输入，必须映射为标准枚举值。
 
-- skill_id: product-fields
+- rule_id: product-fields
   content: |
     Product 实体包含以下字段：
     - product_id (integer, required): 商品唯一标识
@@ -21,20 +21,20 @@
     - quantity_in_stock (integer, required): 当前库存量，下单后会扣减
     - unit (string, required): 单位，必须是 product_unit_enum 中的值
 
-- skill_id: region-enum-constraint
+- rule_id: region-enum-constraint
   content: |
     region 参数必须是以下枚举值之一：上海、南京、北京、天津、广州、深圳、成都、重庆、西安、兰州。
     不接受"上海市""北京城区"等模糊输入，必须精确匹配。
     每个供应商只覆盖特定区域，查询供应商时必须提供正确的 region。
 
-- skill_id: supplier-status-constraint
+- rule_id: supplier-status-constraint
   content: |
     Supplier status 只有两个合法值：AVAILABLE 和 UNAVAILABLE。
     AVAILABLE：供应商可接单，正常返回报价和时效。
     UNAVAILABLE：供应商不可用，不能向其创建订单。
     场景 supplier_unavailable 下所有供应商的 status 返回 UNAVAILABLE。
 
-- skill_id: supplier-fields
+- rule_id: supplier-fields
   content: |
     Supplier 实体包含以下字段：
     - supplier_id (integer, required): 供应商唯一标识
@@ -45,7 +45,7 @@
     - delivery_days (integer): 平均配送天数
     - price_per_kg (float): 每公斤配送单价
 
-- skill_id: order-state-machine
+- rule_id: order-state-machine
   content: |
     订单状态机合法转换：
     CREATED → CONFIRMED → SHIPPED → DELIVERED
@@ -58,7 +58,7 @@
     - 任何状态 → CREATED（不可回退到初始状态）
     - 跳跃转换（如 CREATED → DELIVERED，跳过中间状态）
 
-- skill_id: order-param-constraints
+- rule_id: order-param-constraints
   content: |
     创建订单（POST /orders）必填参数：
     - product_id (integer): 必须存在于商品目录中
@@ -68,20 +68,20 @@
     - idempotency_key (string): 客户端生成的唯一标识，用于幂等去重
     order_id、amount、status、created_at 由服务端生成，客户端不可指定。
 
-- skill_id: stock-check-rule
+- rule_id: stock-check-rule
   content: |
     下单前必须先查询库存（GET /products/{product_id}/stock）。
     若 quantity > quantity_in_stock，必须拒绝创建订单，返回 422。
     场景 stock_insufficient 下，有效库存强制为 0，任何下单请求都会被拒绝。
     库存不足时不自动推荐替代商品，必须告知用户当前库存并等待用户决策。
 
-- skill_id: supplier-availability-rule
+- rule_id: supplier-availability-rule
   content: |
     下单前必须验证供应商状态为 AVAILABLE。
     若供应商 status=UNAVAILABLE，不可向其创建订单，必须提示用户选择其他供应商。
     场景 supplier_unavailable 下所有供应商不可用，此时应告知用户当前无可用供应商。
 
-- skill_id: idempotency-rule
+- rule_id: idempotency-rule
   content: |
     幂等键（idempotency_key）机制：
     - 客户端为每次下单生成唯一 key
@@ -91,7 +91,7 @@
     - 幂等键不同 → 视为不同请求，各自独立处理
     幂等范围：per-client。超时重试时使用相同 idempotency_key 确保不重复下单。
 
-- skill_id: approval-policy
+- rule_id: approval-policy
   content: |
     写操作审批策略：
     - READ 类操作（查询商品、查询供应商、查询订单）：不需要审批
@@ -101,7 +101,7 @@
     - 创建订单：展示订单摘要（product_name × quantity = amount，supplier, region），用户确认后执行
     - 取消订单：验证订单当前状态可取消（非 DELIVERED/CANCELLED），用户确认后执行
 
-- skill_id: scenario-awareness
+- rule_id: scenario-awareness
   content: |
     系统在以下场景下行为会改变（通过 PUT /scenario/{scenario_id} 切换）：
     - happy_path：所有端点正常行为，库存充足，供应商可用
@@ -110,13 +110,13 @@
     - timeout：下单端点返回 504 Gateway Timeout（用于测试幂等重试）
     场景切换影响全局，测试后应复位为 happy_path。
 
-- skill_id: price-calculation-rule
+- rule_id: price-calculation-rule
   content: |
     订单金额 = 商品单价 × 数量（amount = unit_price × quantity），由服务端计算。
     Agent 不得自行计算或覆盖 amount 字段。
     不同商品的 price 单位为元，amount 保留两位小数。
 
-- skill_id: order-cancel-constraint
+- rule_id: order-cancel-constraint
   content: |
     订单取消约束：
     - 只有 CREATED 或 CONFIRMED 状态的订单可以取消
@@ -125,7 +125,7 @@
     - CANCELLED 状态不可重复取消
     取消操作是 DANGEROUS 级别，需要审批。
 
-- skill_id: order-modify-constraint
+- rule_id: order-modify-constraint
   content: |
     订单修改约束：
     - 已创建的订单（CREATED 状态）不可直接修改字段。
@@ -133,7 +133,7 @@
     - 原因：订单涉及库存扣减、金额计算和审批流程，直接修改会破坏数据一致性。
     - 已进入 CONFIRMED 或之后状态的订单不可修改，只能走退货流程。
 
-- skill_id: data-security-policy
+- rule_id: data-security-policy
   content: |
     数据安全与访问控制策略：
     - 租户隔离：每个 tenant 只能访问自己的数据，跨租户访问必须拒绝。
