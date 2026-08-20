@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
     from apps.api.routes.metrics import router as metrics_router
     from apps.api.routes.runs import router as runs_router
     from apps.api.routes.tools import router as tools_router
+    from apps.api.routes.vocabulary import router as vocabulary_router
 
     app.include_router(health_router)
     app.include_router(tools_router)
@@ -57,5 +58,6 @@ def create_app() -> FastAPI:
     app.include_router(knowledge_router)
     app.include_router(metrics_router)
     app.include_router(api_keys_router)
+    app.include_router(vocabulary_router)
 
     return app
