@@ -202,6 +202,16 @@ class Settings(BaseSettings):
         default=SecretStr(""),
         description="API key for the cloud ERP API (sent as the X-API-Key header).",
     )
+    mcp_server_url: str = Field(
+        default="",
+        description=(
+            "Base URL of an MCP server exposing the ERP tools (Streamable HTTP). "
+            "When set (non-empty), the worker's executor calls the ERP tools over "
+            "a real MCP transport, taking precedence over the cloud HTTP executor "
+            "and the in-process simulator. Operator-configured, never "
+            "prompt-derived."
+        ),
+    )
 
     # -- API authentication ---------------------------------------------------
 

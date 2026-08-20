@@ -26,6 +26,7 @@ from apps.worker.executor import (
     erp_simulator_executor,
     resolve_erp_executor,
 )
+from apps.worker.mcp_executor import MCPToolExecutor
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.tools.tool_result import ToolResult
 
@@ -459,12 +460,13 @@ class TestUnknownTool:
         assert result.error.is_retryable is False
 
 
-def _settings(*, erp_api_base_url: str) -> Settings:
+def _settings(*, erp_api_base_url: str = "", mcp_server_url: str = "") -> Settings:
     return Settings(
         database_url="postgresql://localhost/test",
         llm_api_key="sk-test",
         erp_api_base_url=erp_api_base_url,
         erp_api_key="cloud-key",
+        mcp_server_url=mcp_server_url,
     )
 
 
@@ -493,3 +495,19 @@ class TestResolveErpExecutor:
             result = asyncio.run(executor("getProductByName", {"name": "香蕉"}))
             assert result.status == "SUCCEEDED"
             assert route.calls.last.request.headers["X-API-Key"] == "cloud-key"
+
+    def test_mcp_url_returns_mcp_executor(self) -> None:
+        executor = resolve_erp_executor(_settings(mcp_server_url="http://localhost:8765/mcp"))
+
+        assert isinstance(executor, MCPToolExecutor)
+        assert executor.connection.url == "http://localhost:8765/mcp"
+
+    def test_mcp_url_takes_precedence_over_cloud_http(self) -> None:
+        # MCP is the newest path: when both are set, the worker talks to the MCP
+        # server, not the cloud ERP over HTTP.
+        executor = resolve_erp_executor(
+            _settings(erp_api_base_url=_BASE_URL, mcp_server_url="http://localhost:8765/mcp")
+        )
+
+        assert isinstance(executor, MCPToolExecutor)
+        assert executor.connection.url == "http://localhost:8765/mcp"

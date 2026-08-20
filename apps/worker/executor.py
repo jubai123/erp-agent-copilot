@@ -33,6 +33,7 @@ from apps.erp_simulator.data.orders import create_order, get_by_id, get_by_idemp
 from apps.erp_simulator.data.products import PRODUCT_BY_ID, PRODUCT_BY_NAME
 from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS
 from apps.erp_simulator.scenarios import get_scenario
+from apps.worker.mcp_executor import build_mcp_executor
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.tools.tool_result import ToolResult
 
@@ -532,12 +533,16 @@ def build_erp_http_executor(
 def resolve_erp_executor(
     settings: Settings,
 ) -> Callable[[str, dict[str, Any]], Awaitable[ToolResult]]:
-    """Pick the worker executor from settings: cloud ERP when configured, else simulator.
+    """Pick the worker executor from settings: MCP, then cloud ERP, else simulator.
 
-    Config-driven with simulator fallback: setting ERP_API_BASE_URL activates
-    the HTTP cloud executor; leaving it empty keeps the in-process deterministic
-    simulator, so offline and test environments make no network calls.
+    Config-driven with simulator fallback, newest path first: setting
+    MCP_SERVER_URL activates the real-transport MCP executor; otherwise
+    ERP_API_BASE_URL activates the HTTP cloud executor; leaving both empty keeps
+    the in-process deterministic simulator, so offline and test environments
+    make no network calls.
     """
+    if settings.mcp_server_url:
+        return build_mcp_executor(settings.mcp_server_url)
     if settings.erp_api_base_url:
         return build_erp_http_executor(
             settings.erp_api_base_url,
