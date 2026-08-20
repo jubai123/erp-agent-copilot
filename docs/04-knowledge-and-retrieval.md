@@ -17,7 +17,7 @@
 
 ```text
 ## System Instructions（不可覆盖）
-## Active Skills（L1，来自意图匹配，优先级高于检索内容）
+## L1 硬约束规则（来自意图匹配，优先级高于检索内容）
 - 订单状态机：cancelled → in_transit 是非法转换
 - 参数约束：region 必须是枚举值
 ...

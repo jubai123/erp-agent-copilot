@@ -910,7 +910,7 @@
 - 每个 Step 有 tool_name、arguments、depends_on
 - Planner 只输出 Plan，不直接调用工具
 - **工具候选约束**：收到的工具是意图过滤后的 3-8 个（来自 DOMAIN_TOOL_MAP），不是全部工具
-- **L1/L2 注入顺序**：System → L1 Active Skills（硬约束）→ L2 Retrieved Knowledge（参考）→ 候选工具 → User Query
+- **L1/L2 注入顺序**：System → L1 硬约束规则 → L2 Retrieved Knowledge（参考）→ 候选工具 → User Query
 - 检测 L1 约束被违反时（如非法状态转换），直接拒绝生成对应 Step
 
 > **状态：✅ 已完成**（2026-08-08，LLM Plan DAG 生成 + System→L1→L2→候选→Query 注入顺序 + 严格 Schema 解析 + L1 非法转换拒绝；LLM 以 callable 注入，candidate_filter/skill_matcher 首次接线进图）
@@ -1996,6 +1996,42 @@
 | 六：评测与交付 | 12 | D27-D30 |
 | 七：AI 生产指标与可观测性接线 | 11 | D31-D34 |
 | **合计** | **87** | **34 天** |
+
+---
+
+# 候选任务（Backlog）
+
+> 计划外、待评审的后续任务。进入开发时按 TDD 三步骤（分析→测试→实现→审查）执行，完成后同步本表状态。
+
+## 任务 B1：Tier1 路径跳过 retrieve_context（高频确定性路径免检索）
+
+> **状态**：⏳ 待办（2026-08-21 从三层路由讲解会话沉淀，尚未评审）
+
+**目标**：让高频 Tier1 确定性路径真正"快"——不再为每个 Tier1 查询跑混合检索（embedding + pgvector + FTS + RRF + rerank），把路由决策提前到 `retrieve_context` 之前。
+
+**关键设计事实（评审输入）**：
+- `retrieved_context` 有两个消费者：`build_plan_node`（LLM 规划，仅 tier2/3 用）和 `classify_answer_groundedness`（`src/erp_copilot/agent/groundedness.py`，**实时路径**：`application/run_persistence.py:180` 对每个终态 run 计算，tier1 也消费）。
+- 若 Tier1 跳过检索 → `retrieved_context` 恒空 → `_coverage` 恒 0 → 所有 Tier1 回答被标 `grounded="no"`，系统性污染 `erp_answer_grounded_total` 指标。
+- `route_query_layer(query)` 是纯字符串函数，不依赖检索结果，路由可安全提前到检索之前。
+- 拓扑先例：resume 路径（`state.plan != None`，`graph.py:187`）本就跳过检索。
+
+**候选方案**：
+- **B1（推荐，语义自洽）**：Tier1 跳过检索；groundedness 对 Tier1 不判（`grounded=None`）或单独标签 `deterministic-verified`——Tier1 答案质量由 `verify_results` 的 `success_condition`（防御层 4）负责，本无 RAG 幻觉可防。
+- **B2（保守）**：保持固定管道现状，仅文档说明成本，暂不实现。
+
+**涉及文件**（预估）：`graph.py`（条件边提前）、`application/run_persistence.py`（groundedness 按 tier 分治）、`tests/unit/agent/test_graph.py`、`tests/unit/agent/test_routing.py`、`docs/03`、`docs/04`（固定管道豁免说明）。
+
+**验收标准**：
+- Tier1 查询不再调用 `retrieve_context`（图级流测断言）
+- `erp_answer_grounded_total` 对 Tier1 不误标（或按新标签语义正确）
+- `agent_routing` 50 例评测不受影响
+- 全量单测通过
+
+**教学要点**：
+| 概念 | 讲解内容 |
+|------|---------|
+| 固定管道 ADR 的边界 | `docs/04` "LLM 不决策'是否检索'"防的是 LLM 跳检索；豁免方是确定性路由器，不破坏防幻觉逻辑 |
+| 监控指标的隐性消费者 | 检索结果不止喂规划，还喂在线 groundedness——"去掉没被规划的消费"前必须枚举全部消费者 |
 
 ---
 

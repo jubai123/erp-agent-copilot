@@ -64,7 +64,7 @@ V5冻结为参考和基线，不直接在原有Flask项目中大规模重构。V
 - Typed AgentState和LangGraph节点。
 - 结构化Planner和DAG校验器。
 - **工具候选过滤**：意图→域确定性过滤（主引擎）+ 向量精排接口（按需，预留在工具数增长时启用）。
-- **L1/L2 注入**：build_plan Prompt 按 System → L1 Skill → L2 检索 → 候选工具 → Query 顺序注入。
+- **L1/L2 注入**：build_plan Prompt 按 System → L1 硬约束规则 → L2 检索 → 候选工具 → Query 顺序注入。
 - 并行READ、串行WRITE的Executor。
 - 参数来源、缺参确认和上下文预算。
 - Verifier、replan上限和Checkpoint。

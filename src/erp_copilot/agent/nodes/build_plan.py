@@ -43,7 +43,7 @@ Plan 必须遵守：
 - 每个 Step 包含 step_id、tool_name、arguments、depends_on（依赖的 step_id 列表）。
 - arguments 直接给出每个参数的具体值（从用户查询中提取）。
 - 跨步骤参数：argument_sources 写 {"参数名": "step:{step_id}"}，并加入 depends_on。
-- L1 Active Skills 是硬约束，任何违反它们的 Step 都必须拒绝生成（例如非法订单状态转换）。
+- L1 硬约束规则必须遵守，任何违反它们的 Step 都必须拒绝生成（例如非法订单状态转换）。
 - L2 Retrieved Knowledge 是参考，帮助你补全参数语义。
 - risk_level 只取 READ / WRITE / ADMIN 之一。
 - WRITE / DANGEROUS 步骤必须提供非空 fallback（补偿/回退说明，例如"取消新建订单以补偿"）。
@@ -144,7 +144,7 @@ def build_planner_prompt(
         tools_block = "\n".join(f"- {tool}" for tool in candidate_tools)
     sections = [
         system,
-        "## L1 Active Skills（硬约束）\n" + skills_block,
+        "## L1 硬约束规则\n" + skills_block,
         "## L2 Retrieved Knowledge（参考）\n" + knowledge_block,
         "## Available Tools（候选）\n" + tools_block,
         "## User Query\n\n" + query,
