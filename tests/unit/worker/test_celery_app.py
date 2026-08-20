@@ -31,9 +31,13 @@ class TestCeleryConfig:
         # Without `imports`, `celery -A apps.worker.celery_app worker` starts
         # with an EMPTY task registry — execute_run.delay() then fails with
         # KeyError when the worker tries to deserialize the task (observed in
-        # the compose stack). Pinning the module here lets Celery auto-register
-        # every @celery_app.task in apps/worker/tasks.py at startup.
-        assert build_celery_config(Settings())["imports"] == ["apps.worker.tasks"]
+        # the compose stack). Pinning the modules here lets Celery auto-register
+        # every @celery_app.task in apps/worker/tasks.py and
+        # apps/worker/vocabulary_tasks.py at startup.
+        assert build_celery_config(Settings())["imports"] == [
+            "apps.worker.tasks",
+            "apps.worker.vocabulary_tasks",
+        ]
 
 
 class TestWorkerObservabilityWiring:

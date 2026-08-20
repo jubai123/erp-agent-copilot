@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -30,7 +31,16 @@ from erp_copilot.domain.entities import (
     VocabularyTerm,
 )
 from erp_copilot.infrastructure.database import get_session
+from erp_copilot.vocabulary import loader
 from erp_copilot.vocabulary.loader import get_catalog
+
+
+@pytest.fixture(autouse=True)
+def _reset_vocab_cache():
+    """The loader cache is process-global; leave it clean between tests so a
+    flag-on test's merged catalog can't leak into a later flag-off test."""
+    yield
+    loader.invalidate()
 
 
 def _create_tenant(name: str, slug: str) -> str:
@@ -385,3 +395,36 @@ class TestBatchTask:
         assert (
             session.query(VocabularyObservation).filter_by(run_id="batch-r2").first()
         ).processed is False
+
+
+class TestRuntimeEffect:
+    def test_approved_region_routes_tier1_after_approval(self, monkeypatch) -> None:
+        """The decision invalidates the loader cache; the next route_query_layer
+        rebuilds from the DB and the newly-approved region drops out of the
+        uncovered set — the OOV supplier query now routes tier1."""
+        from apps.api.main import create_app
+        from erp_copilot.agent.routing import route_query_layer
+
+        monkeypatch.setenv("VOCABULARY_LLM_UPDATES_ENABLED", "true")
+        loader.invalidate()
+        # 武汉 is an uncovered city (not in the manifest seed): the supplier
+        # query routes up to tier2 rather than overgrabbing getSupplierByStatus.
+        assert route_query_layer("武汉有哪些供应商") == "tier2"
+
+        session = get_session()
+        tenant_id = _create_tenant("Runtime Vocab", "runtime-vocab")
+        operator = _make_operator(session, tenant_id)
+        proposal = _seed_proposal(
+            session,
+            canonical="武汉",
+            vocab_type="region",
+            proposal_key="key-wuhan",
+        )
+        client = TestClient(create_app())
+        response = client.post(
+            f"/v1/vocabulary/proposals/{proposal.id}/decide",
+            json={"decision": "APPROVED", "decided_by": "operator"},
+            headers=_headers(tenant_id, operator),
+        )
+        assert response.status_code == 200
+        assert route_query_layer("武汉有哪些供应商") == "tier1"

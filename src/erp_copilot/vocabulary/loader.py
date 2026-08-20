@@ -6,9 +6,12 @@ routing and recovery_decision each carried their own hardcoded mirror and drifte
 from it silently. This module is the one place the runtime reads those catalogs;
 consumers read get_catalog() so a manifest change propagates instead of diverging.
 
-The module-level lazy cache mirrors skill_matcher's pattern: the catalog loads
-once per process and is dropped by invalidate() (or rebuilt on a TTL when
-vocabulary_llm_updates_enabled is on — the DB merge lands in a later phase).
+get_catalog() merges the manifest seed with approved vocabulary_terms rows when
+the LLM-driven pipeline is enabled (vocabulary_llm_updates_enabled). The
+module-level lazy cache mirrors skill_matcher's pattern: with the flag off the
+catalog loads once per process and is dropped only by invalidate(); with the
+flag on it also rebuilds on a TTL so approved terms reach the runtime without a
+restart. A missing DB or not-yet-run migration degrades gracefully to the seed.
 """
 
 from __future__ import annotations
@@ -16,10 +19,14 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from pathlib import Path
+from time import monotonic
 from typing import NamedTuple
 
 import yaml
 from pydantic import BaseModel
+from sqlalchemy.exc import ProgrammingError
+
+from erp_copilot.infrastructure.config import Settings
 
 _ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _MANIFEST_PATH = _ROOT / "datasets" / "knowledge" / "manifest.yaml"
@@ -103,20 +110,65 @@ def merge_catalog(
 
 
 _CACHE: VocabularyCatalog | None = None
+_CACHE_AT: float = 0.0
+
+
+def _db_terms() -> list[VocabularyTermLike]:
+    """Active approved vocabulary_terms rows (global scope) as mergeable terms.
+
+    Imports are deferred so this module stays importable without a DB engine;
+    a missing engine or not-yet-run migration degrades to the manifest seed.
+    """
+    try:
+        from erp_copilot.domain.entities import VocabularyTerm
+        from erp_copilot.infrastructure.database import get_session
+
+        session = get_session()
+        try:
+            rows = (
+                session.query(VocabularyTerm)
+                .filter_by(is_active=True, tenant_id=None)
+                .all()
+            )
+            return [
+                VocabularyTermLike(vocab_type=row.vocab_type, canonical=row.canonical)
+                for row in rows
+            ]
+        finally:
+            session.close()
+    except (RuntimeError, ProgrammingError):
+        return []
 
 
 def get_catalog() -> VocabularyCatalog:
-    """Return the merged runtime catalog, cached per process until invalidate()."""
-    global _CACHE
-    if _CACHE is None:
-        _CACHE = merge_catalog(load_manifest_catalog(), ())
+    """Return the merged runtime catalog, cached per process until invalidate().
+
+    With the flag off the cache is dropped only by invalidate(); with the flag
+    on it also rebuilds on a TTL so approved terms reach the runtime without a
+    restart. The manifest is read on every rebuild so a manifest change
+    propagates to the process on the next rebuild, not only at restart.
+    """
+    global _CACHE, _CACHE_AT
+    settings = Settings()  # type: ignore[call-arg]
+    if (
+        _CACHE is None
+        or (
+            settings.vocabulary_llm_updates_enabled
+            and settings.vocabulary_cache_ttl_s > 0
+            and monotonic() - _CACHE_AT > settings.vocabulary_cache_ttl_s
+        )
+    ):
+        terms = _db_terms() if settings.vocabulary_llm_updates_enabled else ()
+        _CACHE = merge_catalog(load_manifest_catalog(), terms)
+        _CACHE_AT = monotonic()
     return _CACHE
 
 
 def invalidate() -> None:
     """Drop the cached catalog so the next get_catalog() reloads the manifest."""
-    global _CACHE
+    global _CACHE, _CACHE_AT
     _CACHE = None
+    _CACHE_AT = 0.0
 
 
 # Compiled-regex cache keyed by (kind, catalog tuple) so a catalog change
