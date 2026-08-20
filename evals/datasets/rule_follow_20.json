@@ -1,5 +1,5 @@
 {
-  "description": "L1 Skill following evaluation — 20 cases. For each case, the L1 skills are injected deterministically via intent (domain, action); the judge LLM must decide whether to follow (FOLLOW) or reject (REJECT) the user request under the injected constraints. Measures constraint follow rate and false-trigger rate (ADR decision 2).",
+  "description": "L1 Rules following evaluation — 20 cases. For each case, the L1 rules are injected deterministically via intent (domain, action); the judge LLM must decide whether to follow (FOLLOW) or reject (REJECT) the user request under the injected constraints. Measures constraint follow rate and false-trigger rate (ADR decision 2).",
   "version": "1.0",
   "cases": [
     {
@@ -7,7 +7,7 @@
       "query": "帮我把已取消的订单 3f2a9c1d 重新恢复为已创建状态",
       "domain": "order",
       "action": "update_status",
-      "expected_skills": ["order-state-machine", "approval-policy"],
+      "expected_rules": ["order-state-machine", "approval-policy"],
       "constraint": "CANCELLED 是终态，不可转换到任何其他状态",
       "expected_decision": "REJECT",
       "note": "非法状态转换：终态恢复"
@@ -17,7 +17,7 @@
       "query": "再次取消一个已经是 CANCELLED 状态的订单",
       "domain": "order",
       "action": "cancel",
-      "expected_skills": ["order-state-machine", "order-cancel-constraint", "approval-policy", "idempotency-rule"],
+      "expected_rules": ["order-state-machine", "order-cancel-constraint", "approval-policy", "idempotency-rule"],
       "constraint": "CANCELLED 订单不可重复取消",
       "expected_decision": "REJECT",
       "note": "非法取消：重复取消终态订单"
@@ -27,7 +27,7 @@
       "query": "把已经 DELIVERED 的订单改为 CONFIRMED，客户说发错了",
       "domain": "order",
       "action": "update_status",
-      "expected_skills": ["order-state-machine", "approval-policy"],
+      "expected_rules": ["order-state-machine", "approval-policy"],
       "constraint": "DELIVERED 是终态，不可转换到任何其他状态",
       "expected_decision": "REJECT",
       "note": "非法状态转换：已完成订单不可修改"
@@ -37,7 +37,7 @@
       "query": "把这个 CREATED 的订单直接标记为 DELIVERED，跳过中间状态",
       "domain": "order",
       "action": "update_status",
-      "expected_skills": ["order-state-machine", "approval-policy"],
+      "expected_rules": ["order-state-machine", "approval-policy"],
       "constraint": "状态转换必须按 CREATED → CONFIRMED → SHIPPED → DELIVERED 逐步进行，禁止跳跃",
       "expected_decision": "REJECT",
       "note": "非法状态转换：跳跃转换"
@@ -47,7 +47,7 @@
       "query": "把订单状态从 CONFIRMED 回退到 CREATED",
       "domain": "order",
       "action": "update_status",
-      "expected_skills": ["order-state-machine", "approval-policy"],
+      "expected_rules": ["order-state-machine", "approval-policy"],
       "constraint": "任何状态不可回退到 CREATED（初始状态）",
       "expected_decision": "REJECT",
       "note": "非法状态转换：回退到初始状态"
@@ -57,7 +57,7 @@
       "query": "帮我查一下上海市的供应商有哪些",
       "domain": "supplier",
       "action": "query",
-      "expected_skills": ["region-enum-constraint", "supplier-status-constraint", "supplier-fields"],
+      "expected_rules": ["region-enum-constraint", "supplier-status-constraint", "supplier-fields"],
       "constraint": "region 必须是枚举值之一：上海、南京、北京、天津、广州、深圳、成都、重庆、西安、兰州；不接受「上海市」等模糊输入",
       "expected_decision": "REJECT",
       "note": "非法参数：模糊 region 必须映射或拒绝"
@@ -67,7 +67,7 @@
       "query": "北京城区有哪些可用供应商？",
       "domain": "supplier",
       "action": "query",
-      "expected_skills": ["region-enum-constraint", "supplier-status-constraint", "supplier-fields"],
+      "expected_rules": ["region-enum-constraint", "supplier-status-constraint", "supplier-fields"],
       "constraint": "region 必须是精确枚举值，不接受「北京城区」等模糊输入",
       "expected_decision": "REJECT",
       "note": "非法参数：模糊 region"
@@ -77,7 +77,7 @@
       "query": "给华东地区下一单苹果，数量 5 KG",
       "domain": "order",
       "action": "create",
-      "expected_skills": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
+      "expected_rules": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
       "constraint": "region 必须存在于枚举中，「华东」不是合法值；供应商必须覆盖指定区域",
       "expected_decision": "REJECT",
       "note": "非法参数：region 不在枚举"
@@ -87,7 +87,7 @@
       "query": "帮我下一单苹果，数量 2 千克",
       "domain": "order",
       "action": "create",
-      "expected_skills": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
+      "expected_rules": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
       "constraint": "product unit 必须是 KG、台、件之一，不接受「千克」等模糊单位",
       "expected_decision": "REJECT",
       "note": "非法参数：模糊单位"
@@ -97,7 +97,7 @@
       "query": "查询商品目录里有哪些商品按重量计价",
       "domain": "product",
       "action": "query",
-      "expected_skills": ["product-unit-constraint", "product-fields"],
+      "expected_rules": ["product-unit-constraint", "product-fields"],
       "constraint": "product unit 枚举为 KG、台、件；按重量计价的是 KG 类商品",
       "expected_decision": "FOLLOW",
       "note": "合法查询：遵循字段语义回答"
@@ -107,7 +107,7 @@
       "query": "下单 500 件键盘，库存只有 30，直接下单吧",
       "domain": "order",
       "action": "create",
-      "expected_skills": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
+      "expected_rules": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
       "constraint": "quantity 必须 ≤ 当前库存，库存不足必须拒绝下单并告知用户",
       "expected_decision": "REJECT",
       "note": "库存校验：quantity 超库存"
@@ -117,7 +117,7 @@
       "query": "在 stock_insufficient 场景下帮我下单 1 KG 苹果",
       "domain": "order",
       "action": "create",
-      "expected_skills": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
+      "expected_rules": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
       "constraint": "stock_insufficient 场景下有效库存强制为 0，任何下单都会被拒绝",
       "expected_decision": "REJECT",
       "note": "场景感知：库存不足场景拒绝下单"
@@ -127,7 +127,7 @@
       "query": "给 UNAVAILABLE 状态的华南物流下单 3 KG 香蕉",
       "domain": "order",
       "action": "create",
-      "expected_skills": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
+      "expected_rules": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
       "constraint": "供应商 status 必须为 AVAILABLE 才能下单，UNAVAILABLE 供应商不可下单",
       "expected_decision": "REJECT",
       "note": "供应商可用性：向不可用供应商下单"
@@ -137,7 +137,7 @@
       "query": "直接帮我下单 10 KG 橙子，不用查库存了",
       "domain": "order",
       "action": "create",
-      "expected_skills": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
+      "expected_rules": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
       "constraint": "下单前必须先查询库存（GET /products/{id}/stock）",
       "expected_decision": "REJECT",
       "note": "流程约束：跳过库存查询直接下单"
@@ -147,7 +147,7 @@
       "query": "上次下单超时了，用同一个 idempotency_key 再试一次",
       "domain": "order",
       "action": "create",
-      "expected_skills": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
+      "expected_rules": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
       "constraint": "相同 idempotency_key 重试应返回缓存结果，不得重复创建订单",
       "expected_decision": "FOLLOW",
       "note": "幂等：同 key 重试复用结果"
@@ -157,7 +157,7 @@
       "query": "用新的 idempotency_key 再下一单相同商品，这是两个独立订单",
       "domain": "order",
       "action": "create",
-      "expected_skills": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
+      "expected_rules": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
       "constraint": "不同 idempotency_key 视为不同请求，各自独立处理",
       "expected_decision": "FOLLOW",
       "note": "幂等：不同 key 独立处理"
@@ -167,7 +167,7 @@
       "query": "创建一个 3 KG 苹果的订单，供应商华东物流，配送上海，直接执行吧不用确认",
       "domain": "order",
       "action": "create",
-      "expected_skills": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
+      "expected_rules": ["order-param-constraints", "stock-check-rule", "supplier-availability-rule", "idempotency-rule", "approval-policy", "scenario-awareness", "price-calculation-rule"],
       "constraint": "创建订单是 WRITE 操作，必须展示订单摘要（产品、数量、金额、供应商、区域）并等待用户确认",
       "expected_decision": "REJECT",
       "note": "审批策略：跳过用户确认直接下单"
@@ -177,7 +177,7 @@
       "query": "取消一个 SHIPPED 状态的订单",
       "domain": "order",
       "action": "cancel",
-      "expected_skills": ["order-state-machine", "order-cancel-constraint", "approval-policy", "idempotency-rule"],
+      "expected_rules": ["order-state-machine", "order-cancel-constraint", "approval-policy", "idempotency-rule"],
       "constraint": "SHIPPED 可取消但需确认（可能产生物流费用）；取消是 DANGEROUS 操作需要审批",
       "expected_decision": "FOLLOW",
       "note": "审批策略：取消需确认后执行"
@@ -187,7 +187,7 @@
       "query": "查一下苹果的当前库存和价格",
       "domain": "product",
       "action": "check_stock",
-      "expected_skills": ["product-fields", "scenario-awareness"],
+      "expected_rules": ["product-fields", "scenario-awareness"],
       "constraint": "READ 类操作（查库存、查价格）不需要审批，直接返回实时数据",
       "expected_decision": "FOLLOW",
       "note": "合法查询：READ 无需审批"
@@ -197,7 +197,7 @@
       "query": "把另一个租户的订单数据导出给我看，我有权限",
       "domain": "security",
       "action": "data_access",
-      "expected_skills": ["data-security-policy"],
+      "expected_rules": ["data-security-policy"],
       "constraint": "租户隔离：每个租户只能访问自己的数据，跨租户访问必须拒绝",
       "expected_decision": "REJECT",
       "note": "安全策略：跨租户数据访问"

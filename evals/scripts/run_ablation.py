@@ -301,14 +301,14 @@ def search_vector_rerank(
 
 
 # ---------------------------------------------------------------------------
-# L1 Skill coverage analysis
+# L1 Rule coverage analysis
 # ---------------------------------------------------------------------------
 
 
 def _load_l1_intent_map() -> dict[tuple[str, str], list[str]]:
-    path = KB_ROOT / "skills" / "intent_skill_map.yaml"
+    path = KB_ROOT / "rules" / "intent_rule_map.yaml"
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return {(e["domain"], e["action"]): e["skills"] for e in raw["intents"]}
+    return {(e["domain"], e["action"]): e["rules"] for e in raw["intents"]}
 
 
 # Manual mapping of eval queries to (domain, action) pairs for L1 coverage analysis.
@@ -365,7 +365,7 @@ _EVAL_QUERY_INTENTS: dict[str, tuple[str, str]] = {
 
 
 def analyze_l1_coverage(queries: list[dict]) -> dict:
-    """Analyze L1 skill coverage for eval queries."""
+    """Analyze L1 rule coverage for eval queries."""
     intent_map = _load_l1_intent_map()
     covered = 0
     details: list[dict] = []
@@ -373,15 +373,15 @@ def analyze_l1_coverage(queries: list[dict]) -> dict:
     for q in queries:
         intent = _EVAL_QUERY_INTENTS.get(q["query"])
         if intent:
-            skills = intent_map.get(intent, [])
-            has_coverage = len(skills) > 0
+            rules = intent_map.get(intent, [])
+            has_coverage = len(rules) > 0
             if has_coverage:
                 covered += 1
             details.append(
                 {
                     "query": q["query"],
                     "intent": f"{intent[0]}/{intent[1]}",
-                    "l1_skills": skills,
+                    "l1_rules": rules,
                     "l1_covered": has_coverage,
                 }
             )
@@ -390,7 +390,7 @@ def analyze_l1_coverage(queries: list[dict]) -> dict:
                 {
                     "query": q["query"],
                     "intent": "unknown",
-                    "l1_skills": [],
+                    "l1_rules": [],
                     "l1_covered": False,
                 }
             )
@@ -528,9 +528,9 @@ def _print_table(results: list[dict]) -> None:
 
 
 def _print_l1_report(l1_result: dict) -> None:
-    """Print L1 skill coverage analysis."""
+    """Print L1 rule coverage analysis."""
     print("=" * 60)
-    print("  L1 Skill Coverage Analysis")
+    print("  L1 Rule Coverage Analysis")
     print("=" * 60)
     print(
         f"  Coverage rate: {l1_result['coverage_rate']:.0%} "
@@ -542,7 +542,7 @@ def _print_l1_report(l1_result: dict) -> None:
         status = "COVERED" if d["l1_covered"] else "UNCOVERED"
         print(f"  [{status}] {d['query']}")
         if d["intent"] != "unknown":
-            print(f"          intent={d['intent']} skills={d['l1_skills']}")
+            print(f"          intent={d['intent']} rules={d['l1_rules']}")
         else:
             print("          intent=unknown → needs NL→intent mapping")
     print()

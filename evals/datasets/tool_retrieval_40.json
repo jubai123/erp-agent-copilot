@@ -1,5 +1,5 @@
 {
-  "description": "工具检索评测：40 条用例覆盖 9 个 V6 注册工具（docs/05 §5）。每条给出自然语言查询、意图（domain/action，键与 intent_skill_map.yaml 一致）、期望主工具与候选工具集；hard_negative 用例（11 条陷阱）显式标注 confusion_tool（被误读时会选中的错误主工具），评测 runner 断言查询未被误导到混淆工具（读意图不得滑向下单），并观测 confusion_surfaced 指标。工具名以 src/erp_copilot/tools/candidate_filter.py 的 V6_TOOL_NAMES 为准。",
+  "description": "工具检索评测：40 条用例覆盖 9 个 V6 注册工具（docs/05 §5）。每条给出自然语言查询、意图（domain/action，键与 intent_rule_map.yaml 一致）、期望主工具与候选工具集；hard_negative 用例（11 条陷阱）显式标注 confusion_tool（被误读时会选中的错误主工具），评测 runner 断言查询未被误导到混淆工具（读意图不得滑向下单），并观测 confusion_surfaced 指标。工具名以 src/erp_copilot/tools/candidate_filter.py 的 V6_TOOL_NAMES 为准。",
   "version": "1.0",
   "cases": [
     {"case_id": "tool-001", "query": "苹果多少钱一斤", "domain": "product", "action": "query", "expected_tool": "getProductByName", "candidate_tools": ["getProductByName", "getProductById", "getProductSubstitutesByName"], "hard_negative": false, "note": "按名称查商品价格"},

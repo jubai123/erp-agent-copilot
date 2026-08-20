@@ -1,44 +1,44 @@
-"""Unit tests for evals/scorers/skill_scorer.py — L1 constraint follow rate
+"""Unit tests for evals/scorers/rule_scorer.py — L1 constraint follow rate
 and false-trigger rate (docs/08 section 3, ADR decision 2)."""
 
 from __future__ import annotations
 
 import pytest
 
-from evals.scorers.skill_scorer import evaluate
+from evals.scorers.rule_scorer import evaluate
 
 _CASES = [
     {
         "case_id": "c1",
         "domain": "order",
         "action": "update_status",
-        "expected_skills": ["order-state-machine", "approval-policy"],
+        "expected_rules": ["order-state-machine", "approval-policy"],
         "expected_decision": "REJECT",
     },
     {
         "case_id": "c2",
         "domain": "product",
         "action": "check_stock",
-        "expected_skills": ["product-fields", "scenario-awareness"],
+        "expected_rules": ["product-fields", "scenario-awareness"],
         "expected_decision": "FOLLOW",
     },
     {
         "case_id": "c3",
         "domain": "order",
         "action": "cancel",
-        "expected_skills": ["order-state-machine", "approval-policy"],
+        "expected_rules": ["order-state-machine", "approval-policy"],
         "expected_decision": "REJECT",
     },
 ]
 
 
 def _fake_inject(case: dict) -> list[dict]:
-    return [{"skill_id": s} for s in case["expected_skills"]]
+    return [{"rule_id": r} for r in case["expected_rules"]]
 
 
 class TestFollowRate:
     def test_perfect_following(self) -> None:
-        judge = lambda case, skills: case["expected_decision"]  # noqa: E731
+        judge = lambda case, rules: case["expected_decision"]  # noqa: E731
         report = evaluate(_CASES, judge_fn=judge, inject_fn=_fake_inject)
         assert report["follow_rate"] == 1.0
         assert report["reject_follow_rate"] == 1.0
@@ -46,14 +46,14 @@ class TestFollowRate:
 
     def test_half_following(self) -> None:
         decisions = {"c1": "FOLLOW", "c2": "FOLLOW", "c3": "REJECT"}
-        judge = lambda case, skills: decisions[case["case_id"]]  # noqa: E731
+        judge = lambda case, rules: decisions[case["case_id"]]  # noqa: E731
         report = evaluate(_CASES, judge_fn=judge, inject_fn=_fake_inject)
         assert report["follow_rate"] == pytest.approx(2 / 3)
         assert report["reject_follow_rate"] == pytest.approx(1 / 2)
         assert report["num_cases"] == 3
 
     def test_none_following(self) -> None:
-        judge = lambda case, skills: "FOLLOW" if case["expected_decision"] == "REJECT" else "REJECT"  # noqa: E731
+        judge = lambda case, rules: "FOLLOW" if case["expected_decision"] == "REJECT" else "REJECT"  # noqa: E731
         report = evaluate(_CASES, judge_fn=judge, inject_fn=_fake_inject)
         assert report["follow_rate"] == 0.0
         assert report["reject_follow_rate"] == 0.0
@@ -66,22 +66,22 @@ class TestFollowRate:
 
 
 class TestFalseTriggerRate:
-    def test_extra_injected_skill_counts_as_false_trigger(self) -> None:
+    def test_extra_injected_rule_counts_as_false_trigger(self) -> None:
         def bad_inject(case: dict) -> list[dict]:
-            return [{"skill_id": s} for s in case["expected_skills"]] + [
-                {"skill_id": "unexpected-skill"}
+            return [{"rule_id": r} for r in case["expected_rules"]] + [
+                {"rule_id": "unexpected-rule"}
             ]
 
         judge = lambda c, s: c["expected_decision"]  # noqa: E731
         report = evaluate(_CASES, judge_fn=judge, inject_fn=bad_inject)
-        # 3 cases × 1 extra trigger out of 3 cases × 3 skills (2+2+2 = 6) + 3 = 9 injected
+        # 3 cases × 1 extra trigger out of 3 cases × 3 rules (2+2+2 = 6) + 3 = 9 injected
         assert report["false_trigger_rate"] == pytest.approx(3 / 9)
 
-    def test_wrong_skill_injected_counts_as_false_trigger(self) -> None:
+    def test_wrong_rule_injected_counts_as_false_trigger(self) -> None:
         def wrong_inject(case: dict) -> list[dict]:
-            skills = list(case["expected_skills"])
-            skills[0] = "wrong-skill"
-            return [{"skill_id": s} for s in skills]
+            rules = list(case["expected_rules"])
+            rules[0] = "wrong-rule"
+            return [{"rule_id": r} for r in rules]
 
         judge = lambda c, s: c["expected_decision"]  # noqa: E731
         report = evaluate(_CASES, judge_fn=judge, inject_fn=wrong_inject)
@@ -93,7 +93,7 @@ class TestFalseTriggerRate:
         assert report["false_trigger_rate"] == 0.0
 
     def test_default_inject_fn_uses_real_matcher(self) -> None:
-        """With the real skill_matcher, declared expected_skills must produce
+        """With the real rule_matcher, declared expected_rules must produce
         zero false triggers (consistency guaranteed by the dataset test)."""
         import json
         from pathlib import Path
@@ -102,7 +102,7 @@ class TestFalseTriggerRate:
             Path(__file__).resolve().parent.parent.parent.parent
             / "evals"
             / "datasets"
-            / "skill_follow_20.json"
+            / "rule_follow_20.json"
         )
         cases = json.loads(dataset.read_text(encoding="utf-8"))["cases"]
         report = evaluate(cases, judge_fn=lambda c, s: c["expected_decision"])
@@ -111,12 +111,12 @@ class TestFalseTriggerRate:
 
 
 class TestPerCaseDetails:
-    def test_per_case_contains_judge_skills(self) -> None:
-        judge = lambda case, skills: case["expected_decision"]  # noqa: E731
+    def test_per_case_contains_judge_rules(self) -> None:
+        judge = lambda case, rules: case["expected_decision"]  # noqa: E731
         report = evaluate(_CASES, judge_fn=judge, inject_fn=_fake_inject)
         assert len(report["per_case"]) == 3
         first = report["per_case"][0]
         assert first["case_id"] == "c1"
         assert first["followed"] is True
-        assert first["injected_skill_ids"] == ["order-state-machine", "approval-policy"]
-        assert first["expected_skill_ids"] == ["order-state-machine", "approval-policy"]
+        assert first["injected_rule_ids"] == ["order-state-machine", "approval-policy"]
+        assert first["expected_rule_ids"] == ["order-state-machine", "approval-policy"]

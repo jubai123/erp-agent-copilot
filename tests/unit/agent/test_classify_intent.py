@@ -4,7 +4,7 @@ The node is the graph's first step: it maps a natural-language query to a
 deterministic (domain, action) intent, an initial risk level, and explicit
 entities (docs/03 §4).  Deterministic by the ADR rule "确定性优先，概率兜底" —
 the (domain, action) output feeds two downstream deterministic layers
-(skill_matcher L1 injection and candidate_filter tool filtering) that require
+(rule_matcher L1 injection and candidate_filter tool filtering) that require
 exact key hits.  Unrecognized queries fall back to the lowest-risk read-only
 intent instead of raising.
 """

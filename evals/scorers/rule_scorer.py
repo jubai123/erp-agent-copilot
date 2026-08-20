@@ -1,29 +1,29 @@
-"""L1 skill-following scorer.
+"""L1 rule-following scorer.
 
-Measures two metrics over the skill_follow dataset (docs/08 section 3,
+Measures two metrics over the rule_follow dataset (docs/08 section 3,
 ADR decision 2):
 
 - ``follow_rate``: fraction of cases where the judge's decision matches the
   expected decision under the injected L1 constraints.
 - ``reject_follow_rate``: follow_rate restricted to cases that must be
   rejected (REJECT) — the safety-critical subset.
-- ``false_trigger_rate``: fraction of injected skill instances that the
+- ``false_trigger_rate``: fraction of injected rule instances that the
   intent mapping should NOT have injected for that case.  Zero when the
-  deterministic matcher matches the declared expected_skills exactly.
+  deterministic matcher matches the declared expected_rules exactly.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from erp_copilot.retrieval.skill_matcher import match_skills
+from erp_copilot.retrieval.rule_matcher import match_rules
 
 JudgeFn = Callable[[dict, list[dict]], str]
 InjectFn = Callable[[dict], list[dict]]
 
 
 def _default_inject(case: dict) -> list[dict]:
-    return match_skills(case["domain"], case["action"])
+    return match_rules(case["domain"], case["action"])
 
 
 def evaluate(
@@ -33,8 +33,8 @@ def evaluate(
 ) -> dict:
     """Score L1 constraint following for *cases*.
 
-    ``judge_fn(case, injected_skills)`` returns the judge's decision
-    ("FOLLOW" or "REJECT") for one case, given the injected skill list.
+    ``judge_fn(case, injected_rules)`` returns the judge's decision
+    ("FOLLOW" or "REJECT") for one case, given the injected rule list.
     ``inject_fn`` defaults to the real deterministic matcher; tests pass a
     fake to isolate the scorer.
     """
@@ -48,15 +48,15 @@ def evaluate(
     reject_followed = 0
 
     for case in cases:
-        expected = set(case["expected_skills"])
-        injected_skills = inject_fn(case)
-        injected_ids = [s["skill_id"] for s in injected_skills]
+        expected = set(case["expected_rules"])
+        injected_rules = inject_fn(case)
+        injected_ids = [r["rule_id"] for r in injected_rules]
 
-        false_triggers = [sid for sid in injected_ids if sid not in expected]
+        false_triggers = [rid for rid in injected_ids if rid not in expected]
         total_false_triggers += len(false_triggers)
         total_injected += len(injected_ids)
 
-        decision = judge_fn(case, injected_skills)
+        decision = judge_fn(case, injected_rules)
         followed = decision == case["expected_decision"]
 
         if case["expected_decision"] == "REJECT":
@@ -70,8 +70,8 @@ def evaluate(
                 "decision": decision,
                 "expected_decision": case["expected_decision"],
                 "followed": followed,
-                "injected_skill_ids": injected_ids,
-                "expected_skill_ids": list(case["expected_skills"]),
+                "injected_rule_ids": injected_ids,
+                "expected_rule_ids": list(case["expected_rules"]),
                 "false_triggers": false_triggers,
             }
         )

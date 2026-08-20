@@ -2,7 +2,7 @@
 
 The node is where the LLM turns the constrained inputs into a Plan DAG. It
 receives intent-filtered tool candidates (DOMAIN_TOOL_MAP, 3-8, never the full
-registry), L1 active skills (hard constraints) and L2 retrieved knowledge
+registry), L1 active rules (hard constraints) and L2 retrieved knowledge
 (reference), and assembles the prompt in that exact injection order (docs/03
 section 4). The LLM is injected as a plain callable so the node is testable
 without a live provider; the app wires a real client at startup.
@@ -10,7 +10,7 @@ without a live provider; the app wires a real client at startup.
 Two deterministic guards wrap the LLM output: parse_plan_response validates the
 JSON against the strict Plan schema (extra="forbid"), and reject_l1_violations
 drops steps that break a hard L1 rule — e.g. "任何状态 → CREATED" from the
-order-state-machine skill (the canonical illegal transition).
+order-state-machine rule (the canonical illegal transition).
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from erp_copilot.agent.state import (
     RetrievedDocument,
 )
 from erp_copilot.domain.enums import ToolRiskLevel
-from erp_copilot.retrieval.skill_matcher import match_skills
+from erp_copilot.retrieval.rule_matcher import match_rules
 from erp_copilot.tools.candidate_filter import filter_candidates
 
 
@@ -80,11 +80,11 @@ class TestBuildPlannerPrompt:
         assert "Plan" in SYSTEM_PROMPT
 
     def test_injection_order_system_l1_l2_tools_query(self) -> None:
-        skills = [{"skill_id": "order-state-machine", "content": "订单状态机规则"}]
+        rules = [{"rule_id": "order-state-machine", "content": "订单状态机规则"}]
         knowledge = [RetrievedDocument(content="取消订单流程", source="orders.md")]
         prompt = build_planner_prompt(
             query="查询订单",
-            active_skills=skills,
+            active_rules=rules,
             retrieved_context=knowledge,
             candidate_tools=["getOrderByOrderId"],
         )
@@ -100,12 +100,12 @@ class TestBuildPlannerPrompt:
         ]
         assert order == sorted(order)
 
-    def test_l1_skill_appears_before_l2_knowledge(self) -> None:
-        skills = [{"skill_id": "s1", "content": "L1硬约束内容"}]
+    def test_l1_rules_appear_before_l2_knowledge(self) -> None:
+        rules = [{"rule_id": "s1", "content": "L1硬约束内容"}]
         knowledge = [RetrievedDocument(content="L2参考内容", source="docs.md")]
         prompt = build_planner_prompt(
             query="q",
-            active_skills=skills,
+            active_rules=rules,
             retrieved_context=knowledge,
             candidate_tools=["t1"],
         )
@@ -114,7 +114,7 @@ class TestBuildPlannerPrompt:
     def test_all_candidate_tools_listed(self) -> None:
         prompt = build_planner_prompt(
             query="q",
-            active_skills=[],
+            active_rules=[],
             retrieved_context=[],
             candidate_tools=["getProductById", "getProductByName"],
         )
@@ -123,7 +123,7 @@ class TestBuildPlannerPrompt:
     def test_query_appears_last(self) -> None:
         prompt = build_planner_prompt(
             query="查询苹果的库存",
-            active_skills=[],
+            active_rules=[],
             retrieved_context=[],
             candidate_tools=["getProductById"],
         )
@@ -143,7 +143,7 @@ class TestBuildPlannerPrompt:
         }
         prompt = build_planner_prompt(
             query="下单",
-            active_skills=[],
+            active_rules=[],
             retrieved_context=[],
             candidate_tools=["getProductByName", "createOrder"],
             tool_schemas=schemas,
@@ -154,7 +154,7 @@ class TestBuildPlannerPrompt:
     def test_tool_names_only_when_no_schemas(self) -> None:
         prompt = build_planner_prompt(
             query="q",
-            active_skills=[],
+            active_rules=[],
             retrieved_context=[],
             candidate_tools=["getProductByName"],
         )
@@ -235,10 +235,10 @@ class TestParsePlanResponse:
 
 
 class TestRejectL1Violations:
-    # The order-state-machine skill's "非法转换" block forbids 任何状态 → CREATED.
-    # match_skills("order", "update_status") resolves to that skill via the YAML map.
+    # The order-state-machine rule's "非法转换" block forbids 任何状态 → CREATED.
+    # match_rules("order", "update_status") resolves to that rule via the YAML map.
     def test_rejects_any_state_to_created_transition(self) -> None:
-        skills = match_skills("order", "update_status")
+        rules = match_rules("order", "update_status")
         plan = Plan(
             steps=[
                 PlanStep(
@@ -246,13 +246,13 @@ class TestRejectL1Violations:
                 )
             ]
         )
-        kept, errors = reject_l1_violations(plan, skills)
+        kept, errors = reject_l1_violations(plan, rules)
         assert kept.steps == []
         assert errors[0].code == "L1_VIOLATION"
         assert errors[0].step_id == "s1"
 
     def test_keeps_legal_transition(self) -> None:
-        skills = match_skills("order", "update_status")
+        rules = match_rules("order", "update_status")
         plan = Plan(
             steps=[
                 PlanStep(
@@ -260,12 +260,12 @@ class TestRejectL1Violations:
                 )
             ]
         )
-        kept, errors = reject_l1_violations(plan, skills)
+        kept, errors = reject_l1_violations(plan, rules)
         assert len(kept.steps) == 1
         assert errors == []
 
     def test_drops_only_violating_step_keeps_others_and_title(self) -> None:
-        skills = match_skills("order", "update_status")
+        rules = match_rules("order", "update_status")
         plan = Plan(
             title="发货计划",
             steps=[
@@ -277,11 +277,11 @@ class TestRejectL1Violations:
                 ),
             ],
         )
-        kept, errors = reject_l1_violations(plan, skills)
+        kept, errors = reject_l1_violations(plan, rules)
         assert [s.step_id for s in kept.steps] == ["s2"]
         assert kept.title == "发货计划"
 
-    def test_no_skills_no_rejection(self) -> None:
+    def test_no_rules_no_rejection(self) -> None:
         plan = Plan(
             steps=[
                 PlanStep(
@@ -296,16 +296,16 @@ class TestRejectL1Violations:
     def test_source_specific_rules_need_runtime_state_not_rejected_here(self) -> None:
         # "DELIVERED → 任何状态" is illegal but the current state is unknown at
         # plan time — the layered defence leaves it to verify_results (layer 4).
-        skills = match_skills("order", "update_status")
+        rules = match_rules("order", "update_status")
         plan = Plan(
             steps=[PlanStep(step_id="s1", tool_name="cancelOrder", arguments={"order_id": "abc"})]
         )
-        kept, errors = reject_l1_violations(plan, skills)
+        kept, errors = reject_l1_violations(plan, rules)
         assert len(kept.steps) == 1
         assert errors == []
 
     def test_case_insensitive_state_match(self) -> None:
-        skills = match_skills("order", "update_status")
+        rules = match_rules("order", "update_status")
         plan = Plan(
             steps=[
                 PlanStep(
@@ -313,18 +313,18 @@ class TestRejectL1Violations:
                 )
             ]
         )
-        kept, _ = reject_l1_violations(plan, skills)
+        kept, _ = reject_l1_violations(plan, rules)
         assert kept.steps == []
 
 
 class TestBuildPlanNode:
-    def test_node_sets_plan_candidates_and_skills(self) -> None:
+    def test_node_sets_plan_candidates_and_rules(self) -> None:
         node = build_plan_node(llm_complete=_noop_llm)
         state = _agent_state()
         updates = node(state)
         assert updates["plan"].steps[0].tool_name == "getProductById"
         assert updates["candidate_tools"] == filter_candidates("product", "query")
-        assert updates["active_skills"] == match_skills("product", "query")
+        assert updates["active_rules"] == match_rules("product", "query")
 
     def test_node_prompt_uses_injection_order_and_candidates(self) -> None:
         captured: list[str] = []
@@ -342,7 +342,7 @@ class TestBuildPlanNode:
         node(state)
         prompt = captured[0]
         assert "querySuppliersByDeliveryRegion" in prompt
-        assert prompt.index("配送区域规则") > prompt.index("供应商")  # L2 after L1 skills
+        assert prompt.index("配送区域规则") > prompt.index("供应商")  # L2 after L1 rules
         assert prompt.rstrip().endswith("查上海供应商")
 
     def test_node_rejects_l1_violating_step_and_records_error(self) -> None:
@@ -366,7 +366,7 @@ class TestBuildPlanNode:
         node = build_plan_node(llm_complete=_noop_llm)
         updates = node(_agent_state(intent=None))
         assert updates["candidate_tools"] == []
-        assert updates["active_skills"] == []
+        assert updates["active_rules"] == []
         assert updates["plan"].steps[0].tool_name == "getProductById"
 
     def test_node_prompt_includes_required_params_when_schemas_given(self) -> None:
@@ -470,7 +470,7 @@ class TestSkillCatalogPrompt:
         catalog = {"getProductByName": _skill()}
         prompt = build_planner_prompt(
             query="苹果多少钱",
-            active_skills=[],
+            active_rules=[],
             retrieved_context=[],
             candidate_tools=["getProductByName"],
             tool_schemas=self._SCHEMAS,
@@ -483,7 +483,7 @@ class TestSkillCatalogPrompt:
     def test_no_description_when_catalog_absent(self) -> None:
         prompt = build_planner_prompt(
             query="苹果多少钱",
-            active_skills=[],
+            active_rules=[],
             retrieved_context=[],
             candidate_tools=["getProductByName"],
             tool_schemas=self._SCHEMAS,
@@ -497,7 +497,7 @@ class TestSkillCatalogPrompt:
         catalog = {"getProductById": _skill(name="product-id-lookup", tool="getProductById")}
         prompt = build_planner_prompt(
             query="q",
-            active_skills=[],
+            active_rules=[],
             retrieved_context=[],
             candidate_tools=["getProductByName"],
             tool_schemas=self._SCHEMAS,

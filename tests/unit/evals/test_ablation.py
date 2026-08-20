@@ -98,7 +98,7 @@ class TestL1Coverage:
         result = analyze_l1_coverage(queries)
         d = result["details"][0]
         assert d["intent"] == "order/create"
-        assert "approval-policy" in d["l1_skills"]
+        assert "approval-policy" in d["l1_rules"]
 
 
 # ---------------------------------------------------------------------------

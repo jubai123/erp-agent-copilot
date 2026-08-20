@@ -201,7 +201,7 @@ class TestAgentState:
                 risk_level=ToolRiskLevel.WRITE,
                 entities={"product": "苹果"},
             ),
-            active_skills=[{"skill_id": "order-state-machine"}],
+            active_rules=[{"rule_id": "order-state-machine"}],
             retrieved_context=[
                 RetrievedDocument(
                     content="库存规则",

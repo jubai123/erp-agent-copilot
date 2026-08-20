@@ -2,7 +2,7 @@
 
 First-level deterministic intent→tool filtering (DOMAIN_TOOL_MAP) with a
 reserved second-level vector-rerank trigger (should_use_tool_retrieval).
-The intent keys MUST stay in sync with intent_skill_map.yaml so L1 skill
+The intent keys MUST stay in sync with intent_rule_map.yaml so L1 rule
 injection and tool candidate filtering share one intent taxonomy.
 """
 
@@ -20,7 +20,7 @@ from erp_copilot.tools.candidate_filter import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-INTENT_MAP_PATH = PROJECT_ROOT / "datasets" / "knowledge" / "skills" / "intent_skill_map.yaml"
+INTENT_MAP_PATH = PROJECT_ROOT / "datasets" / "knowledge" / "rules" / "intent_rule_map.yaml"
 
 
 def _load_intent_keys() -> set[tuple[str, str]]:
@@ -29,7 +29,7 @@ def _load_intent_keys() -> set[tuple[str, str]]:
 
 
 class TestDomainToolMap:
-    def test_intent_keys_match_skill_matcher_map(self) -> None:
+    def test_intent_keys_match_rule_matcher_map(self) -> None:
         """L1 injection and tool filtering must share the intent taxonomy."""
         assert set(DOMAIN_TOOL_MAP) == _load_intent_keys()
 
