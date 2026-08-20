@@ -7,9 +7,12 @@ management, tool caching, and auto-reconnect.
 from __future__ import annotations
 
 from asyncio import Lock
+from contextlib import AsyncExitStack
 from typing import Any
 
+import httpx2
 from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 
 from erp_copilot.security.ssrf_guard import SSRFGuard
 
@@ -33,12 +36,22 @@ class MCPGatewayConnection:
 
     Connections are established on first use and reused across calls.
     Disconnected sessions are automatically reconnected on the next call.
+
+    The session runs over a real Streamable HTTP transport
+    (``streamable_http_client``), so ``connect`` performs an actual MCP
+    initialize handshake with the server at *url*. The outbound client is built
+    with ``trust_env=False``: the connection goes directly to the
+    operator-configured URL instead of through ambient system/proxy
+    environment settings, keeping egress identical to what the SSRF guard
+    validated (docs/06 §6).
     """
 
     def __init__(self, url: str, *, guard: SSRFGuard | None = None) -> None:
         self._url = url
         self._guard = guard
         self._session: ClientSession | None = None
+        self._stack: AsyncExitStack | None = None
+        self._http_client: httpx2.AsyncClient | None = None
         self._lock = Lock()
 
     @property
@@ -56,6 +69,11 @@ class MCPGatewayConnection:
         A configured SSRF guard is enforced here, before any session exists
         (docs/06 §6 "请求发出前"): a URL that fails the egress policy raises
         :class:`SSRFBlockedError` and no session is ever created (fail-closed).
+
+        On success the transport + session context managers are transferred to
+        this connection (via ``AsyncExitStack.pop_all``) and torn down by
+        :meth:`disconnect`; on failure everything opened is closed and the
+        connection stays disconnected.
         """
         async with self._lock:
             if self._session is not None:
@@ -64,14 +82,48 @@ class MCPGatewayConnection:
                 verdict = self._guard.check(self._url)
                 if not verdict.allowed:
                     raise SSRFBlockedError(self._url, verdict.reason, verdict.detail)
-            session = ClientSession()
-            await session.initialize()
+
+            http_client = httpx2.AsyncClient(trust_env=False)
+            stack = AsyncExitStack()
+            try:
+                read_stream, write_stream = await stack.enter_async_context(
+                    streamable_http_client(self._url, http_client=http_client)
+                )
+                session = ClientSession(read_stream, write_stream)
+                await stack.enter_async_context(session)
+                await session.initialize()
+            except BaseException:
+                await stack.aclose()
+                await http_client.aclose()
+                raise
+
+            self._http_client = http_client
+            self._stack = stack.pop_all()
             self._session = session
 
     async def disconnect(self) -> None:
-        """Tear down the session, releasing underlying transport resources."""
+        """Tear down the session and its transport, releasing all resources."""
         async with self._lock:
+            stack, http_client = self._stack, self._http_client
             self._session = None
+            self._stack = None
+            self._http_client = None
+            if stack is not None:
+                await stack.aclose()
+            if http_client is not None:
+                await http_client.aclose()
+
+    async def list_tools(self) -> list[str]:
+        """Return the names of the tools the connected MCP server advertises.
+
+        Raises :class:`RuntimeError` if not connected.
+        """
+        if self._session is None:
+            raise RuntimeError(
+                f"Cannot list tools: not connected to {self._url}. Call connect() first."
+            )
+        result = await self._session.list_tools()
+        return [tool.name for tool in result.tools]
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         """Execute a tool on the connected MCP server.

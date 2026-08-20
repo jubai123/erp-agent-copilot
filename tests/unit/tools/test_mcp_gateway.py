@@ -2,12 +2,53 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from erp_copilot.security.ssrf_guard import SSRFConfig, SSRFGuard
+
+
+def _tool_named(name: str) -> Mock:
+    """A tool mock whose ``.name`` is a plain string (Mock(name=...) would not)."""
+    tool = Mock()
+    tool.name = name
+    return tool
+
+
+@contextmanager
+def _connected_session() -> Iterator[AsyncMock]:
+    """Patch transport + ClientSession so connect() never touches the network.
+
+    Returns the mocked ClientSession; connect() must be called inside the block.
+    The Streamable HTTP transport is faked to yield inert read/write streams so
+    AsyncExitStack's enter/pop_all/aclose lifecycle runs against mocks, and the
+    outbound httpx2 client is replaced by a mock (no sockets, no proxy lookup).
+    """
+    transport = AsyncMock()
+    transport.__aenter__ = AsyncMock(return_value=(Mock(), Mock()))
+    transport.__aexit__ = AsyncMock(return_value=False)
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.list_tools = AsyncMock(return_value=Mock(tools=[_tool_named("getProductByName")]))
+    mock_session.call_tool = AsyncMock(return_value={"result": "ok"})
+    with (
+        patch(
+            "erp_copilot.tools.mcp_gateway.httpx2.AsyncClient",
+            return_value=AsyncMock(),
+        ),
+        patch(
+            "erp_copilot.tools.mcp_gateway.streamable_http_client",
+            return_value=transport,
+        ),
+        patch(
+            "erp_copilot.tools.mcp_gateway.ClientSession",
+            return_value=mock_session,
+        ),
+    ):
+        yield mock_session
 
 
 class TestMCPGatewayConnection:
@@ -23,13 +64,7 @@ class TestMCPGatewayConnection:
     def test_connect_establishes_session(self) -> None:
         from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
 
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-
-        with patch(
-            "erp_copilot.tools.mcp_gateway.ClientSession",
-            return_value=mock_session,
-        ):
+        with _connected_session() as mock_session:
             conn = MCPGatewayConnection("http://localhost:8000/mcp")
 
             import asyncio
@@ -42,13 +77,7 @@ class TestMCPGatewayConnection:
     def test_disconnect_cleans_up(self) -> None:
         from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
 
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-
-        with patch(
-            "erp_copilot.tools.mcp_gateway.ClientSession",
-            return_value=mock_session,
-        ):
+        with _connected_session():
             conn = MCPGatewayConnection("http://localhost:8000/mcp")
 
             import asyncio
@@ -62,13 +91,7 @@ class TestMCPGatewayConnection:
     def test_second_connect_is_noop(self) -> None:
         from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
 
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-
-        with patch(
-            "erp_copilot.tools.mcp_gateway.ClientSession",
-            return_value=mock_session,
-        ):
+        with _connected_session() as mock_session:
             conn = MCPGatewayConnection("http://localhost:8000/mcp")
 
             import asyncio
@@ -82,14 +105,7 @@ class TestMCPGatewayConnection:
     def test_execute_delegates_to_connected_session(self) -> None:
         from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
 
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-        mock_session.call_tool = AsyncMock(return_value={"result": "ok"})
-
-        with patch(
-            "erp_copilot.tools.mcp_gateway.ClientSession",
-            return_value=mock_session,
-        ):
+        with _connected_session() as mock_session:
             conn = MCPGatewayConnection("http://localhost:8000/mcp")
 
             import asyncio
@@ -100,6 +116,20 @@ class TestMCPGatewayConnection:
             assert result == {"result": "ok"}
             mock_session.call_tool.assert_awaited_once_with("create_order", {"product_id": 1})
 
+    def test_list_tools_delegates_to_connected_session(self) -> None:
+        from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
+
+        with _connected_session() as mock_session:
+            conn = MCPGatewayConnection("http://localhost:8000/mcp")
+
+            import asyncio
+
+            asyncio.run(conn.connect())
+            tools = asyncio.run(conn.list_tools())
+
+            assert tools == ["getProductByName"]
+            mock_session.list_tools.assert_awaited_once()
+
     def test_execute_without_connect_raises(self) -> None:
         from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
 
@@ -109,6 +139,16 @@ class TestMCPGatewayConnection:
 
         with pytest.raises(RuntimeError, match="not connected"):
             asyncio.run(conn.execute_tool("test", {}))
+
+    def test_list_tools_without_connect_raises(self) -> None:
+        from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
+
+        conn = MCPGatewayConnection("http://localhost:8000/mcp")
+
+        import asyncio
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            asyncio.run(conn.list_tools())
 
 
 class TestMCPGateway:
@@ -178,13 +218,7 @@ class TestMCPGatewayConnectionSSRF:
     def test_connect_allows_allowlisted_public_url(self) -> None:
         from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
 
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-
-        with patch(
-            "erp_copilot.tools.mcp_gateway.ClientSession",
-            return_value=mock_session,
-        ):
+        with _connected_session() as mock_session:
             conn = MCPGatewayConnection("https://api.erp.example.com", guard=_guard())
 
             import asyncio
@@ -235,13 +269,7 @@ class TestMCPGatewayConnectionSSRF:
     def test_connect_without_guard_behaves_unchanged(self) -> None:
         from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
 
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-
-        with patch(
-            "erp_copilot.tools.mcp_gateway.ClientSession",
-            return_value=mock_session,
-        ):
+        with _connected_session() as mock_session:
             conn = MCPGatewayConnection("https://api.erp.example.com")
 
             import asyncio
