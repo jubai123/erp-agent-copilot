@@ -4,14 +4,15 @@
 Tier2/Tier3 planner: it builds the real ``build_plan_node`` backed by an
 OpenAI-compatible chat client (DeepSeek) from Settings, wrapped in ``llm_call``
 so every planning call lands on an OTel span, an ``LLM_CALL`` log line and a
-Langfuse generation. Mirroring ``resolve_erp_executor``'s "configured or
-offline fallback" pattern, an empty ``llm_api_key`` returns ``None`` so the
-worker stays offline and tier2/3 queries keep failing honestly
-(``ROUTED_TIER23_NO_LLM``) instead of over-grabbing.
+Langfuse generation.
 
-The shared ``build_real_llm_complete`` factory (moved here from the eval so
-eval and worker share the A/B-proven client configuration) is exercised with a
-fake client, so no network is ever touched.
+Since session 60 the LLM funnel is on by default: ``llm_planning_enabled=true``
+makes tier2/3 out-of-vocabulary queries go through LLM planning. The resolver
+is three-state — disabled returns ``None`` (worker stays offline,
+``ROUTED_TIER23_NO_LLM`` honest-fail), enabled-without-key returns a node that
+fails with ``LLM_NOT_CONFIGURED``, enabled-with-key returns the real node. The
+shared ``build_real_llm_complete`` factory is exercised with a fake client, so
+no network is ever touched.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ import apps.worker.llm_planner as llm_planner
 import erp_copilot.observability.tracing as tracing_mod
 from apps.worker.graph_builder import WORKER_TOOL_SCHEMAS
 from apps.worker.llm_planner import build_real_llm_complete, resolve_llm_plan_node
+from erp_copilot.agent.graph import build_agent_graph
+from erp_copilot.agent.state import AgentState, StateError
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.observability.tracing import setup_tracing
 
@@ -43,7 +46,7 @@ def _reset_tracing() -> Iterator[None]:
 
 
 def _settings_with_key() -> Settings:
-    return Settings(llm_api_key=SecretStr("fake-key"))
+    return Settings(llm_planning_enabled=True, llm_api_key=SecretStr("fake-key"))
 
 
 class _FakeUsage:
@@ -83,13 +86,67 @@ class _FakeClient:
         self.chat = _FakeChat()
 
 
-def test_resolve_returns_none_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_returns_none_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _should_not_build(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("must not build a plan node while disabled")
+
+    monkeypatch.setattr(llm_planner, "build_plan_node", _should_not_build)
+
+    # llm_planning_enabled=false -> offline; a key alone is not enough.
+    assert resolve_llm_plan_node(Settings(llm_planning_enabled=False)) is None
+    assert (
+        resolve_llm_plan_node(
+            Settings(llm_planning_enabled=False, llm_api_key=SecretStr("fake-key"))
+        )
+        is None
+    )
+
+
+def test_resolve_returns_config_error_node_when_enabled_without_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def _should_not_build(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("must not build a plan node without an LLM key")
 
     monkeypatch.setattr(llm_planner, "build_plan_node", _should_not_build)
 
-    assert resolve_llm_plan_node(Settings()) is None
+    node = resolve_llm_plan_node(Settings(llm_planning_enabled=True))
+    assert callable(node)
+
+    result = node(AgentState(run_id="r1", tenant_id="t1", query="榴莲多少钱"))
+    assert result["plan"] is None
+    codes = [error.code for error in result["errors"]]
+    assert "LLM_NOT_CONFIGURED" in codes
+    error = next(e for e in result["errors"] if e.code == "LLM_NOT_CONFIGURED")
+    assert isinstance(error, StateError)
+
+
+def test_llm_not_configured_node_flows_through_graph_as_tier23_planner() -> None:
+    # A tier2/3 query routed to the enabled-without-key node must reach it and
+    # honest-fail there (LLM_NOT_CONFIGURED), never be over-grabbed by the
+    # deterministic layer.
+    node = resolve_llm_plan_node(Settings(llm_planning_enabled=True))
+    assert callable(node)
+
+    class _RecordingSaver:
+        def __init__(self) -> None:
+            self.saved: list[tuple[str, AgentState]] = []
+
+        def save(self, node_name: str, state: AgentState) -> None:
+            self.saved.append((node_name, state))
+
+    saver = _RecordingSaver()
+    graph = build_agent_graph(llm_plan_node=node, checkpoint_saver=saver)  # type: ignore[arg-type]
+    graph.invoke(
+        {
+            "run_id": "r-config",
+            "tenant_id": "t1",
+            "query": "榴莲多少钱",  # OOV product -> route_query_layer tier2
+        }
+    )
+    names = {name for name, _ in saver.saved}
+    assert "build_plan_llm" in names
+    assert "build_plan" not in names
 
 
 def test_resolve_wires_worker_tool_schemas(monkeypatch: pytest.MonkeyPatch) -> None:

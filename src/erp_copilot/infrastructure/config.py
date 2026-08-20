@@ -101,6 +101,16 @@ class Settings(BaseSettings):
         default="text-embedding-3-small",
         description="Embedding model name for semantic retrieval.",
     )
+    llm_planning_enabled: bool = Field(
+        default=True,
+        description=(
+            "Serve out-of-vocabulary (tier2/tier3) queries with LLM planning by "
+            "default; set false to keep the worker offline (tier2/3 honest-fail "
+            "with ROUTED_TIER23_NO_LLM). When enabled, an empty llm_api_key makes "
+            "tier2/3 queries fail with LLM_NOT_CONFIGURED instead of silently "
+            "falling offline."
+        ),
+    )
 
     @model_validator(mode="after")
     def _require_pepper_in_api_key_mode(self) -> Settings:

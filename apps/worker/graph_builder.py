@@ -183,8 +183,11 @@ def build_worker_graph(
     apps.worker.executor.
 
     *llm_plan_node* is the three-layer funnel's Tier2/Tier3 planner (e.g.
-    build_plan_node bound to a real LLM client). Omitted by default so the
-    worker stays offline: tier1 queries use the deterministic planner and
+    build_plan_node bound to a real LLM client). The worker injects
+    resolve_llm_plan_node(settings), which defaults the funnel ON — tier2/3
+    out-of-vocabulary queries go through LLM planning, or fail with
+    LLM_NOT_CONFIGURED when enabled without a key. Explicitly passing None
+    keeps the worker offline: tier1 queries use the deterministic planner and
     tier2/3 queries fail honestly (ROUTED_TIER23_NO_LLM) instead of being
     over-grabbed by the deterministic layer. When injected, it is observed
     under the distinct "plan_llm" phase label so the latency histogram keeps

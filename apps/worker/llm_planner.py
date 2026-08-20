@@ -7,10 +7,12 @@ Tier2/Tier3 ``build_plan_node``. The module stays Celery-free so the API
 approve-resume path can import it without bootstrapping the broker
 (graph_builder keeps its no-celery guarantee).
 
-The worker stays offline by default: an empty ``llm_api_key`` makes
-``resolve_llm_plan_node`` return ``None``, so tier2/3 queries keep failing
-honestly (``ROUTED_TIER23_NO_LLM``) instead of being over-grabbed by the
-deterministic layer.
+The LLM funnel is on by default: ``llm_planning_enabled`` (default true) makes
+tier2/3 out-of-vocabulary queries go through LLM planning. ``resolve_llm_plan_node``
+is three-state — disabled returns ``None`` (worker offline, tier2/3 honest-fail
+``ROUTED_TIER23_NO_LLM``), enabled-without-key returns a node that fails with
+``LLM_NOT_CONFIGURED`` (a configuration error, not a silent offline fallback),
+enabled-with-key returns the real node.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from openai.types import CompletionUsage
 
 from apps.worker.graph_builder import WORKER_TOOL_SCHEMAS
 from erp_copilot.agent.nodes.build_plan import build_plan_node
-from erp_copilot.agent.state import AgentState
+from erp_copilot.agent.state import AgentState, StateError
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.observability.langfuse import llm_call
 
@@ -38,19 +40,52 @@ def build_real_llm_complete(settings: Settings) -> Callable[[str], str]:
     return llm_complete
 
 
+def _llm_not_configured_node() -> Callable[[AgentState], dict[str, Any]]:
+    """Build the tier2/3 node for enabled-but-missing-key deployments.
+
+    The LLM funnel is on by default, so a key-less deployment that routes an
+    out-of-vocabulary query to tier2/3 must fail with an explicit configuration
+    error (``LLM_NOT_CONFIGURED``) rather than silently falling offline — the
+    deterministic layer must never over-grab a query the funnel decided to
+    escalate.
+    """
+
+    def node(state: AgentState) -> dict[str, Any]:
+        return {
+            "plan": None,
+            "errors": [
+                *state.errors,
+                StateError(
+                    code="LLM_NOT_CONFIGURED",
+                    message=(
+                        "LLM 规划已启用（llm_planning_enabled=true）但未配置 "
+                        "LLM API key，无法服务 Tier2/Tier3 词表外查询"
+                    ),
+                ),
+            ],
+        }
+
+    return node
+
+
 def resolve_llm_plan_node(
     settings: Settings,
 ) -> Callable[[AgentState], dict[str, Any]] | None:
-    """Build the Tier2/Tier3 LLM plan node; None when no LLM is configured.
+    """Build the Tier2/Tier3 LLM plan node, or None when the funnel is disabled.
 
-    Mirrors ``resolve_erp_executor``'s configured-or-offline fallback: an empty
-    ``llm_api_key`` returns None so the graph's tier2/3 node honest-fails
-    (``ROUTED_TIER23_NO_LLM``) and the worker stays offline. When configured,
-    the chat call is wrapped in ``llm_call`` so each planning call lands on an
-    OTel span, an ``LLM_CALL`` log line and a Langfuse generation.
+    Three states: ``llm_planning_enabled=false`` returns None so the graph's
+    tier2/3 node honest-fails (``ROUTED_TIER23_NO_LLM``) and the worker stays
+    offline; enabled without an API key returns a node that fails with
+    ``LLM_NOT_CONFIGURED`` (a deployment configuration error, surfaced when an
+    out-of-vocabulary query arrives); enabled with a key returns the real
+    ``build_plan_node``, with the chat call wrapped in ``llm_call`` so each
+    planning call lands on an OTel span, an ``LLM_CALL`` log line and a
+    Langfuse generation.
     """
-    if not settings.llm_api_key.get_secret_value():
+    if not settings.llm_planning_enabled:
         return None
+    if not settings.llm_api_key.get_secret_value():
+        return _llm_not_configured_node()
     client = _build_client(settings)
     model = settings.llm_model
 

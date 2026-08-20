@@ -59,6 +59,11 @@ os.environ.setdefault("ERP_API_KEY", "")
 os.environ["LLM_API_KEY"] = ""
 os.environ["DASHSCOPE_API_KEY"] = ""
 os.environ["DEEPSEEK_API_KEY"] = ""
+# llm_planning_enabled defaults true, so without a key a live deployment turns
+# tier2/3 queries into LLM_NOT_CONFIGURED errors. Pin it off so the suite keeps
+# the offline contract (ROUTED_TIER23_NO_LLM); tests that need the enabled
+# states opt in explicitly via Settings(llm_planning_enabled=...).
+os.environ["LLM_PLANNING_ENABLED"] = "false"
 
 
 def _ensure_test_database(url: str) -> str:
