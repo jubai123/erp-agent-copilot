@@ -82,6 +82,8 @@ classify_intent
 - **输入被约束**：收到的工具候选是意图过滤后的 3-8 个（见 决策五），不是全部工具；收到的知识是 L1 Skill（硬约束）加 L2 检索结果，L1 优先。
 - **L1/L2 注入顺序**：System → L1 Active Skills（硬约束）→ L2 Retrieved Knowledge（参考）→ Available Tools（候选）→ User Query。
 
+**三层漏斗（词表外默认开 LLM）**：`classify_intent` 先判复杂度/区域/词表，Tier1 词表内查询走确定性 `build_plan` 快速路径；Tier2/Tier3 词表外查询（复杂度闸门、未知区域、EMPTY_PLAN）走 LLM 规划节点 `build_plan_llm`。LLM 漏斗**默认启用**（`LLM_PLANNING_ENABLED=true`，见 .env.example），词表外意图/规划真正进生产主路径；`resolve_llm_plan_node` 三态接线：`false` 保持离线（tier2/3 诚实失败 `ROUTED_TIER23_NO_LLM`）、启用但无 key 报配置错误 `LLM_NOT_CONFIGURED`、启用有 key 走真实 `build_plan_node`。LLM 输出仍被 §5.6 四层确定性护栏严格校验，路由边界（`route_query_layer`）不随开关变化。
+
 ### validate_plan
 
 - 检查循环依赖、缺失依赖、未知Tool和非法参数。
