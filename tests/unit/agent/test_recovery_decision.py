@@ -6,9 +6,12 @@ deterministic, offline rules the agent runtime will reuse (docs/06 §7). The
 datasets/recovery_25.json labels are the ground-truth contract: every query must
 trigger its labeled action.
 
-Local domain catalogs mirror the ERP Simulator seed data
-(apps/erp_simulator/data) exactly as classify_intent mirrors manifest.yaml; the
-mirror tests guard against drift. No LLM, no DB, no network.
+Local domain catalogs (_PRODUCT_STOCK / _REGION_SUPPLIER) mirror the ERP
+Simulator seed data (apps/erp_simulator/data); the mirror tests guard against
+drift. The delivery-region gate reads the runtime vocabulary loader
+(manifest.yaml seed + approved vocabulary_terms) instead of a local copy, so a
+region approved into the catalog stops being rejected. No LLM, no DB, no
+network.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from apps.erp_simulator.data.products import PRODUCT_BY_NAME
 from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS
@@ -26,6 +30,7 @@ from erp_copilot.agent.recovery_decision import (
     RecoveryAction,
     decide_recovery_action,
 )
+from erp_copilot.vocabulary import loader
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 RECOVERY_DATASET = PROJECT_ROOT / "evals" / "datasets" / "recovery_25.json"
@@ -66,3 +71,34 @@ def test_local_region_supplier_catalog_mirrors_simulator_seed() -> None:
         supplier = by_name[name]
         assert supplier.status == status
         assert region in supplier.regions
+
+
+@pytest.fixture(autouse=True)
+def _reset_vocab_cache():
+    """decide_recovery_action reads the process-global vocabulary cache; leave it clean."""
+    yield
+    loader.invalidate()
+
+
+def _raw_manifest() -> dict:
+    with open(loader._MANIFEST_PATH, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+class TestCatalogDrivenRegionGate:
+    """The region gate reads the merged loader catalog — approving a region lifts rejection."""
+
+    def test_unapproved_region_is_rejected(self) -> None:
+        assert decide_recovery_action("给苏州地区下一单苹果") == RecoveryAction.REJECT
+
+    def test_approved_region_stops_being_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _raw_manifest()
+        raw["supplier_region_enum"].append("苏州")
+        manifest = tmp_path / "manifest.yaml"
+        manifest.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+        monkeypatch.setattr(loader, "_MANIFEST_PATH", manifest)
+        loader.invalidate()
+        # 苏州 now valid, but quantity/unit absent -> graceful ask_missing.
+        assert decide_recovery_action("给苏州地区下一单苹果") == RecoveryAction.ASK_MISSING

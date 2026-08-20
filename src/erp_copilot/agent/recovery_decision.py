@@ -23,11 +23,13 @@ is guarded by the parameters it needs, so a genuinely incomplete request still
 falls through to ask_missing. This mirrors the agent's "surface the blocker
 first, then collect what is missing" behaviour.
 
-Local domain catalogs mirror the ERP Simulator seed data
-(apps/erp_simulator/data) exactly as classify_intent mirrors
-datasets/knowledge/manifest.yaml; mirror tests in
-tests/unit/agent/test_recovery_decision.py guard against drift. The module does
-not import the apps layer — src/ must not depend on process entry points.
+Local domain catalogs (_PRODUCT_STOCK / _REGION_SUPPLIER / _ORDER_STATE_GRAPH)
+mirror the ERP Simulator seed data (apps/erp_simulator/data); mirror tests in
+tests/unit/agent/test_recovery_decision.py guard against drift. The delivery
+region gate reads the runtime vocabulary loader (manifest.yaml seed + approved
+vocabulary_terms) instead of a local copy, so a newly approved region stops
+being rejected. The module does not import the apps layer — src/ must not
+depend on process entry points.
 """
 
 from __future__ import annotations
@@ -37,22 +39,9 @@ from enum import StrEnum
 
 from erp_copilot.agent.nodes.classify_intent import classify_intent
 from erp_copilot.agent.state import IntentClassification
+from erp_copilot.vocabulary.loader import get_catalog
 
 # Local catalogs — mirror apps/erp_simulator/data seed (tests guard drift).
-_REGIONS: frozenset[str] = frozenset(
-    {
-        "上海",
-        "南京",
-        "北京",
-        "天津",
-        "广州",
-        "深圳",
-        "成都",
-        "重庆",
-        "西安",
-        "兰州",
-    }
-)
 _PRODUCT_STOCK: dict[str, int] = {
     "苹果": 100,
     "香蕉": 50,
@@ -117,12 +106,13 @@ def _invalid_region(query: str) -> bool:
     A region is recognized only as a delivery verb (给/到/发往/配送到/发到)
     followed by a 2-3 char term suffixed with 地区/区域. "给华东地区" -> 华东
     (invalid, reject); valid-region deliveries carry no suffix, so "给深圳下单"
-    and "配送区域你定" are not flagged.
+    and "配送区域你定" are not flagged. The gate reads the merged runtime
+    catalog, so a region approved into vocabulary_terms stops being rejected.
     """
     match = _REGION_TARGET_RE.search(query)
     if match is None:
         return False
-    return match.group(1) not in _REGIONS
+    return match.group(1) not in get_catalog().regions
 
 
 def _has_conflict(intent: IntentClassification, domain: str, action: str, query: str) -> bool:
