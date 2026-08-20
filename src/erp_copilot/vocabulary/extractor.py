@@ -16,13 +16,18 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 from erp_copilot.vocabulary.loader import VocabularyCatalog
 
 VocabType = Literal["product", "region", "unit"]
+
+
+def _as_str_list(value: object) -> object:
+    """Normalize a bare string into a single-element list (LLMs drift on shape)."""
+    return [value] if isinstance(value, str) else value
 
 
 class VocabularyCandidate(BaseModel):
@@ -32,9 +37,13 @@ class VocabularyCandidate(BaseModel):
 
     canonical: str
     type: VocabType
-    aliases: list[str] = Field(default_factory=list)
+    aliases: Annotated[list[str], BeforeValidator(_as_str_list)] = Field(
+        default_factory=list
+    )
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    evidence: list[str] = Field(default_factory=list)
+    evidence: Annotated[list[str], BeforeValidator(_as_str_list)] = Field(
+        default_factory=list
+    )
 
 
 def normalize_unit(canonical: str, vocab_type: str) -> str:

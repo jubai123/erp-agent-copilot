@@ -118,6 +118,28 @@ class TestExtractCandidates:
         assert candidate.aliases == ["榴莲果"]
         assert candidate.evidence == ["榴莲多少钱"]
 
+    def test_string_evidence_and_aliases_normalized(self) -> None:
+        # DeepSeek drifts to a bare string for evidence/aliases instead of a
+        # list; the candidate must survive with the string wrapped, not be
+        # dropped by strict list[str] validation.
+        payload = {
+            "candidates": [
+                {
+                    "canonical": "武汉",
+                    "type": "region",
+                    "confidence": 1.0,
+                    "aliases": "武汉",
+                    "evidence": "武汉有哪些供应商",
+                }
+            ]
+        }
+        (candidate,) = extract_candidates(
+            _stub(payload), ["武汉有哪些供应商"], _CATALOG, _KNOWN
+        )
+        assert candidate.canonical == "武汉"
+        assert candidate.aliases == ["武汉"]
+        assert candidate.evidence == ["武汉有哪些供应商"]
+
 
 class TestHelpers:
     def test_normalize_unit_only_uppercases_units(self) -> None:
