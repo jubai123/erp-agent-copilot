@@ -108,6 +108,7 @@ def persist_run(
     run: Run,
     final: AgentState,
     reconciler: Callable[[AgentState], list[StepReconciliation]] | None = None,
+    vocabulary_capture: Callable[[Run, str, AgentState], None] | None = None,
 ) -> str:
     """Map the terminal AgentState onto the Run row and RunStep rows.
 
@@ -120,6 +121,11 @@ def persist_run(
     *reconciler*, when injected, verifies each executed write step against the
     ERP's actual state (task 7.11) and records the verdict on the reconciliation
     metric — after the commit lands, so the counter only reflects persisted runs.
+
+    *vocabulary_capture*, when injected, records an OOV query observation for
+    the LLM-driven vocabulary pipeline. It runs *before* the commit so the row
+    rides the run's transaction: it commits atomically with the run, or rolls
+    back with it.
     """
     fresh = session.query(Run).filter_by(id=run.id).first()
     if fresh is None or fresh.status == "CANCELLED":
@@ -161,13 +167,18 @@ def persist_run(
                 completed_at=result.finished_at if result else None,
             )
         )
+    # The tier label comes from the same pure route_query_layer the graph
+    # routes on (task 7.6). Computed before the commit so the vocabulary
+    # capture hook can ride the run's transaction, and reused by the per-tier
+    # counters below.
+    tier = route_query_layer(final.query)
+    if vocabulary_capture is not None:
+        vocabulary_capture(run, tier, final)
     session.commit()
     # Only a terminal run counts: a run pausing at WAITING_APPROVAL is created
     # but not yet settled, and a run cancelled while the graph ran returned
-    # early above, so neither reaches the counters here. The tier label comes
-    # from the same pure route_query_layer the graph routes on (task 7.6), so
-    # per-tier completion/failure rates stay sliceable by PromQL sum by (tier).
-    tier = route_query_layer(final.query)
+    # early above, so neither reaches the counters here. The tier label feeds
+    # per-tier completion/failure rates, sliceable by PromQL sum by (tier).
     if run.status == "COMPLETED":
         METRICS.runs_completed.labels(tier=tier).inc()
     elif run.status == "FAILED":

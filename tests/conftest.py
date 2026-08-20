@@ -64,6 +64,10 @@ os.environ["DEEPSEEK_API_KEY"] = ""
 # the offline contract (ROUTED_TIER23_NO_LLM); tests that need the enabled
 # states opt in explicitly via Settings(llm_planning_enabled=...).
 os.environ["LLM_PLANNING_ENABLED"] = "false"
+# Vocabulary LLM updates default off; pin so a developer's .env flag never
+# switches the suite into live-DB capture. setdefault (not force-set) so an
+# explicitly exported value still wins, matching the ERP_* hermeticity style.
+os.environ.setdefault("VOCABULARY_LLM_UPDATES_ENABLED", "false")
 
 
 def _ensure_test_database(url: str) -> str:

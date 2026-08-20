@@ -34,6 +34,7 @@ from erp_copilot.domain.entities import Run
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.memory.checkpoint import CheckpointSaver
 from erp_copilot.observability.metrics import METRICS
+from erp_copilot.vocabulary.capture import build_vocabulary_capture
 
 logger = get_task_logger(__name__)
 
@@ -168,6 +169,7 @@ def execute_run(
             run,
             final,
             reconciler=build_terminal_reconciler(executor),
+            vocabulary_capture=build_vocabulary_capture(session, settings),
         )
         logger.info("Run %s finished with status %s", run_id, status)
         return {"status": status, "run_id": run.id}

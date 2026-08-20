@@ -111,6 +111,24 @@ class Settings(BaseSettings):
             "falling offline."
         ),
     )
+    vocabulary_llm_updates_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable the LLM-driven vocabulary pipeline: capture OOV queries, "
+            "batch-extract candidates, human approve, merge into the runtime "
+            "catalog. Only entity catalogs (products/regions/units) are "
+            "LLM-mutable; intent rules and status maps stay deterministic. "
+            "When off, manifest.yaml is the sole source for the entity catalogs."
+        ),
+    )
+    vocabulary_cache_ttl_s: float = Field(
+        default=60.0,
+        ge=0.0,
+        description=(
+            "TTL in seconds for the merged vocabulary catalog cache; 0 means "
+            "refresh only on restart or explicit loader.invalidate()."
+        ),
+    )
 
     @model_validator(mode="after")
     def _require_pepper_in_api_key_mode(self) -> Settings:
