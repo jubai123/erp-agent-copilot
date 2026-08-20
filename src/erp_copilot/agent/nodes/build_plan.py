@@ -2,7 +2,7 @@
 
 Turns the constrained inputs into a :class:`Plan` by prompting the LLM once.
 The input is deliberately small: intent-filtered tool candidates (3-8, never
-the full registry), L1 active skills (hard constraints) and L2 retrieved
+the full registry), L1 active rules (hard constraints) and L2 retrieved
 knowledge (reference), assembled in the injection order
 System → L1 → L2 → candidates → user query (docs/03 section 4).
 
@@ -10,7 +10,7 @@ The planner only emits a Plan DAG; it never calls a tool. Two deterministic
 guards wrap the LLM output: parse_plan_response validates the JSON against the
 strict Plan schema (extra="forbid" — a wayward plan cannot silently corrupt the
 run), and reject_l1_violations drops steps that break a hard L1 rule. The only
-injected dependency is the LLM callable; candidate filtering and skill matching
+injected dependency is the LLM callable; candidate filtering and rule matching
 are deterministic pure functions the node calls directly.
 """
 
@@ -26,7 +26,7 @@ from pydantic import ValidationError
 from erp_copilot.agent.planner import WRITE_TOOLS, stamp_idempotency_keys
 from erp_copilot.agent.skill_catalog import AgentSkill, load_agent_skills
 from erp_copilot.agent.state import AgentState, Plan, PlanStep, RetrievedDocument, StateError
-from erp_copilot.retrieval.skill_matcher import match_skills
+from erp_copilot.retrieval.rule_matcher import match_rules
 from erp_copilot.tools.candidate_filter import filter_candidates
 
 if TYPE_CHECKING:
@@ -107,7 +107,7 @@ def _render_candidate_tool(
 def build_planner_prompt(
     *,
     query: str,
-    active_skills: list[dict[str, Any]],
+    active_rules: list[dict[str, Any]],
     retrieved_context: list[RetrievedDocument],
     candidate_tools: list[str],
     system: str = SYSTEM_PROMPT,
@@ -128,8 +128,8 @@ def build_planner_prompt(
     basis) inline; a candidate the catalog does not cover falls back to the
     bare format.
     """
-    skills_block = "\n".join(
-        f"- {skill.get('skill_id', 'skill')}: {skill.get('content', '')}" for skill in active_skills
+    rules_block = "\n".join(
+        f"- {rule.get('rule_id', 'rule')}: {rule.get('content', '')}" for rule in active_rules
     )
     knowledge_block = "\n".join(f"- [{doc.source}] {doc.content}" for doc in retrieved_context)
     if tool_schemas or skill_catalog:
@@ -144,7 +144,7 @@ def build_planner_prompt(
         tools_block = "\n".join(f"- {tool}" for tool in candidate_tools)
     sections = [
         system,
-        "## L1 硬约束规则\n" + skills_block,
+        "## L1 硬约束规则\n" + rules_block,
         "## L2 Retrieved Knowledge（参考）\n" + knowledge_block,
         "## Available Tools（候选）\n" + tools_block,
         "## User Query\n\n" + query,
@@ -222,16 +222,16 @@ def _parse_transition_side(side: str) -> str | None:
     return None
 
 
-def _extract_forbidden_transitions(skills: list[dict[str, Any]]) -> set[tuple[str, str]]:
-    """Parse "非法转换（必须拒绝）" bullets from L1 skill content.
+def _extract_forbidden_transitions(rules: list[dict[str, Any]]) -> set[tuple[str, str]]:
+    """Parse "非法转换（必须拒绝）" bullets from L1 rule content.
 
-    Reads the order-state-machine skill's forbidden block into (source, target)
+    Reads the order-state-machine rule's forbidden block into (source, target)
     pairs, where "*" stands for "任何状态". Data-driven — build_plan does not
     hardcode the state machine.
     """
     transitions: set[tuple[str, str]] = set()
-    for skill in skills:
-        content = skill.get("content", "")
+    for rule in rules:
+        content = rule.get("content", "")
         if "非法转换" not in content:
             continue
         for line in content.splitlines():
@@ -249,7 +249,7 @@ def _extract_forbidden_transitions(skills: list[dict[str, Any]]) -> set[tuple[st
 
 def reject_l1_violations(
     plan: Plan,
-    active_skills: list[dict[str, Any]],
+    active_rules: list[dict[str, Any]],
 ) -> tuple[Plan, list[StateError]]:
     """Drop steps that violate a hard L1 rule; report them as StateErrors.
 
@@ -257,7 +257,7 @@ def reject_l1_violations(
     state is unknown until execution, so "X → 任何状态" transitions are left to
     the verify_results layer (defence layer 4).
     """
-    forbidden = _extract_forbidden_transitions(active_skills)
+    forbidden = _extract_forbidden_transitions(active_rules)
     if not forbidden:
         return plan, []
 
@@ -290,7 +290,7 @@ _SKILL_CATALOG_CACHE: dict[str, AgentSkill] | None = None
 def _get_skill_catalog() -> dict[str, AgentSkill]:
     """Load the on-disk skill catalog once, keyed by tool name.
 
-    Mirrors skill_matcher's module-level cache so the per-request build_plan
+    Mirrors rule_matcher's module-level cache so the per-request build_plan
     node never re-reads the SKILL.md files. Keyed by tool (not skill name) so
     the prompt renders a description for every candidate tool in O(1).
     """
@@ -311,7 +311,7 @@ def build_plan_node(
     """Build the build_plan LangGraph node with an injected LLM callable.
 
     The app wires *llm_complete* to a real provider (OpenAI-compatible);
-    tests substitute a stub. Candidate filtering and L1 skill matching are
+    tests substitute a stub. Candidate filtering and L1 rule matching are
     deterministic pure functions called directly here.
 
     *tool_schemas* mirrors the validator's ToolSpec map so the prompt can state
@@ -332,11 +332,11 @@ def build_plan_node(
     def plan_node(state: AgentState) -> dict[str, Any]:
         domain = state.intent.domain if state.intent else ""
         action = state.intent.action if state.intent else ""
-        skills = match_skills(domain, action)
+        rules = match_rules(domain, action)
         candidates = filter_candidates(domain, action, available_tools)
         prompt = build_planner_prompt(
             query=state.query,
-            active_skills=skills,
+            active_rules=rules,
             retrieved_context=state.retrieved_context,
             candidate_tools=candidates,
             system=system,
@@ -349,7 +349,7 @@ def build_plan_node(
             return {
                 "plan": None,
                 "candidate_tools": candidates,
-                "active_skills": skills,
+                "active_rules": rules,
                 "errors": [
                     StateError(
                         code="PLAN_PARSE_ERROR", message=f"LLM 输出无法解析为合法 Plan: {exc}"
@@ -357,13 +357,13 @@ def build_plan_node(
                 ],
             }
 
-        filtered_plan, l1_errors = reject_l1_violations(plan, skills)
+        filtered_plan, l1_errors = reject_l1_violations(plan, rules)
         filtered_plan = _promote_step_ref_values(filtered_plan)
         filtered_plan = stamp_idempotency_keys(filtered_plan, state.run_id)
         updates: dict[str, Any] = {
             "plan": filtered_plan,
             "candidate_tools": candidates,
-            "active_skills": skills,
+            "active_rules": rules,
         }
         if l1_errors:
             updates["errors"] = l1_errors

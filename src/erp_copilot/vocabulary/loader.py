@@ -8,7 +8,7 @@ consumers read get_catalog() so a manifest change propagates instead of divergin
 
 get_catalog() merges the manifest seed with approved vocabulary_terms rows when
 the LLM-driven pipeline is enabled (vocabulary_llm_updates_enabled). The
-module-level lazy cache mirrors skill_matcher's pattern: with the flag off the
+module-level lazy cache mirrors rule_matcher's pattern: with the flag off the
 catalog loads once per process and is dropped only by invalidate(); with the
 flag on it also rebuilds on a TTL so approved terms reach the runtime without a
 restart. A missing DB or not-yet-run migration degrades gracefully to the seed.

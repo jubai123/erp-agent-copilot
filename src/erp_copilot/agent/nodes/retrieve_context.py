@@ -8,7 +8,7 @@ It fuses vector + keyword hits via RRF (Phase 3.8), threads the run's
 tenant_id into both backends so cross-tenant knowledge can never leak, and
 writes RetrievedDocument objects — citation source, section path and RRF
 score — into state.retrieved_context. build_plan (task 4.6) injects these as
-L2 reference knowledge after the L1 hard-constraint skills.
+L2 reference knowledge after the L1 hard-constraint rules.
 
 The search backends are injected callables so the node is unit-testable
 without a database; the app wires them to search_similar / keyword_search.

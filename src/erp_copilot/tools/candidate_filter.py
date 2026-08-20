@@ -5,7 +5,7 @@ shrinking the build_plan LLM's choice space from 25 to 3-5 tools.
 Second level (reserved, not implemented): vector recall + rerank, enabled
 only when candidates exceed the threshold.
 
-The intent keys MUST match intent_skill_map.yaml — L1 skill injection and
+The intent keys MUST match intent_rule_map.yaml — L1 rule injection and
 tool filtering share one intent taxonomy.
 
 V5's 25-tool two-stage design (vector recall + rerank as the only engine)
@@ -31,7 +31,7 @@ V6_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
-# Intent keys mirror datasets/knowledge/skills/intent_skill_map.yaml.
+# Intent keys mirror datasets/knowledge/rules/intent_rule_map.yaml.
 DOMAIN_TOOL_MAP: dict[tuple[str, str], list[str]] = {
     ("product", "query"): [
         "getProductByName",

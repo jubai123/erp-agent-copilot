@@ -3,7 +3,7 @@
 Maps a natural-language query to a structured (domain, action) intent with an
 initial risk level and explicit entities (docs/03 §4).  Deterministic by the
 ADR rule "确定性优先，概率兜底": the (domain, action) output feeds two
-downstream deterministic layers — skill_matcher (L1 skill injection) and
+downstream deterministic layers — rule_matcher (L1 rule injection) and
 candidate_filter (tool candidate filtering) — both of which require exact key
 hits, so a probabilistic classifier here would break their 100%-hit promise.
 
@@ -47,7 +47,7 @@ _STATUS_MAP: tuple[tuple[str, str], ...] = (
 )
 
 # Intent rules in priority order — first match wins.  Keys stay in sync with
-# datasets/knowledge/skills/intent_skill_map.yaml and candidate_filter.
+# datasets/knowledge/rules/intent_rule_map.yaml and candidate_filter.
 _INTENT_RULES: tuple[tuple[tuple[str, ...], str, str, ToolRiskLevel], ...] = (
     (("权限", "脱敏", "数据访问"), "security", "data_access", ToolRiskLevel.DANGEROUS),
     (("场景",), "system", "scenario", ToolRiskLevel.READ),

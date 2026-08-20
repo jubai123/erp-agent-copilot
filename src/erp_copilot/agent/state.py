@@ -221,7 +221,7 @@ class AgentState(_StrictModel):
     status: AgentStatus = AgentStatus.QUEUED
 
     intent: IntentClassification | None = None
-    active_skills: list[dict[str, Any]] = Field(default_factory=list)
+    active_rules: list[dict[str, Any]] = Field(default_factory=list)
     retrieved_context: list[RetrievedDocument] = Field(default_factory=list)
     candidate_tools: list[str] = Field(default_factory=list)
 
