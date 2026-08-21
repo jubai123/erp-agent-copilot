@@ -90,6 +90,8 @@ WRITE_TOOLS: frozenset[str] = frozenset(
 _SUCCESS_CONDITION_TEMPLATES: dict[str, str] = {
     _PRODUCT_BY_NAME: "response.name == {name!r}",
     _PRODUCT_BY_ID: "response.product_id == {product_id!r}",
+    _SUPPLIER_BY_NAME: "response.name == {name!r}",
+    _SUPPLIER_BY_ID: "response.supplier_id == {supplier_id!r}",
     _ORDER_BY_ID: "response.order_id == {order_id!r}",
     # createOrder: amount (not status) stays stable across the simulator and
     # the cloud ERP (cloud order status is an unnormalised field), and a real

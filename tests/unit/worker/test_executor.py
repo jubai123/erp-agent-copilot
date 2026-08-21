@@ -165,6 +165,62 @@ class TestSupplierRead:
         assert result.data == {"suppliers": []}
 
 
+class TestGetSupplierByName:
+    def test_lookup_by_name_returns_flat_supplier(self) -> None:
+        result = _run("getSupplierByName", {"name": "华东物流"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        # A single-supplier lookup returns a flat dict (mirrors getProductById),
+        # not the {"suppliers": [...]} envelope the set-query tools use.
+        assert result.data["supplier_id"] == 3
+        assert result.data["name"] == "华东物流"
+        assert result.data["regions"] == ["上海", "南京"]
+        assert result.data["status"] == "AVAILABLE"
+
+    def test_unknown_name_is_supplier_not_found(self) -> None:
+        result = _run("getSupplierByName", {"name": "不存在供应商"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "SUPPLIER_NOT_FOUND"
+        assert result.error.is_retryable is False
+
+    def test_missing_name_is_invalid_argument(self) -> None:
+        result = _run("getSupplierByName", {})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+
+class TestGetSupplierById:
+    def test_lookup_by_id_returns_flat_supplier(self) -> None:
+        result = _run("getSupplierById", {"supplier_id": 3})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["supplier_id"] == 3
+        assert result.data["name"] == "华东物流"
+        assert result.data["regions"] == ["上海", "南京"]
+        assert result.data["status"] == "AVAILABLE"
+
+    def test_unknown_id_is_supplier_not_found(self) -> None:
+        result = _run("getSupplierById", {"supplier_id": 999})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "SUPPLIER_NOT_FOUND"
+        assert result.error.is_retryable is False
+
+    def test_missing_id_is_invalid_argument(self) -> None:
+        result = _run("getSupplierById", {})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+
 class TestErrorMapping:
     def test_timeout_scenario_fails_create_order_retryable(self, monkeypatch) -> None:
         import apps.erp_simulator.scenarios as _scenarios

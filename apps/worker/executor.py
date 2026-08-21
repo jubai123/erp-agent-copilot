@@ -36,7 +36,7 @@ from apps.erp_simulator.data.products import (
     get_products_by_id_range,
     get_substitutes,
 )
-from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS
+from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS, SUPPLIER_BY_ID, SUPPLIER_BY_NAME
 from apps.erp_simulator.scenarios import get_scenario
 from apps.worker.mcp_executor import build_mcp_executor
 from erp_copilot.infrastructure.config import Settings
@@ -73,6 +73,10 @@ async def erp_simulator_executor(tool_name: str, arguments: dict[str, Any]) -> T
         return _get_suppliers(arguments)
     if tool_name == "querySuppliersByDeliveryRegion":
         return _query_suppliers_by_region(arguments)
+    if tool_name == "getSupplierByName":
+        return _get_supplier_by_name(arguments)
+    if tool_name == "getSupplierById":
+        return _get_supplier_by_id(arguments)
     if tool_name == "createOrder":
         return _create_order(arguments)
     if tool_name == "getOrderByOrderId":
@@ -219,6 +223,57 @@ def _query_suppliers_by_region(arguments: dict[str, Any]) -> ToolResult:
         tool_version_id="querySuppliersByDeliveryRegion",
         data=_suppliers_data(matches),
     )
+
+
+def _supplier_data(supplier: Any) -> dict[str, Any]:
+    """Serialize a single supplier flat (mirrors the per-item shape in
+    ``_suppliers_data``, but without the ``{"suppliers": [...]}`` envelope) so a
+    single-supplier lookup reads like getProductById reads a product."""
+    return {
+        "supplier_id": supplier.supplier_id,
+        "name": supplier.name,
+        "regions": list(supplier.regions),
+        "status": supplier.status,
+        "rating": supplier.rating,
+        "delivery_days": supplier.delivery_days,
+        "price_per_kg": supplier.price_per_kg,
+    }
+
+
+def _get_supplier_by_name(arguments: dict[str, Any]) -> ToolResult:
+    name = arguments.get("name")
+    if not isinstance(name, str):
+        return ToolResult.failure(
+            tool_version_id="getSupplierByName",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"name 必须为字符串，got {name!r}",
+        )
+    supplier = SUPPLIER_BY_NAME.get(name)
+    if supplier is None:
+        return ToolResult.failure(
+            tool_version_id="getSupplierByName",
+            error_code="SUPPLIER_NOT_FOUND",
+            error_message=f"Supplier '{name}' not found",
+        )
+    return ToolResult.success(tool_version_id="getSupplierByName", data=_supplier_data(supplier))
+
+
+def _get_supplier_by_id(arguments: dict[str, Any]) -> ToolResult:
+    supplier_id = arguments.get("supplier_id")
+    if not isinstance(supplier_id, int):
+        return ToolResult.failure(
+            tool_version_id="getSupplierById",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"supplier_id 必须为整数，got {supplier_id!r}",
+        )
+    supplier = SUPPLIER_BY_ID.get(supplier_id)
+    if supplier is None:
+        return ToolResult.failure(
+            tool_version_id="getSupplierById",
+            error_code="SUPPLIER_NOT_FOUND",
+            error_message=f"Supplier with id {supplier_id!r} not found",
+        )
+    return ToolResult.success(tool_version_id="getSupplierById", data=_supplier_data(supplier))
 
 
 def _suppliers_data(matches: list[Any]) -> dict[str, Any]:

@@ -68,3 +68,7 @@ SEED_SUPPLIERS: list[Supplier] = [
         price_per_kg=0.9,
     ),
 ]
+
+# Fast lookup index built from the seed list
+SUPPLIER_BY_NAME: dict[str, Supplier] = {s.name: s for s in SEED_SUPPLIERS}
+SUPPLIER_BY_ID: dict[int, Supplier] = {s.supplier_id: s for s in SEED_SUPPLIERS}
