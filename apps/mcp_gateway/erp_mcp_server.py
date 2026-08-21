@@ -14,7 +14,9 @@ analogue of ToolResult.failure. Note: MCP has no retry signal, so the
 executor's is_retryable flag is not carried across the boundary; a client sees
 a permanent-looking is_error (the error_code is embedded in the message).
 
-createOrder is only registered when ``create_order_enabled`` — MCP has no
+createOrder is only registered when ``create_order_enabled`` and the catalog
+maintenance/delete tools (addProduct, addSuppliers, updateProduct*,
+removeProduct*, deleteSupplier*) only when ``maintenance_enabled`` — MCP has no
 "disabled tool" state, so gating means not advertising the write path at all
 (omit, not reject). Default off: reads are safe; writes need an explicit
 operator decision because a real cloud order cannot be deleted.
@@ -59,12 +61,15 @@ def build_erp_mcp_server(
     executor: _Executor,
     *,
     create_order_enabled: bool = False,
+    maintenance_enabled: bool = False,
 ) -> MCPServer:
     """Build an MCPServer exposing the cloud ERP tools over MCP.
 
     *executor* is the ``(tool_name, arguments) -> ToolResult`` seam — production
     passes ``build_erp_http_executor(...)``; tests inject a stub or let respx
-    mock the cloud. ``create_order_enabled`` gates the write tool (omit when off).
+    mock the cloud. ``create_order_enabled`` gates the order write tools and
+    ``maintenance_enabled`` gates the catalog maintenance/delete tools (both
+    omit when off — MCP has no disabled-tool state).
     """
     server = MCPServer(
         name="erp-cloud",
@@ -196,6 +201,126 @@ def build_erp_mcp_server(
                 )
             )
 
+    if maintenance_enabled:
+
+        @server.tool(name="addProduct")
+        async def add_product_tool(
+            idempotency_key: str,
+            name: str,
+            price: float,
+            quantity_in_stock: int,
+            description: str = "",
+        ) -> dict[str, Any]:
+            """Add a product to the catalog (gated write, DANGEROUS delete)."""
+            return _result_to_mcp(
+                await executor(
+                    "addProduct",
+                    {
+                        "idempotency_key": idempotency_key,
+                        "name": name,
+                        "price": price,
+                        "quantity_in_stock": quantity_in_stock,
+                        "description": description,
+                    },
+                )
+            )
+
+        @server.tool(name="addSuppliers")
+        async def add_suppliers_tool(
+            idempotency_key: str,
+            name: str,
+            regions: list[str],
+            status: str = "AVAILABLE",
+        ) -> dict[str, Any]:
+            """Add a supplier to the catalog (gated write)."""
+            return _result_to_mcp(
+                await executor(
+                    "addSuppliers",
+                    {
+                        "idempotency_key": idempotency_key,
+                        "name": name,
+                        "regions": regions,
+                        "status": status,
+                    },
+                )
+            )
+
+        @server.tool(name="updateProductDescription")
+        async def update_product_description_tool(
+            idempotency_key: str, product_id: int, description: str
+        ) -> dict[str, Any]:
+            """Update a product's description (gated write)."""
+            return _result_to_mcp(
+                await executor(
+                    "updateProductDescription",
+                    {
+                        "idempotency_key": idempotency_key,
+                        "product_id": product_id,
+                        "description": description,
+                    },
+                )
+            )
+
+        @server.tool(name="updateProductSubstitutes")
+        async def update_product_substitutes_tool(
+            idempotency_key: str, product_id: int, substitute_name: str
+        ) -> dict[str, Any]:
+            """Point a product at a substitute by name (gated write)."""
+            return _result_to_mcp(
+                await executor(
+                    "updateProductSubstitutes",
+                    {
+                        "idempotency_key": idempotency_key,
+                        "product_id": product_id,
+                        "substitute_name": substitute_name,
+                    },
+                )
+            )
+
+        @server.tool(name="removeProductByName")
+        async def remove_product_by_name_tool(idempotency_key: str, name: str) -> dict[str, Any]:
+            """Remove a product by name (gated DANGEROUS delete)."""
+            return _result_to_mcp(
+                await executor(
+                    "removeProductByName",
+                    {"idempotency_key": idempotency_key, "name": name},
+                )
+            )
+
+        @server.tool(name="removeProductById")
+        async def remove_product_by_id_tool(
+            idempotency_key: str, product_id: int
+        ) -> dict[str, Any]:
+            """Remove a product by id (gated DANGEROUS delete)."""
+            return _result_to_mcp(
+                await executor(
+                    "removeProductById",
+                    {"idempotency_key": idempotency_key, "product_id": product_id},
+                )
+            )
+
+        @server.tool(name="deleteSupplierByName")
+        async def delete_supplier_by_name_tool(idempotency_key: str, name: str) -> dict[str, Any]:
+            """Delete a supplier by name (gated DANGEROUS delete)."""
+            return _result_to_mcp(
+                await executor(
+                    "deleteSupplierByName",
+                    {"idempotency_key": idempotency_key, "name": name},
+                )
+            )
+
+        @server.tool(name="deleteSupplierById")
+        async def delete_supplier_by_id_tool(
+            idempotency_key: str, supplier_id: int
+        ) -> dict[str, Any]:
+            """Delete a supplier by id (gated DANGEROUS delete)."""
+            return _result_to_mcp(
+                await executor(
+                    "deleteSupplierById",
+                    {"idempotency_key": idempotency_key, "supplier_id": supplier_id},
+                )
+            )
+
     @server.tool(name="getOrderByOrderId")
     async def get_order_by_order_id(order_id: str) -> dict[str, Any]:
         """Return an order by its order_id (real ERP)."""
@@ -230,9 +355,9 @@ def build_erp_mcp_app(settings: Settings) -> Starlette:
     """Return the ASGI app serving the cloud-ERP MCP server over Streamable HTTP.
 
     Reads the cloud ERP credentials from Settings: ``erp_api_base_url`` /
-    ``erp_api_key`` (X-API-Key header) and the ``erp_mcp_create_order_enabled``
-    write gate. An empty base URL yields a server whose tools fail — the
-    operator must configure the cloud endpoint.
+    ``erp_api_key`` (X-API-Key header) and the ``erp_mcp_create_order_enabled`` /
+    ``erp_mcp_maintenance_enabled`` write gates. An empty base URL yields a
+    server whose tools fail — the operator must configure the cloud endpoint.
     """
     executor = build_erp_http_executor(
         settings.erp_api_base_url,
@@ -241,6 +366,7 @@ def build_erp_mcp_app(settings: Settings) -> Starlette:
     return build_erp_mcp_server(
         executor,
         create_order_enabled=settings.erp_mcp_create_order_enabled,
+        maintenance_enabled=settings.erp_mcp_maintenance_enabled,
     ).streamable_http_app(streamable_http_path=MCP_PATH, host=HOST)
 
 

@@ -33,25 +33,6 @@ from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
 _BASE_URL = "http://121.43.198.13:8080"
 _API_KEY = "test-key"
 
-_ALL_TOOLS = [
-    "getProductByName",
-    "getProductById",
-    "getProductSubstitutes",
-    "getProductSubstitutesByName",
-    "getBatchProductByProductIds",
-    "getSupplierByStatus",
-    "querySuppliersByDeliveryRegion",
-    "getSupplierByName",
-    "getSupplierById",
-    "createOrder",
-    "updateOrderStatus",
-    "cancelOrder",
-    "getOrderByOrderId",
-    "getOrdersBySupplierId",
-    "getByProductId",
-    "getByOrderStatus",
-    "getByTimeRange",
-]
 _READ_TOOLS = [
     "getProductByName",
     "getProductById",
@@ -68,6 +49,18 @@ _READ_TOOLS = [
     "getByOrderStatus",
     "getByTimeRange",
 ]
+_ORDER_WRITE_TOOLS = ["createOrder", "updateOrderStatus", "cancelOrder"]
+_MAINTENANCE_TOOLS = [
+    "addProduct",
+    "addSuppliers",
+    "updateProductDescription",
+    "updateProductSubstitutes",
+    "removeProductByName",
+    "removeProductById",
+    "deleteSupplierByName",
+    "deleteSupplierById",
+]
+_ALL_TOOLS = [*_READ_TOOLS, *_ORDER_WRITE_TOOLS, *_MAINTENANCE_TOOLS]
 
 
 def _free_port() -> int:
@@ -117,13 +110,14 @@ def _run_in_one_loop(coro) -> Any:
     return asyncio.run(coro)
 
 
-def _settings(*, create_order_enabled: bool = True) -> Settings:
+def _settings(*, create_order_enabled: bool = True, maintenance_enabled: bool = True) -> Settings:
     return Settings(
         database_url="postgresql://localhost/test",
         llm_api_key="sk-test",
         erp_api_base_url=_BASE_URL,
         erp_api_key=_API_KEY,
         erp_mcp_create_order_enabled=create_order_enabled,
+        erp_mcp_maintenance_enabled=maintenance_enabled,
     )
 
 
@@ -147,12 +141,17 @@ def _serve(settings: Settings) -> Iterator[str]:
 
 @pytest.fixture()
 def erp_mcp_url() -> Iterator[str]:
-    yield from _serve(_settings(create_order_enabled=True))
+    yield from _serve(_settings(create_order_enabled=True, maintenance_enabled=True))
 
 
 @pytest.fixture()
 def erp_mcp_url_gated() -> Iterator[str]:
-    yield from _serve(_settings(create_order_enabled=False))
+    yield from _serve(_settings(create_order_enabled=False, maintenance_enabled=False))
+
+
+@pytest.fixture()
+def erp_mcp_url_maintenance_gated() -> Iterator[str]:
+    yield from _serve(_settings(create_order_enabled=True, maintenance_enabled=False))
 
 
 def _connect(url: str) -> MCPGatewayConnection:
@@ -182,9 +181,7 @@ class TestRealTransportRoundTrip:
             try:
                 tools = await conn.list_tools()
                 product = await conn.execute_tool("getProductByName", {"name": "苹果"})
-                suppliers = await conn.execute_tool(
-                    "getSupplierByStatus", {"status": "AVAILABLE"}
-                )
+                suppliers = await conn.execute_tool("getSupplierByStatus", {"status": "AVAILABLE"})
                 order = await conn.execute_tool(
                     "createOrder",
                     {
@@ -195,9 +192,7 @@ class TestRealTransportRoundTrip:
                         "region": "上海",
                     },
                 )
-                readback = await conn.execute_tool(
-                    "getOrderByOrderId", {"order_id": "120562"}
-                )
+                readback = await conn.execute_tool("getOrderByOrderId", {"order_id": "120562"})
                 return tools, product, suppliers, order, readback, conn
             finally:
                 await conn.disconnect()
@@ -265,13 +260,12 @@ class TestRealTransportRoundTrip:
                     },
                 )
             )
-            tools, product, suppliers, order, readback, conn = _run_in_one_loop(
-                exercise()
-            )
+            tools, product, suppliers, order, readback, conn = _run_in_one_loop(exercise())
 
         # Torn down inside the loop: the session and transport are closed.
         assert conn.is_connected is False
-        assert tools == _ALL_TOOLS
+        assert len(tools) == 25
+        assert set(tools) == set(_ALL_TOOLS)
         # getProductByName: camelCase normalized back to the simulator's shape.
         assert product.structured_content == {
             "product_id": 10094,
@@ -338,6 +332,34 @@ class TestCreateOrderGate:
         tools, err, conn = _run_in_one_loop(exercise())
 
         assert tools == _READ_TOOLS
+        assert err.is_error is True
+        assert "Unknown tool" in err.content[0].text
+
+    def test_maintenance_tools_omitted_when_gated_off(
+        self, erp_mcp_url_maintenance_gated: str
+    ) -> None:
+        async def exercise() -> tuple[list[str], Any, MCPGatewayConnection]:
+            conn = _connect(erp_mcp_url_maintenance_gated)
+            await conn.connect()
+            try:
+                tools = await conn.list_tools()
+                err = await conn.execute_tool(
+                    "addProduct",
+                    {
+                        "idempotency_key": "k-456",
+                        "name": "测试产品",
+                        "price": 9.9,
+                        "quantity_in_stock": 10,
+                    },
+                )
+                return tools, err, conn
+            finally:
+                await conn.disconnect()
+
+        tools, err, conn = _run_in_one_loop(exercise())
+
+        assert len(tools) == 17
+        assert set(tools) == {*_READ_TOOLS, *_ORDER_WRITE_TOOLS}
         assert err.is_error is True
         assert "Unknown tool" in err.content[0].text
 

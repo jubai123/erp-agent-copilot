@@ -43,10 +43,21 @@ from apps.erp_simulator.data.orders import (
 from apps.erp_simulator.data.products import (
     PRODUCT_BY_ID,
     PRODUCT_BY_NAME,
+    add_product,
     get_products_by_id_range,
     get_substitutes,
+    remove_product_by_id,
+    remove_product_by_name,
+    update_product_description,
+    update_product_substitutes,
 )
-from apps.erp_simulator.data.suppliers import SUPPLIER_BY_ID, SUPPLIER_BY_NAME
+from apps.erp_simulator.data.suppliers import (
+    SUPPLIER_BY_ID,
+    SUPPLIER_BY_NAME,
+    add_supplier,
+    delete_supplier_by_id,
+    delete_supplier_by_name,
+)
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -275,6 +286,101 @@ def build_demo_server() -> MCPServer:
         if order is None:
             raise ValueError(f"Order '{order_id}' not found")
         return _order_to_dict(order)
+
+    @server.tool(name="addProduct")
+    def add_product_tool(
+        idempotency_key: str,
+        name: str,
+        price: float,
+        quantity_in_stock: int,
+        description: str = "",
+    ) -> dict[str, Any]:
+        """Add a product at-most-once per idempotency_key (mirrors the executor)."""
+        if not idempotency_key:
+            raise ValueError("idempotency_key is required (at-most-once premise)")
+        if isinstance(price, bool) or not isinstance(price, (int, float)):
+            raise ValueError(f"price must be a number, got {price!r}")
+        if isinstance(quantity_in_stock, bool) or not isinstance(quantity_in_stock, int):
+            raise ValueError(f"quantity_in_stock must be an int, got {quantity_in_stock!r}")
+        try:
+            product = add_product(
+                name=name,
+                description=description,
+                price=price,
+                quantity_in_stock=quantity_in_stock,
+                idempotency_key=idempotency_key,
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return _product_dict(product)
+
+    @server.tool(name="addSuppliers")
+    def add_suppliers_tool(
+        idempotency_key: str, name: str, regions: list[str], status: str = "AVAILABLE"
+    ) -> dict[str, Any]:
+        """Add a supplier at-most-once per idempotency_key (mirrors the executor)."""
+        if not idempotency_key:
+            raise ValueError("idempotency_key is required (at-most-once premise)")
+        try:
+            supplier = add_supplier(name, regions, status, idempotency_key)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return _supplier_dict(supplier)
+
+    @server.tool(name="updateProductDescription")
+    def update_product_description_tool(
+        idempotency_key: str, product_id: int, description: str
+    ) -> dict[str, Any]:
+        """Update a product's description at-most-once per idempotency_key."""
+        product = update_product_description(product_id, description, idempotency_key)
+        if product is None:
+            raise ValueError(f"Product with id {product_id!r} not found")
+        return {"success": True}
+
+    @server.tool(name="updateProductSubstitutes")
+    def update_product_substitutes_tool(
+        idempotency_key: str, product_id: int, substitute_name: str
+    ) -> dict[str, Any]:
+        """Point a product at a substitute by name at-most-once per key."""
+        try:
+            product = update_product_substitutes(product_id, substitute_name, idempotency_key)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        if product is None:
+            raise ValueError(f"Product with id {product_id!r} not found")
+        return {"success": True}
+
+    @server.tool(name="removeProductByName")
+    def remove_product_by_name_tool(idempotency_key: str, name: str) -> dict[str, Any]:
+        """Remove a product by name at-most-once per idempotency_key."""
+        removed = remove_product_by_name(name, idempotency_key)
+        if removed is None:
+            raise ValueError(f"Product '{name}' not found")
+        return _product_dict(removed)
+
+    @server.tool(name="removeProductById")
+    def remove_product_by_id_tool(idempotency_key: str, product_id: int) -> dict[str, Any]:
+        """Remove a product by id at-most-once per idempotency_key."""
+        removed = remove_product_by_id(product_id, idempotency_key)
+        if removed is None:
+            raise ValueError(f"Product with id {product_id!r} not found")
+        return _product_dict(removed)
+
+    @server.tool(name="deleteSupplierByName")
+    def delete_supplier_by_name_tool(idempotency_key: str, name: str) -> dict[str, Any]:
+        """Delete a supplier by name at-most-once per idempotency_key."""
+        removed = delete_supplier_by_name(name, idempotency_key)
+        if removed is None:
+            raise ValueError(f"Supplier '{name}' not found")
+        return {"success": True}
+
+    @server.tool(name="deleteSupplierById")
+    def delete_supplier_by_id_tool(idempotency_key: str, supplier_id: int) -> dict[str, Any]:
+        """Delete a supplier by id at-most-once per idempotency_key."""
+        removed = delete_supplier_by_id(supplier_id, idempotency_key)
+        if removed is None:
+            raise ValueError(f"Supplier with id {supplier_id!r} not found")
+        return {"success": True}
 
     @server.tool(name="getOrderByOrderId")
     def get_order_by_order_id(order_id: str) -> dict[str, Any]:

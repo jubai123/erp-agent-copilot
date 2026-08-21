@@ -230,6 +230,23 @@ class Settings(BaseSettings):
         default=SecretStr(""),
         description="API key for the cloud ERP API (sent as the X-API-Key header).",
     )
+    erp_mcp_create_order_enabled: bool = Field(
+        default=False,
+        description=(
+            "Expose the cloud-ERP createOrder tool on the erp_mcp_server "
+            "(env ERP_MCP_CREATE_ORDER_ENABLED). Default off: the write path "
+            "is not advertised on the MCP server."
+        ),
+    )
+    erp_mcp_maintenance_enabled: bool = Field(
+        default=False,
+        description=(
+            "Expose the cloud-ERP catalog-maintenance tools (addProduct, "
+            "addSuppliers, updateProduct*, removeProduct*, deleteSupplier*) on "
+            "the erp_mcp_server (env ERP_MCP_MAINTENANCE_ENABLED). Default off: "
+            "the catalog write/delete paths are not advertised on the MCP server."
+        ),
+    )
     mcp_server_url: str = Field(
         default="",
         description=(
