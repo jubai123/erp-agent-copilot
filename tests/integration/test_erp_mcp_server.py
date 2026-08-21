@@ -41,6 +41,8 @@ _ALL_TOOLS = [
     "getBatchProductByProductIds",
     "getSupplierByStatus",
     "querySuppliersByDeliveryRegion",
+    "getSupplierByName",
+    "getSupplierById",
     "createOrder",
     "getOrderByOrderId",
 ]
@@ -52,6 +54,8 @@ _READ_TOOLS = [
     "getBatchProductByProductIds",
     "getSupplierByStatus",
     "querySuppliersByDeliveryRegion",
+    "getSupplierByName",
+    "getSupplierById",
     "getOrderByOrderId",
 ]
 
@@ -512,3 +516,95 @@ class TestProductReadTools:
 
         assert conn.is_connected is False
         assert [p["product_id"] for p in batch["products"]] == [10094]
+
+
+class TestSupplierReadTools:
+    """The two single-supplier read tools round-trip over real MCP + respx cloud."""
+
+    def test_by_name_round_trips(self, erp_mcp_url: str) -> None:
+        async def exercise() -> tuple[dict[str, Any], MCPGatewayConnection]:
+            conn = _connect(erp_mcp_url)
+            await conn.connect()
+            try:
+                supplier = await conn.execute_tool("getSupplierByName", {"name": "京东222"})
+                return supplier.structured_content, conn
+            finally:
+                await conn.disconnect()
+
+        with respx.mock:
+            route = respx.get(f"{_BASE_URL}/suppliers/getSupplierByName").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "supplierId": 2987,
+                        "name": "京东222",
+                        "phone": "12345678",
+                        "address": "上海",
+                        "deliveryAreas": ["上海"],
+                        "rating": 100.0,
+                        "status": "InUse",
+                    },
+                )
+            )
+            supplier, conn = _run_in_one_loop(exercise())
+
+        assert conn.is_connected is False
+        # A single-supplier lookup returns a flat dict (not the set envelope).
+        assert supplier == {
+            "supplier_id": 2987,
+            "name": "京东222",
+            "regions": ["上海"],
+            "status": "AVAILABLE",
+            "rating": 100.0,
+        }
+        assert dict(route.calls.last.request.url.params) == {"supplierName": "京东222"}
+
+    def test_by_id_round_trips(self, erp_mcp_url: str) -> None:
+        async def exercise() -> tuple[dict[str, Any], MCPGatewayConnection]:
+            conn = _connect(erp_mcp_url)
+            await conn.connect()
+            try:
+                supplier = await conn.execute_tool("getSupplierById", {"supplier_id": 2987})
+                return supplier.structured_content, conn
+            finally:
+                await conn.disconnect()
+
+        with respx.mock:
+            respx.get(f"{_BASE_URL}/suppliers/getSupplierById/2987").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "supplierId": 2987,
+                        "name": "京东222",
+                        "phone": "12345678",
+                        "address": "上海",
+                        "deliveryAreas": ["上海"],
+                        "rating": 100.0,
+                        "status": "InUse",
+                    },
+                )
+            )
+            supplier, conn = _run_in_one_loop(exercise())
+
+        assert conn.is_connected is False
+        assert supplier["supplier_id"] == 2987
+        assert supplier["name"] == "京东222"
+        assert supplier["regions"] == ["上海"]
+
+    def test_not_found_surfaces_is_error(self, erp_mcp_url: str) -> None:
+        async def exercise() -> Any:
+            conn = _connect(erp_mcp_url)
+            await conn.connect()
+            try:
+                return await conn.execute_tool("getSupplierById", {"supplier_id": 999})
+            finally:
+                await conn.disconnect()
+
+        with respx.mock:
+            respx.get(f"{_BASE_URL}/suppliers/getSupplierById/999").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            result = _run_in_one_loop(exercise())
+
+        assert result.is_error is True
+        assert "SUPPLIER_NOT_FOUND" in result.content[0].text

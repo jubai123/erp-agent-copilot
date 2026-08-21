@@ -36,7 +36,7 @@ from apps.erp_simulator.data.products import (
     get_products_by_id_range,
     get_substitutes,
 )
-from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS
+from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS, SUPPLIER_BY_ID, SUPPLIER_BY_NAME
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -52,6 +52,19 @@ def _product_dict(product: Any) -> dict[str, Any]:
         "price": product.price,
         "stock": product.quantity_in_stock,
         "unit": product.unit,
+    }
+
+
+def _supplier_dict(supplier: Any) -> dict[str, Any]:
+    """Serialize a single supplier flat, matching the simulator executor."""
+    return {
+        "supplier_id": supplier.supplier_id,
+        "name": supplier.name,
+        "regions": list(supplier.regions),
+        "status": supplier.status,
+        "rating": supplier.rating,
+        "delivery_days": supplier.delivery_days,
+        "price_per_kg": supplier.price_per_kg,
     }
 
 
@@ -161,6 +174,22 @@ def build_demo_server() -> MCPServer:
     def query_suppliers_by_delivery_region(region: str) -> dict[str, Any]:
         """Return suppliers covering *region*, with the first as ``supplier_id``."""
         return _suppliers_data([s for s in SEED_SUPPLIERS if region in s.regions])
+
+    @server.tool(name="getSupplierByName")
+    def get_supplier_by_name(name: str) -> dict[str, Any]:
+        """Return a single supplier's fields by name (mirrors the simulator executor)."""
+        supplier = SUPPLIER_BY_NAME.get(name)
+        if supplier is None:
+            raise ValueError(f"Supplier '{name}' not found")
+        return _supplier_dict(supplier)
+
+    @server.tool(name="getSupplierById")
+    def get_supplier_by_id(supplier_id: int) -> dict[str, Any]:
+        """Return a single supplier's fields by id (mirrors the simulator executor)."""
+        supplier = SUPPLIER_BY_ID.get(supplier_id)
+        if supplier is None:
+            raise ValueError(f"Supplier with id {supplier_id!r} not found")
+        return _supplier_dict(supplier)
 
     @server.tool(name="createOrder")
     def create_order_tool(

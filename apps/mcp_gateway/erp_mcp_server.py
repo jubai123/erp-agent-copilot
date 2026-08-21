@@ -127,6 +127,18 @@ def build_erp_mcp_server(
             await executor("querySuppliersByDeliveryRegion", {"region": region})
         )
 
+    @server.tool(name="getSupplierByName")
+    async def get_supplier_by_name(name: str) -> dict[str, Any]:
+        """Return a single supplier's fields by name (real ERP)."""
+        return _result_to_mcp(await executor("getSupplierByName", {"name": name}))
+
+    @server.tool(name="getSupplierById")
+    async def get_supplier_by_id(supplier_id: int) -> dict[str, Any]:
+        """Return a single supplier's fields by id (real ERP)."""
+        return _result_to_mcp(
+            await executor("getSupplierById", {"supplier_id": supplier_id})
+        )
+
     if create_order_enabled:
 
         @server.tool(name="createOrder")

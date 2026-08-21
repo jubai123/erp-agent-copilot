@@ -145,6 +145,8 @@ class TestRealTransportRoundTrip:
             "getBatchProductByProductIds",
             "getSupplierByStatus",
             "querySuppliersByDeliveryRegion",
+            "getSupplierByName",
+            "getSupplierById",
             "createOrder",
             "getOrderByOrderId",
         ]
