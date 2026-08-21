@@ -5,6 +5,7 @@ tool: getSupplierById
 required_params: [supplier_id]
 risk_level: read
 required_scope: supplier:read
+success_condition: "response.supplier_id == {supplier_id!r}"
 ---
 # 按编号查询供应商
 ## Instructions

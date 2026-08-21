@@ -5,6 +5,7 @@ tool: getSupplierByName
 required_params: [name]
 risk_level: read
 required_scope: supplier:read
+success_condition: "response.name == {name!r}"
 ---
 # 按名称查询供应商
 ## Instructions
