@@ -584,6 +584,17 @@ def _normalize_order(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_orders(payload: Any) -> dict[str, Any]:
+    """Cloud order-query result (bare array of Orders) -> {"orders": [...]}.
+
+    The cloud order carries no product_name and no idempotency_key — both are
+    omitted, mirroring ``_normalize_order``. An empty array is a legal business
+    answer ("no orders match this query"), not an error.
+    """
+    items = payload if isinstance(payload, list) else []
+    return {"orders": [_normalize_order(item) for item in items if isinstance(item, dict)]}
+
+
 def _permanent_failure(tool_version_id: str, error_code: str, error_message: str) -> ToolResult:
     return ToolResult.failure(
         tool_version_id=tool_version_id,
@@ -823,6 +834,49 @@ async def _dispatch_http(
                 tool_name, "ORDER_NOT_FOUND", f"Order '{arguments.get('order_id')!r}' not found"
             )
         return ToolResult.success(tool_version_id=tool_name, data=_normalize_order(order))
+
+    if tool_name == "getOrdersBySupplierId":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/orders/getOrdersBySupplierId",
+            headers=headers,
+            json={"supplierId": arguments["supplier_id"]},
+        )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_orders(payload))
+
+    if tool_name == "getByProductId":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/orders/getByProductId",
+            headers=headers,
+            json={"productId": arguments["product_id"]},
+        )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_orders(payload))
+
+    if tool_name == "getByOrderStatus":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/orders/getByOrderStatus",
+            headers=headers,
+            json={"status": arguments["status"]},
+        )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_orders(payload))
+
+    if tool_name == "getByTimeRange":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/orders/getByTimeRange",
+            headers=headers,
+            json={
+                "startDate": arguments["start_date"],
+                "endDate": arguments["end_date"],
+            },
+        )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_orders(payload))
 
     return ToolResult.failure(
         tool_version_id=tool_name,

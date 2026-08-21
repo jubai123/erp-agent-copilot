@@ -463,6 +463,175 @@ class TestGetOrderByOrderId:
         assert result.error.is_retryable is False
 
 
+class TestOrderQueryTools:
+    """The four order set-queries POST the V5 body and normalize the cloud's
+    bare Order array into the executor's {"orders": [...]} shape. Unlike the
+    single lookups, an empty array is a legal business answer — success, not
+    ORDER_NOT_FOUND."""
+
+    def test_get_orders_by_supplier_posts_and_normalizes(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/orders/getOrdersBySupplierId").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": 7,
+                            "orderTime": "2026-08-15T10:00:00Z",
+                            "quantity": 20,
+                            "amount": 200.0,
+                            "status": "CREATED",
+                            "supplierId": 3,
+                            "productId": 1,
+                            "orderRegion": "上海",
+                        }
+                    ],
+                )
+            )
+            result = _call("getOrdersBySupplierId", {"supplier_id": 3})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {
+            "orders": [
+                {
+                    "order_id": 7,
+                    "product_id": 1,
+                    "quantity": 20,
+                    "supplier_id": 3,
+                    "region": "上海",
+                    "amount": 200.0,
+                    "status": "CREATED",
+                    "created_at": "2026-08-15T10:00:00Z",
+                }
+            ]
+        }
+        _assert_body(route.calls.last.request, {"supplierId": 3})
+
+    def test_get_orders_by_supplier_empty_array_is_success(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/orders/getOrdersBySupplierId").mock(
+                return_value=httpx.Response(200, json=[])
+            )
+            result = _call("getOrdersBySupplierId", {"supplier_id": 999})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"orders": []}
+
+    def test_get_by_product_posts_and_normalizes(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/orders/getByProductId").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": 8,
+                            "orderTime": "2026-08-16T09:00:00Z",
+                            "quantity": 5,
+                            "amount": 50.0,
+                            "status": "已下单",
+                            "supplierId": 10,
+                            "productId": 2,
+                            "orderRegion": "广州",
+                        }
+                    ],
+                )
+            )
+            result = _call("getByProductId", {"product_id": 2})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["orders"][0]["product_id"] == 2
+        # The cloud order status is a passthrough (its own Chinese enum).
+        assert result.data["orders"][0]["status"] == "已下单"
+        _assert_body(route.calls.last.request, {"productId": 2})
+
+    def test_get_by_product_empty_array_is_success(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/orders/getByProductId").mock(
+                return_value=httpx.Response(200, json=[])
+            )
+            result = _call("getByProductId", {"product_id": 999})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"orders": []}
+
+    def test_get_by_status_posts_and_normalizes(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/orders/getByOrderStatus").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": 9,
+                            "orderTime": "2026-08-17T08:00:00Z",
+                            "quantity": 2,
+                            "amount": 20.0,
+                            "status": "已发货",
+                            "supplierId": 3,
+                            "productId": 1,
+                            "orderRegion": "上海",
+                        }
+                    ],
+                )
+            )
+            result = _call("getByOrderStatus", {"status": "SHIPPED"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["orders"][0]["status"] == "已发货"
+        _assert_body(route.calls.last.request, {"status": "SHIPPED"})
+
+    def test_get_by_status_empty_array_is_success(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/orders/getByOrderStatus").mock(
+                return_value=httpx.Response(200, json=[])
+            )
+            result = _call("getByOrderStatus", {"status": "DELIVERED"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"orders": []}
+
+    def test_get_by_time_range_posts_and_normalizes(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/orders/getByTimeRange").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": 10,
+                            "orderTime": "2026-08-18T07:00:00Z",
+                            "quantity": 3,
+                            "amount": 30.0,
+                            "status": "CREATED",
+                            "supplierId": 3,
+                            "productId": 1,
+                            "orderRegion": "上海",
+                        }
+                    ],
+                )
+            )
+            result = _call(
+                "getByTimeRange", {"start_date": "2026-08-01", "end_date": "2026-08-31"}
+            )
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["orders"][0]["order_id"] == 10
+        _assert_body(
+            route.calls.last.request, {"startDate": "2026-08-01", "endDate": "2026-08-31"}
+        )
+
+    def test_get_by_time_range_empty_array_is_success(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/orders/getByTimeRange").mock(
+                return_value=httpx.Response(200, json=[])
+            )
+            result = _call("getByTimeRange", {"start_date": "2099-01-01", "end_date": "2099-12-31"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"orders": []}
+
+
 class TestErrorMapping:
     def test_network_error_is_retryable(self) -> None:
         with respx.mock:
