@@ -43,10 +43,21 @@ from apps.erp_simulator.data.orders import (
 from apps.erp_simulator.data.products import (
     PRODUCT_BY_ID,
     PRODUCT_BY_NAME,
+    add_product,
     get_products_by_id_range,
     get_substitutes,
+    remove_product_by_id,
+    remove_product_by_name,
+    update_product_description,
+    update_product_substitutes,
 )
-from apps.erp_simulator.data.suppliers import SUPPLIER_BY_ID, SUPPLIER_BY_NAME
+from apps.erp_simulator.data.suppliers import (
+    SUPPLIER_BY_ID,
+    SUPPLIER_BY_NAME,
+    add_supplier,
+    delete_supplier_by_id,
+    delete_supplier_by_name,
+)
 from apps.erp_simulator.scenarios import get_scenario
 from apps.worker.mcp_executor import build_mcp_executor
 from erp_copilot.infrastructure.config import Settings
@@ -93,6 +104,22 @@ async def erp_simulator_executor(tool_name: str, arguments: dict[str, Any]) -> T
         return _update_order_status(arguments)
     if tool_name == "cancelOrder":
         return _cancel_order(arguments)
+    if tool_name == "addProduct":
+        return _add_product(arguments)
+    if tool_name == "addSuppliers":
+        return _add_suppliers(arguments)
+    if tool_name == "updateProductDescription":
+        return _update_product_description(arguments)
+    if tool_name == "updateProductSubstitutes":
+        return _update_product_substitutes(arguments)
+    if tool_name == "removeProductByName":
+        return _remove_product_by_name(arguments)
+    if tool_name == "removeProductById":
+        return _remove_product_by_id(arguments)
+    if tool_name == "deleteSupplierByName":
+        return _delete_supplier_by_name(arguments)
+    if tool_name == "deleteSupplierById":
+        return _delete_supplier_by_id(arguments)
     if tool_name == "getOrderByOrderId":
         return _get_order(arguments)
     if tool_name == "getOrdersBySupplierId":
@@ -489,6 +516,305 @@ def _cancel_order(arguments: dict[str, Any]) -> ToolResult:
     return ToolResult.success(tool_version_id="cancelOrder", data=_order_to_dict(order))
 
 
+def _add_product(arguments: dict[str, Any]) -> ToolResult:
+    """Add a product at-most-once per idempotency_key (mirrors the POST route).
+
+    A replay returns the recorded product without re-adding; a duplicate name is
+    a business violation (the name index is a uniqueness constraint). The
+    idempotent replay lives in the data layer, so validation happens before the
+    call — a retry sends the same arguments and replays cleanly.
+    """
+    idempotency_key = arguments.get("idempotency_key")
+    if not idempotency_key:
+        return ToolResult.failure(
+            tool_version_id="addProduct",
+            error_code="IDEMPOTENCY_KEY_REQUIRED",
+            error_message="写操作必须携带 idempotency_key（at-most-once 前提）",
+        )
+    name = arguments.get("name")
+    if not isinstance(name, str):
+        return ToolResult.failure(
+            tool_version_id="addProduct",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"name 必须为字符串，got {name!r}",
+        )
+    price = arguments.get("price")
+    quantity = arguments.get("quantity_in_stock")
+    if (
+        isinstance(price, bool)
+        or not isinstance(price, (int, float))
+        or isinstance(quantity, bool)
+        or not isinstance(quantity, int)
+        or quantity < 0
+    ):
+        return ToolResult.failure(
+            tool_version_id="addProduct",
+            error_code="INVALID_ARGUMENT",
+            error_message=(
+                f"price 必须为数字且 quantity_in_stock 必须为非负整数，"
+                f"got {price!r}/{quantity!r}"
+            ),
+        )
+    try:
+        product = add_product(
+            name=name,
+            description=arguments.get("description") or "",
+            price=price,
+            quantity_in_stock=quantity,
+            idempotency_key=idempotency_key,
+        )
+    except ValueError as exc:
+        return ToolResult.failure(
+            tool_version_id="addProduct",
+            error_code="PRODUCT_ALREADY_EXISTS",
+            error_message=str(exc),
+        )
+    return ToolResult.success(tool_version_id="addProduct", data=_product_data(product))
+
+
+def _update_product_description(arguments: dict[str, Any]) -> ToolResult:
+    """Update a product's description at-most-once per idempotency_key.
+
+    Mirrors the POST /products/updateProductDescription route; the V5 response
+    is a boolean, normalized to {"success": true}.
+    """
+    idempotency_key = arguments.get("idempotency_key")
+    if not idempotency_key:
+        return ToolResult.failure(
+            tool_version_id="updateProductDescription",
+            error_code="IDEMPOTENCY_KEY_REQUIRED",
+            error_message="写操作必须携带 idempotency_key（at-most-once 前提）",
+        )
+    product_id = arguments.get("product_id")
+    if not isinstance(product_id, int):
+        return ToolResult.failure(
+            tool_version_id="updateProductDescription",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"product_id 必须为整数，got {product_id!r}",
+        )
+    description = arguments.get("description")
+    if not isinstance(description, str):
+        return ToolResult.failure(
+            tool_version_id="updateProductDescription",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"description 必须为字符串，got {description!r}",
+        )
+    product = update_product_description(product_id, description, idempotency_key)
+    if product is None:
+        return ToolResult.failure(
+            tool_version_id="updateProductDescription",
+            error_code="PRODUCT_NOT_FOUND",
+            error_message=f"Product with id {product_id!r} not found",
+        )
+    return ToolResult.success(
+        tool_version_id="updateProductDescription", data={"success": True}
+    )
+
+
+def _update_product_substitutes(arguments: dict[str, Any]) -> ToolResult:
+    """Point a product at a substitute by name, at-most-once per idempotency_key.
+
+    Mirrors the POST /products/updateProductSubstitutes route; an unresolvable
+    substitute name is a business violation, not a silent no-op.
+    """
+    idempotency_key = arguments.get("idempotency_key")
+    if not idempotency_key:
+        return ToolResult.failure(
+            tool_version_id="updateProductSubstitutes",
+            error_code="IDEMPOTENCY_KEY_REQUIRED",
+            error_message="写操作必须携带 idempotency_key（at-most-once 前提）",
+        )
+    product_id = arguments.get("product_id")
+    if not isinstance(product_id, int):
+        return ToolResult.failure(
+            tool_version_id="updateProductSubstitutes",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"product_id 必须为整数，got {product_id!r}",
+        )
+    substitute_name = arguments.get("substitute_name")
+    if not isinstance(substitute_name, str):
+        return ToolResult.failure(
+            tool_version_id="updateProductSubstitutes",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"substitute_name 必须为字符串，got {substitute_name!r}",
+        )
+    try:
+        product = update_product_substitutes(product_id, substitute_name, idempotency_key)
+    except ValueError as exc:
+        return ToolResult.failure(
+            tool_version_id="updateProductSubstitutes",
+            error_code="SUBSTITUTE_NOT_FOUND",
+            error_message=str(exc),
+        )
+    if product is None:
+        return ToolResult.failure(
+            tool_version_id="updateProductSubstitutes",
+            error_code="PRODUCT_NOT_FOUND",
+            error_message=f"Product with id {product_id!r} not found",
+        )
+    return ToolResult.success(
+        tool_version_id="updateProductSubstitutes", data={"success": True}
+    )
+
+
+def _remove_product_by_name(arguments: dict[str, Any]) -> ToolResult:
+    """Remove a product by name at-most-once per idempotency_key.
+
+    Mirrors the DELETE /products/removeProductByName route; the V5 response is
+    the removed product, which a retried key replays without re-deleting.
+    """
+    idempotency_key = arguments.get("idempotency_key")
+    if not idempotency_key:
+        return ToolResult.failure(
+            tool_version_id="removeProductByName",
+            error_code="IDEMPOTENCY_KEY_REQUIRED",
+            error_message="写操作必须携带 idempotency_key（at-most-once 前提）",
+        )
+    name = arguments.get("name")
+    if not isinstance(name, str):
+        return ToolResult.failure(
+            tool_version_id="removeProductByName",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"name 必须为字符串，got {name!r}",
+        )
+    product = remove_product_by_name(name, idempotency_key)
+    if product is None:
+        return ToolResult.failure(
+            tool_version_id="removeProductByName",
+            error_code="PRODUCT_NOT_FOUND",
+            error_message=f"Product '{name}' not found",
+        )
+    return ToolResult.success(tool_version_id="removeProductByName", data=_product_data(product))
+
+
+def _remove_product_by_id(arguments: dict[str, Any]) -> ToolResult:
+    """Remove a product by id at-most-once per idempotency_key (DELETE route)."""
+    idempotency_key = arguments.get("idempotency_key")
+    if not idempotency_key:
+        return ToolResult.failure(
+            tool_version_id="removeProductById",
+            error_code="IDEMPOTENCY_KEY_REQUIRED",
+            error_message="写操作必须携带 idempotency_key（at-most-once 前提）",
+        )
+    product_id = arguments.get("product_id")
+    if not isinstance(product_id, int):
+        return ToolResult.failure(
+            tool_version_id="removeProductById",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"product_id 必须为整数，got {product_id!r}",
+        )
+    product = remove_product_by_id(product_id, idempotency_key)
+    if product is None:
+        return ToolResult.failure(
+            tool_version_id="removeProductById",
+            error_code="PRODUCT_NOT_FOUND",
+            error_message=f"Product with id {product_id!r} not found",
+        )
+    return ToolResult.success(tool_version_id="removeProductById", data=_product_data(product))
+
+
+def _add_suppliers(arguments: dict[str, Any]) -> ToolResult:
+    """Add a supplier at-most-once per idempotency_key (mirrors the POST route).
+
+    A duplicate name is a business violation. The cloud carries phone/address/
+    rating that the simulator Supplier does not model, so only name/regions/
+    status are persisted.
+    """
+    idempotency_key = arguments.get("idempotency_key")
+    if not idempotency_key:
+        return ToolResult.failure(
+            tool_version_id="addSuppliers",
+            error_code="IDEMPOTENCY_KEY_REQUIRED",
+            error_message="写操作必须携带 idempotency_key（at-most-once 前提）",
+        )
+    name = arguments.get("name")
+    if not isinstance(name, str):
+        return ToolResult.failure(
+            tool_version_id="addSuppliers",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"name 必须为字符串，got {name!r}",
+        )
+    regions = arguments.get("regions") or []
+    if not isinstance(regions, list) or not all(isinstance(r, str) for r in regions):
+        return ToolResult.failure(
+            tool_version_id="addSuppliers",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"regions 必须为字符串列表，got {regions!r}",
+        )
+    status = arguments.get("status") or "AVAILABLE"
+    if not isinstance(status, str):
+        return ToolResult.failure(
+            tool_version_id="addSuppliers",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"status 必须为字符串，got {status!r}",
+        )
+    try:
+        supplier = add_supplier(name, regions, status, idempotency_key)
+    except ValueError as exc:
+        return ToolResult.failure(
+            tool_version_id="addSuppliers",
+            error_code="SUPPLIER_ALREADY_EXISTS",
+            error_message=str(exc),
+        )
+    return ToolResult.success(tool_version_id="addSuppliers", data=_supplier_data(supplier))
+
+
+def _delete_supplier_by_name(arguments: dict[str, Any]) -> ToolResult:
+    """Delete a supplier by name at-most-once per idempotency_key.
+
+    Mirrors the DELETE /suppliers/deleteSupplierByName route; the V5 response is
+    an empty body, normalized to {"success": true}.
+    """
+    idempotency_key = arguments.get("idempotency_key")
+    if not idempotency_key:
+        return ToolResult.failure(
+            tool_version_id="deleteSupplierByName",
+            error_code="IDEMPOTENCY_KEY_REQUIRED",
+            error_message="写操作必须携带 idempotency_key（at-most-once 前提）",
+        )
+    name = arguments.get("name")
+    if not isinstance(name, str):
+        return ToolResult.failure(
+            tool_version_id="deleteSupplierByName",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"name 必须为字符串，got {name!r}",
+        )
+    supplier = delete_supplier_by_name(name, idempotency_key)
+    if supplier is None:
+        return ToolResult.failure(
+            tool_version_id="deleteSupplierByName",
+            error_code="SUPPLIER_NOT_FOUND",
+            error_message=f"Supplier '{name}' not found",
+        )
+    return ToolResult.success(tool_version_id="deleteSupplierByName", data={"success": True})
+
+
+def _delete_supplier_by_id(arguments: dict[str, Any]) -> ToolResult:
+    """Delete a supplier by id at-most-once per idempotency_key (DELETE route)."""
+    idempotency_key = arguments.get("idempotency_key")
+    if not idempotency_key:
+        return ToolResult.failure(
+            tool_version_id="deleteSupplierById",
+            error_code="IDEMPOTENCY_KEY_REQUIRED",
+            error_message="写操作必须携带 idempotency_key（at-most-once 前提）",
+        )
+    supplier_id = arguments.get("supplier_id")
+    if not isinstance(supplier_id, int):
+        return ToolResult.failure(
+            tool_version_id="deleteSupplierById",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"supplier_id 必须为整数，got {supplier_id!r}",
+        )
+    supplier = delete_supplier_by_id(supplier_id, idempotency_key)
+    if supplier is None:
+        return ToolResult.failure(
+            tool_version_id="deleteSupplierById",
+            error_code="SUPPLIER_NOT_FOUND",
+            error_message=f"Supplier with id {supplier_id!r} not found",
+        )
+    return ToolResult.success(tool_version_id="deleteSupplierById", data={"success": True})
+
+
 def _get_order(arguments: dict[str, Any]) -> ToolResult:
     order_id = arguments.get("order_id")
     if not isinstance(order_id, str):
@@ -733,8 +1059,8 @@ async def _dispatch_http(
 ) -> ToolResult:
     """Route one tool call to the cloud ERP and normalize its response.
 
-    Only the 5 tools the in-process simulator executor maps are supported; the
-    rest fail closed with UNKNOWN_TOOL (same as the simulator path).
+    The tools the in-process simulator executor maps are supported; the rest
+    fail closed with UNKNOWN_TOOL (same as the simulator path).
     """
     if tool_name == "getProductByName":
         payload = await _request_json(
@@ -940,6 +1266,131 @@ async def _dispatch_http(
                 f"Cloud ERP rejected order cancel: {reason}",
             )
         return ToolResult.success(tool_version_id=tool_name, data=_normalize_order(payload))
+
+    if tool_name == "addProduct":
+        # idempotency_key deliberately dropped: the cloud addProduct API has no
+        # such field (honest limitation, same as createOrder).
+        payload = await _request_json(
+            client,
+            "POST",
+            "/products/addProduct",
+            headers=headers,
+            json={
+                "name": arguments["name"],
+                "description": arguments.get("description") or "",
+                "price": arguments["price"],
+                "quantityInStock": arguments["quantity_in_stock"],
+            },
+        )
+        if payload.get("productId") is None:
+            return _permanent_failure(
+                tool_name, "PRODUCT_CREATE_FAILED", "Cloud ERP rejected product creation"
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_product(payload))
+
+    if tool_name == "updateProductDescription":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/products/updateProductDescription",
+            headers=headers,
+            json={"productId": arguments["product_id"], "description": arguments["description"]},
+        )
+        # The V5 response is a bare boolean; anything else is a business failure.
+        if payload is not True:
+            return _permanent_failure(
+                tool_name, "PRODUCT_UPDATE_FAILED", "Cloud ERP rejected product update"
+            )
+        return ToolResult.success(tool_version_id=tool_name, data={"success": True})
+
+    if tool_name == "updateProductSubstitutes":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/products/updateProductSubstitutes",
+            headers=headers,
+            json={
+                "productId": arguments["product_id"],
+                "substituteName": arguments["substitute_name"],
+            },
+        )
+        if payload is not True:
+            return _permanent_failure(
+                tool_name, "PRODUCT_UPDATE_FAILED", "Cloud ERP rejected substitute update"
+            )
+        return ToolResult.success(tool_version_id=tool_name, data={"success": True})
+
+    if tool_name == "removeProductByName":
+        payload = await _request_json(
+            client,
+            "DELETE",
+            "/products/removeProductByName",
+            headers=headers,
+            json={"name": arguments["name"]},
+        )
+        if payload.get("productId") is None:
+            return _permanent_failure(
+                tool_name, "PRODUCT_REMOVE_FAILED", "Cloud ERP rejected product removal"
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_product(payload))
+
+    if tool_name == "removeProductById":
+        payload = await _request_json(
+            client,
+            "DELETE",
+            "/products/removeProductById",
+            headers=headers,
+            json={"productId": arguments["product_id"]},
+        )
+        if payload.get("productId") is None:
+            return _permanent_failure(
+                tool_name, "PRODUCT_REMOVE_FAILED", "Cloud ERP rejected product removal"
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_product(payload))
+
+    if tool_name == "addSuppliers":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/suppliers/addSuppliers",
+            headers=headers,
+            json={
+                "name": arguments["name"],
+                "deliveryAreas": arguments.get("regions") or [],
+                "status": (
+                    _ERP_STATUS_ACTIVE
+                    if arguments.get("status", _V6_STATUS_ACTIVE) == _V6_STATUS_ACTIVE
+                    else _ERP_STATUS_DISABLED
+                ),
+            },
+        )
+        if payload.get("supplierId") is None:
+            return _permanent_failure(
+                tool_name, "SUPPLIER_CREATE_FAILED", "Cloud ERP rejected supplier creation"
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_supplier(payload))
+
+    if tool_name == "deleteSupplierByName":
+        await _request_json(
+            client,
+            "DELETE",
+            "/suppliers/deleteSupplierByName",
+            headers=headers,
+            json={"name": arguments["name"]},
+        )
+        # The V5 delete response is an empty body, so there is no entity to
+        # verify against — success is the honest answer for a completed call.
+        return ToolResult.success(tool_version_id=tool_name, data={"success": True})
+
+    if tool_name == "deleteSupplierById":
+        await _request_json(
+            client,
+            "DELETE",
+            "/suppliers/deleteSupplierById",
+            headers=headers,
+            json={"id": arguments["supplier_id"]},
+        )
+        return ToolResult.success(tool_version_id=tool_name, data={"success": True})
 
     if tool_name == "getOrderByOrderId":
         try:

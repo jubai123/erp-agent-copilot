@@ -1023,3 +1023,294 @@ class TestGetBatchProductByProductIds:
 
         assert result.status == "SUCCEEDED"
         assert result.data == {"products": []}
+
+
+class TestAddProduct:
+    def test_posts_v5_body_and_normalizes_product(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/products/addProduct").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "productId": 10,
+                        "name": "新商品",
+                        "description": "新到货",
+                        "price": 5.0,
+                        "quantityInStock": 3,
+                    },
+                )
+            )
+            result = _call(
+                "addProduct",
+                {
+                    "name": "新商品",
+                    "description": "新到货",
+                    "price": 5.0,
+                    "quantity_in_stock": 3,
+                    "idempotency_key": "k-add",
+                },
+            )
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {
+            "product_id": 10,
+            "name": "新商品",
+            "description": "新到货",
+            "price": 5.0,
+            "stock": 3,
+        }
+        request = route.calls.last.request
+        _assert_body(
+            request,
+            {"name": "新商品", "description": "新到货", "price": 5.0, "quantityInStock": 3},
+        )
+        # idempotency_key is dropped: the cloud addProduct API has no such field.
+        assert b"idempotency_key" not in request.content
+
+    def test_missing_product_id_is_permanent_failure(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/products/addProduct").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            result = _call(
+                "addProduct",
+                {"name": "新商品", "price": 5.0, "quantity_in_stock": 3, "idempotency_key": "k"},
+            )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_CREATE_FAILED"
+        assert result.error.is_retryable is False
+
+
+class TestUpdateProductDescription:
+    def test_posts_v5_body_and_returns_success(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/products/updateProductDescription").mock(
+                return_value=httpx.Response(200, json=True)
+            )
+            result = _call(
+                "updateProductDescription",
+                {"product_id": 1, "description": "新描述", "idempotency_key": "k-upd-desc"},
+            )
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"success": True}
+        _assert_body(route.calls.last.request, {"productId": 1, "description": "新描述"})
+        assert b"idempotency_key" not in route.calls.last.request.content
+
+    def test_false_response_is_permanent_failure(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/products/updateProductDescription").mock(
+                return_value=httpx.Response(200, json=False)
+            )
+            result = _call(
+                "updateProductDescription",
+                {"product_id": 1, "description": "x", "idempotency_key": "k"},
+            )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_UPDATE_FAILED"
+        assert result.error.is_retryable is False
+
+
+class TestUpdateProductSubstitutes:
+    def test_posts_v5_body_and_returns_success(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/products/updateProductSubstitutes").mock(
+                return_value=httpx.Response(200, json=True)
+            )
+            result = _call(
+                "updateProductSubstitutes",
+                {"product_id": 1, "substitute_name": "香蕉", "idempotency_key": "k-sub"},
+            )
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"success": True}
+        _assert_body(
+            route.calls.last.request,
+            {"productId": 1, "substituteName": "香蕉"},
+        )
+
+    def test_false_response_is_permanent_failure(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/products/updateProductSubstitutes").mock(
+                return_value=httpx.Response(200, json=False)
+            )
+            result = _call(
+                "updateProductSubstitutes",
+                {"product_id": 1, "substitute_name": "香蕉", "idempotency_key": "k"},
+            )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_UPDATE_FAILED"
+        assert result.error.is_retryable is False
+
+
+class TestRemoveProduct:
+    def test_remove_by_name_deletes_and_normalizes_product(self) -> None:
+        with respx.mock:
+            route = respx.delete(f"{_BASE_URL}/products/removeProductByName").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "productId": 1,
+                        "name": "苹果",
+                        "description": "红富士",
+                        "price": 10.0,
+                        "quantityInStock": 100,
+                    },
+                )
+            )
+            result = _call("removeProductByName", {"name": "苹果", "idempotency_key": "k-rm1"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["product_id"] == 1
+        _assert_body(route.calls.last.request, {"name": "苹果"})
+
+    def test_remove_by_id_posts_id(self) -> None:
+        with respx.mock:
+            route = respx.delete(f"{_BASE_URL}/products/removeProductById").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "productId": 1,
+                        "name": "苹果",
+                        "description": "红富士",
+                        "price": 10.0,
+                        "quantityInStock": 100,
+                    },
+                )
+            )
+            result = _call("removeProductById", {"product_id": 1, "idempotency_key": "k-rm2"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["product_id"] == 1
+        _assert_body(route.calls.last.request, {"productId": 1})
+
+    def test_missing_product_id_is_permanent_failure(self) -> None:
+        with respx.mock:
+            respx.delete(f"{_BASE_URL}/products/removeProductByName").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            result = _call("removeProductByName", {"name": "苹果", "idempotency_key": "k-rm3"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_REMOVE_FAILED"
+        assert result.error.is_retryable is False
+
+
+class TestAddSupplier:
+    def test_posts_v5_body_and_normalizes_supplier(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/suppliers/addSuppliers").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "supplierId": 10,
+                        "name": "华东物流",
+                        "deliveryAreas": ["上海"],
+                        "rating": 4.8,
+                        "status": "InUse",
+                    },
+                )
+            )
+            result = _call(
+                "addSuppliers",
+                {
+                    "name": "华东物流",
+                    "regions": ["上海"],
+                    "status": "AVAILABLE",
+                    "idempotency_key": "k-add-sup",
+                },
+            )
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {
+            "supplier_id": 10,
+            "name": "华东物流",
+            "regions": ["上海"],
+            "status": "AVAILABLE",
+            "rating": 4.8,
+        }
+        _assert_body(
+            route.calls.last.request,
+            {"name": "华东物流", "deliveryAreas": ["上海"], "status": "InUse"},
+        )
+        assert b"idempotency_key" not in route.calls.last.request.content
+
+    def test_maps_v6_status_to_cloud_enum(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/suppliers/addSuppliers").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "supplierId": 11,
+                        "name": "华北物流",
+                        "deliveryAreas": ["北京"],
+                        "rating": 4.5,
+                        "status": "DisUse",
+                    },
+                )
+            )
+            result = _call(
+                "addSuppliers",
+                {
+                    "name": "华北物流",
+                    "regions": ["北京"],
+                    "status": "UNAVAILABLE",
+                    "idempotency_key": "k-add-sup2",
+                },
+            )
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["status"] == "UNAVAILABLE"
+        _assert_body(
+            route.calls.last.request,
+            {"name": "华北物流", "deliveryAreas": ["北京"], "status": "DisUse"},
+        )
+
+    def test_missing_supplier_id_is_permanent_failure(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/suppliers/addSuppliers").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            result = _call(
+                "addSuppliers",
+                {"name": "x", "regions": ["上海"], "status": "AVAILABLE", "idempotency_key": "k"},
+            )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "SUPPLIER_CREATE_FAILED"
+        assert result.error.is_retryable is False
+
+
+class TestDeleteSupplier:
+    def test_delete_by_name_success(self) -> None:
+        with respx.mock:
+            route = respx.delete(f"{_BASE_URL}/suppliers/deleteSupplierByName").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            result = _call("deleteSupplierByName", {"name": "华东物流", "idempotency_key": "k-d1"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"success": True}
+        _assert_body(route.calls.last.request, {"name": "华东物流"})
+
+    def test_delete_by_id_success(self) -> None:
+        with respx.mock:
+            route = respx.delete(f"{_BASE_URL}/suppliers/deleteSupplierById").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            result = _call("deleteSupplierById", {"supplier_id": 3, "idempotency_key": "k-d2"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"success": True}
+        _assert_body(route.calls.last.request, {"id": 3})

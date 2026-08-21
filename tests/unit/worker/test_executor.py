@@ -18,7 +18,8 @@ import asyncio
 import uuid
 from typing import Any
 
-from apps.erp_simulator.data.products import PRODUCT_BY_NAME
+from apps.erp_simulator.data.products import PRODUCT_BY_ID, PRODUCT_BY_NAME
+from apps.erp_simulator.data.suppliers import SUPPLIER_BY_ID, SUPPLIER_BY_NAME
 from apps.worker.executor import erp_simulator_executor
 from erp_copilot.tools.tool_result import ToolResult
 
@@ -29,6 +30,10 @@ def _run(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
 
 def _stock_of(name: str) -> int:
     return PRODUCT_BY_NAME[name].quantity_in_stock
+
+
+def _m3_key() -> str:
+    return f"m3-executor-{uuid.uuid4().hex}"
 
 
 def _create_args(**overrides: Any) -> dict[str, Any]:
@@ -293,9 +298,18 @@ class TestUpdateOrderStatus:
 
     def test_terminal_order_rejects_update(self) -> None:
         order_id = self._created_order_id()
-        _run("updateOrderStatus", {"order_id": order_id, "status": "CONFIRMED", "idempotency_key": "u-a"})
-        _run("updateOrderStatus", {"order_id": order_id, "status": "SHIPPED", "idempotency_key": "u-b"})
-        _run("updateOrderStatus", {"order_id": order_id, "status": "DELIVERED", "idempotency_key": "u-c"})
+        _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "CONFIRMED", "idempotency_key": "u-a"},
+        )
+        _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "SHIPPED", "idempotency_key": "u-b"},
+        )
+        _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "DELIVERED", "idempotency_key": "u-c"},
+        )
 
         result = _run(
             "updateOrderStatus",
@@ -350,8 +364,14 @@ class TestCancelOrder:
 
     def test_cancels_shipped_order(self) -> None:
         order_id = self._created_order_id()
-        _run("updateOrderStatus", {"order_id": order_id, "status": "CONFIRMED", "idempotency_key": "c-a"})
-        _run("updateOrderStatus", {"order_id": order_id, "status": "SHIPPED", "idempotency_key": "c-b"})
+        _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "CONFIRMED", "idempotency_key": "c-a"},
+        )
+        _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "SHIPPED", "idempotency_key": "c-b"},
+        )
 
         result = _run("cancelOrder", {"order_id": order_id, "idempotency_key": "c-shipped"})
 
@@ -361,9 +381,18 @@ class TestCancelOrder:
 
     def test_delivered_order_cannot_cancel(self) -> None:
         order_id = self._created_order_id()
-        _run("updateOrderStatus", {"order_id": order_id, "status": "CONFIRMED", "idempotency_key": "c-d-a"})
-        _run("updateOrderStatus", {"order_id": order_id, "status": "SHIPPED", "idempotency_key": "c-d-b"})
-        _run("updateOrderStatus", {"order_id": order_id, "status": "DELIVERED", "idempotency_key": "c-d-c"})
+        _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "CONFIRMED", "idempotency_key": "c-d-a"},
+        )
+        _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "SHIPPED", "idempotency_key": "c-d-b"},
+        )
+        _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "DELIVERED", "idempotency_key": "c-d-c"},
+        )
 
         result = _run("cancelOrder", {"order_id": order_id, "idempotency_key": "c-d-delivered"})
 
@@ -650,3 +679,343 @@ class TestGetBatchProductByProductIds:
         assert result.status == "FAILED"
         assert result.error is not None
         assert result.error.error_code == "INVALID_ARGUMENT"
+
+
+def _unique_product_name() -> str:
+    return f"测试商品-{uuid.uuid4().hex[:8]}"
+
+
+class TestAddProduct:
+    def test_add_creates_indexed_product(self) -> None:
+        name = _unique_product_name()
+        result = _run(
+            "addProduct",
+            {"name": name, "price": 9.9, "quantity_in_stock": 5, "idempotency_key": _m3_key()},
+        )
+
+        assert result.status == "SUCCEEDED"
+        data = result.data
+        assert data is not None
+        assert data["name"] == name
+        assert data["price"] == 9.9
+        assert data["stock"] == 5
+        assert PRODUCT_BY_NAME[name].name == name
+
+    def test_add_idempotent_replay_returns_same_product(self) -> None:
+        name = _unique_product_name()
+        args = {"name": name, "price": 9.9, "quantity_in_stock": 5, "idempotency_key": _m3_key()}
+
+        first = _run("addProduct", args)
+        second = _run("addProduct", args)
+
+        assert first.status == "SUCCEEDED"
+        assert second.status == "SUCCEEDED"
+        assert second.data is not None and first.data is not None
+        assert second.data["product_id"] == first.data["product_id"]
+
+    def test_duplicate_name_is_business_failure(self) -> None:
+        name = _unique_product_name()
+        _run(
+            "addProduct",
+            {"name": name, "price": 1.0, "quantity_in_stock": 1, "idempotency_key": _m3_key()},
+        )
+
+        result = _run(
+            "addProduct",
+            {"name": name, "price": 2.0, "quantity_in_stock": 2, "idempotency_key": _m3_key()},
+        )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_ALREADY_EXISTS"
+
+    def test_requires_idempotency_key(self) -> None:
+        result = _run("addProduct", {"name": "x", "price": 1.0, "quantity_in_stock": 1})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "IDEMPOTENCY_KEY_REQUIRED"
+
+    def test_invalid_price_is_invalid_argument(self) -> None:
+        result = _run(
+            "addProduct",
+            {"name": "x", "price": "高", "quantity_in_stock": 1, "idempotency_key": _m3_key()},
+        )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+
+class TestUpdateProductDescription:
+    def test_updates_description_in_place(self) -> None:
+        result = _run(
+            "updateProductDescription",
+            {"product_id": 1, "description": "新描述", "idempotency_key": _m3_key()},
+        )
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"success": True}
+        assert PRODUCT_BY_ID[1].description == "新描述"
+
+    def test_idempotent_replay_returns_recorded_result(self) -> None:
+        key = _m3_key()
+        first = _run(
+            "updateProductDescription",
+            {"product_id": 1, "description": "A", "idempotency_key": key},
+        )
+        replayed = _run(
+            "updateProductDescription",
+            {"product_id": 1, "description": "B", "idempotency_key": key},
+        )
+
+        assert first.status == "SUCCEEDED"
+        assert replayed.status == "SUCCEEDED"
+        assert PRODUCT_BY_ID[1].description == "A"  # recorded result, not re-applied
+
+    def test_unknown_product_is_not_found(self) -> None:
+        result = _run(
+            "updateProductDescription",
+            {"product_id": 999999, "description": "x", "idempotency_key": _m3_key()},
+        )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_NOT_FOUND"
+
+    def test_requires_idempotency_key(self) -> None:
+        result = _run("updateProductDescription", {"product_id": 1, "description": "x"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "IDEMPOTENCY_KEY_REQUIRED"
+
+
+class TestUpdateProductSubstitutes:
+    def test_sets_substitute_by_name(self) -> None:
+        result = _run(
+            "updateProductSubstitutes",
+            {"product_id": 1, "substitute_name": "香蕉", "idempotency_key": _m3_key()},
+        )
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"success": True}
+        assert PRODUCT_BY_ID[1].substitute_product_id == 2
+
+    def test_unknown_substitute_is_business_failure(self) -> None:
+        result = _run(
+            "updateProductSubstitutes",
+            {"product_id": 1, "substitute_name": "不存在的替代品", "idempotency_key": _m3_key()},
+        )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "SUBSTITUTE_NOT_FOUND"
+
+    def test_unknown_product_is_not_found(self) -> None:
+        result = _run(
+            "updateProductSubstitutes",
+            {"product_id": 999999, "substitute_name": "香蕉", "idempotency_key": _m3_key()},
+        )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_NOT_FOUND"
+
+    def test_requires_idempotency_key(self) -> None:
+        result = _run("updateProductSubstitutes", {"product_id": 1, "substitute_name": "香蕉"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "IDEMPOTENCY_KEY_REQUIRED"
+
+
+class TestRemoveProduct:
+    def test_remove_by_name_clears_indexes(self) -> None:
+        name = _unique_product_name()
+        created = _run(
+            "addProduct",
+            {"name": name, "price": 1.0, "quantity_in_stock": 1, "idempotency_key": _m3_key()},
+        )
+        product_id = created.data["product_id"]
+
+        result = _run("removeProductByName", {"name": name, "idempotency_key": _m3_key()})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["product_id"] == product_id
+        assert PRODUCT_BY_NAME.get(name) is None
+        assert PRODUCT_BY_ID.get(product_id) is None
+
+    def test_remove_by_id_clears_indexes(self) -> None:
+        name = _unique_product_name()
+        created = _run(
+            "addProduct",
+            {"name": name, "price": 1.0, "quantity_in_stock": 1, "idempotency_key": _m3_key()},
+        )
+        product_id = created.data["product_id"]
+
+        result = _run("removeProductById", {"product_id": product_id, "idempotency_key": _m3_key()})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["product_id"] == product_id
+        assert PRODUCT_BY_NAME.get(name) is None
+
+    def test_remove_unknown_is_not_found(self) -> None:
+        result = _run("removeProductByName", {"name": "不存在的商品", "idempotency_key": _m3_key()})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_NOT_FOUND"
+
+    def test_requires_idempotency_key(self) -> None:
+        result = _run("removeProductById", {"product_id": 1})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "IDEMPOTENCY_KEY_REQUIRED"
+
+
+def _unique_supplier_name() -> str:
+    return f"测试物流-{uuid.uuid4().hex[:8]}"
+
+
+class TestAddSupplier:
+    def test_add_creates_indexed_supplier(self) -> None:
+        name = _unique_supplier_name()
+        result = _run(
+            "addSuppliers",
+            {
+                "name": name,
+                "regions": ["上海"],
+                "status": "AVAILABLE",
+                "idempotency_key": _m3_key(),
+            },
+        )
+
+        assert result.status == "SUCCEEDED"
+        data = result.data
+        assert data is not None
+        assert data["name"] == name
+        assert data["regions"] == ["上海"]
+        assert SUPPLIER_BY_NAME[name].name == name
+
+    def test_idempotent_replay_returns_same_supplier(self) -> None:
+        name = _unique_supplier_name()
+        args = {
+            "name": name,
+            "regions": ["上海"],
+            "status": "AVAILABLE",
+            "idempotency_key": _m3_key(),
+        }
+
+        first = _run("addSuppliers", args)
+        second = _run("addSuppliers", args)
+
+        assert first.status == "SUCCEEDED"
+        assert second.status == "SUCCEEDED"
+        assert second.data is not None and first.data is not None
+        assert second.data["supplier_id"] == first.data["supplier_id"]
+
+    def test_duplicate_name_is_business_failure(self) -> None:
+        name = _unique_supplier_name()
+        _run(
+            "addSuppliers",
+            {
+                "name": name,
+                "regions": ["上海"],
+                "status": "AVAILABLE",
+                "idempotency_key": _m3_key(),
+            },
+        )
+
+        result = _run(
+            "addSuppliers",
+            {
+                "name": name,
+                "regions": ["北京"],
+                "status": "AVAILABLE",
+                "idempotency_key": _m3_key(),
+            },
+        )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "SUPPLIER_ALREADY_EXISTS"
+
+    def test_requires_idempotency_key(self) -> None:
+        result = _run("addSuppliers", {"name": "x", "regions": ["上海"], "status": "AVAILABLE"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "IDEMPOTENCY_KEY_REQUIRED"
+
+    def test_invalid_regions_is_invalid_argument(self) -> None:
+        result = _run(
+            "addSuppliers",
+            {"name": "x", "regions": "上海", "status": "AVAILABLE", "idempotency_key": _m3_key()},
+        )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+
+class TestDeleteSupplier:
+    def test_delete_by_name_clears_indexes(self) -> None:
+        name = _unique_supplier_name()
+        created = _run(
+            "addSuppliers",
+            {
+                "name": name,
+                "regions": ["上海"],
+                "status": "AVAILABLE",
+                "idempotency_key": _m3_key(),
+            },
+        )
+        supplier_id = created.data["supplier_id"]
+
+        result = _run("deleteSupplierByName", {"name": name, "idempotency_key": _m3_key()})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"success": True}
+        assert SUPPLIER_BY_NAME.get(name) is None
+        assert SUPPLIER_BY_ID.get(supplier_id) is None
+
+    def test_delete_by_id_clears_indexes(self) -> None:
+        name = _unique_supplier_name()
+        created = _run(
+            "addSuppliers",
+            {
+                "name": name,
+                "regions": ["上海"],
+                "status": "AVAILABLE",
+                "idempotency_key": _m3_key(),
+            },
+        )
+        supplier_id = created.data["supplier_id"]
+
+        result = _run(
+            "deleteSupplierById", {"supplier_id": supplier_id, "idempotency_key": _m3_key()}
+        )
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"success": True}
+        assert SUPPLIER_BY_NAME.get(name) is None
+
+    def test_delete_unknown_is_not_found(self) -> None:
+        result = _run(
+            "deleteSupplierByName", {"name": "不存在的供应商", "idempotency_key": _m3_key()}
+        )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "SUPPLIER_NOT_FOUND"
+
+    def test_requires_idempotency_key(self) -> None:
+        result = _run("deleteSupplierById", {"supplier_id": 3})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "IDEMPOTENCY_KEY_REQUIRED"
