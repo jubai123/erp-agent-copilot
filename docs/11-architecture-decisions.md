@@ -126,11 +126,13 @@ def should_use_tool_retrieval(candidates, threshold=TOOL_RETRIEVAL_THRESHOLD) ->
     return len(candidates) > threshold
 ```
 
-**为什么**：V6 当前 9 个工具，意图过滤已足够，`build_plan` 犯错面是 3 选 1 不是 25 选 1。
+**为什么**：意图确定性过滤缩小 `build_plan` 的犯错面。2026-08-21 工具面已完整对齐 V5 的 **25 个接口**——全部进入决策范围、全部可执行（模拟器 / 云 HTTP / MCP 全链路）、MCP 扩到全部且写默认 gate；上方的 `DOMAIN_TOOL_MAP` 快照为 9 工具时期，权威定义以 `src/erp_copilot/tools/candidate_filter.py` 为准，且 `DOMAIN_TOOL_MAP` / `intent_rule_map.yaml` / `classify_intent` 三处键必须同步。
 
 **没有放弃 V5 工具检索**：两阶段思想（粗筛→精排）保留为增长路径，只是角色从"每次必走的唯一引擎"降级为"意图过滤后的按需精排层"。Milvus→pgvector，MongoDB→PostgreSQL，V5 意图训练数据转为 40 条 Tool 检索评测 Case。
 
 **评测如何验证**：Tool Recall@5、MRR、混淆工具、hard negatives。
+
+**备注（2026-08-21，工具面 25 对齐后）**：风险分类同步扩展——7 个 WRITE 工具（createOrder/updateOrderStatus/cancelOrder/addProduct/addSuppliers/updateProductDescription/updateProductSubstitutes）需审批；4 个删除类工具（removeProductByName/removeProductById/deleteSupplierByName/deleteSupplierById）升为 **DANGEROUS 强审批**（`planner.DANGEROUS_TOOLS`，`validate_plan` 拒绝任何低于 DANGEROUS 的标注，防 LLM 规划器把删除降级为普通写绕过审批）。
 
 ---
 
