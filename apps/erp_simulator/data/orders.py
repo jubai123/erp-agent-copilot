@@ -96,7 +96,7 @@ def get_orders_by_time_range(start_date: str, end_date: str) -> list[Order]:
     end = _parse_iso(end_date)
     if start is None or end is None:
         return []
-    orders = [o for o in _orders_by_id.values() if start <= _parse_iso(o.created_at) <= end]
+    orders = [o for o in _orders_by_id.values() if _created_between(o, start, end)]
     return _by_recency(orders)
 
 
@@ -110,6 +110,11 @@ def _parse_iso(value: str) -> datetime | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt
+
+
+def _created_between(order: Order, start: datetime, end: datetime) -> bool:
+    created = _parse_iso(order.created_at)
+    return created is not None and start <= created <= end
 
 
 def _by_recency(orders: list[Order]) -> list[Order]:
