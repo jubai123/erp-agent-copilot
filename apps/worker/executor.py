@@ -30,7 +30,12 @@ from typing import Any
 import httpx
 
 from apps.erp_simulator.data.orders import create_order, get_by_id, get_by_idempotency_key
-from apps.erp_simulator.data.products import PRODUCT_BY_ID, PRODUCT_BY_NAME
+from apps.erp_simulator.data.products import (
+    PRODUCT_BY_ID,
+    PRODUCT_BY_NAME,
+    get_products_by_id_range,
+    get_substitutes,
+)
 from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS
 from apps.erp_simulator.scenarios import get_scenario
 from apps.worker.mcp_executor import build_mcp_executor
@@ -56,6 +61,14 @@ async def erp_simulator_executor(tool_name: str, arguments: dict[str, Any]) -> T
 
     if tool_name == "getProductByName":
         return _get_product(arguments)
+    if tool_name == "getProductById":
+        return _get_product_by_id(arguments)
+    if tool_name == "getProductSubstitutes":
+        return _get_product_substitutes(arguments)
+    if tool_name == "getProductSubstitutesByName":
+        return _get_product_substitutes_by_name(arguments)
+    if tool_name == "getBatchProductByProductIds":
+        return _get_products_batch(arguments)
     if tool_name == "getSupplierByStatus":
         return _get_suppliers(arguments)
     if tool_name == "querySuppliersByDeliveryRegion":
@@ -69,6 +82,23 @@ async def erp_simulator_executor(tool_name: str, arguments: dict[str, Any]) -> T
         error_code="UNKNOWN_TOOL",
         error_message=f"Unknown tool {tool_name!r}",
     )
+
+
+def _product_data(product: Any) -> dict[str, Any]:
+    """Serialize a product; the stock_insufficient scenario zeroes the stock.
+
+    Shared by every product read so getProductById / substitutes / batch stay
+    consistent with getProductByName under the scenario knob.
+    """
+    stock = 0 if get_scenario() == "stock_insufficient" else product.quantity_in_stock
+    return {
+        "product_id": product.product_id,
+        "name": product.name,
+        "description": product.description,
+        "price": product.price,
+        "stock": stock,
+        "unit": product.unit,
+    }
 
 
 def _get_product(arguments: dict[str, Any]) -> ToolResult:
@@ -86,17 +116,90 @@ def _get_product(arguments: dict[str, Any]) -> ToolResult:
             error_code="PRODUCT_NOT_FOUND",
             error_message=f"Product '{name}' not found",
         )
-    stock = 0 if get_scenario() == "stock_insufficient" else product.quantity_in_stock
     return ToolResult.success(
         tool_version_id="getProductByName",
-        data={
-            "product_id": product.product_id,
-            "name": product.name,
-            "description": product.description,
-            "price": product.price,
-            "stock": stock,
-            "unit": product.unit,
-        },
+        data=_product_data(product),
+    )
+
+
+def _get_product_by_id(arguments: dict[str, Any]) -> ToolResult:
+    product_id = arguments.get("product_id")
+    if not isinstance(product_id, int):
+        return ToolResult.failure(
+            tool_version_id="getProductById",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"product_id 必须为整数，got {product_id!r}",
+        )
+    product = PRODUCT_BY_ID.get(product_id)
+    if product is None:
+        return ToolResult.failure(
+            tool_version_id="getProductById",
+            error_code="PRODUCT_NOT_FOUND",
+            error_message=f"Product with id {product_id!r} not found",
+        )
+    return ToolResult.success(tool_version_id="getProductById", data=_product_data(product))
+
+
+def _substitutes_data(products: list[Any]) -> dict[str, Any]:
+    """Serialize substitute matches; an empty list is a legal business answer."""
+    return {"substitutes": [_product_data(p) for p in products]}
+
+
+def _get_product_substitutes(arguments: dict[str, Any]) -> ToolResult:
+    product_id = arguments.get("product_id")
+    if not isinstance(product_id, int):
+        return ToolResult.failure(
+            tool_version_id="getProductSubstitutes",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"product_id 必须为整数，got {product_id!r}",
+        )
+    product = PRODUCT_BY_ID.get(product_id)
+    if product is None:
+        return ToolResult.failure(
+            tool_version_id="getProductSubstitutes",
+            error_code="PRODUCT_NOT_FOUND",
+            error_message=f"Product with id {product_id!r} not found",
+        )
+    return ToolResult.success(
+        tool_version_id="getProductSubstitutes",
+        data=_substitutes_data(get_substitutes(product)),
+    )
+
+
+def _get_product_substitutes_by_name(arguments: dict[str, Any]) -> ToolResult:
+    name = arguments.get("name")
+    if not isinstance(name, str):
+        return ToolResult.failure(
+            tool_version_id="getProductSubstitutesByName",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"name 必须为字符串，got {name!r}",
+        )
+    product = PRODUCT_BY_NAME.get(name)
+    if product is None:
+        return ToolResult.failure(
+            tool_version_id="getProductSubstitutesByName",
+            error_code="PRODUCT_NOT_FOUND",
+            error_message=f"Product '{name}' not found",
+        )
+    return ToolResult.success(
+        tool_version_id="getProductSubstitutesByName",
+        data=_substitutes_data(get_substitutes(product)),
+    )
+
+
+def _get_products_batch(arguments: dict[str, Any]) -> ToolResult:
+    start_id = arguments.get("start_id")
+    end_id = arguments.get("end_id")
+    if not isinstance(start_id, int) or not isinstance(end_id, int):
+        return ToolResult.failure(
+            tool_version_id="getBatchProductByProductIds",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"start_id/end_id 必须为整数，got {start_id!r}/{end_id!r}",
+        )
+    products = get_products_by_id_range(start_id, end_id)
+    return ToolResult.success(
+        tool_version_id="getBatchProductByProductIds",
+        data={"products": [_product_data(p) for p in products]},
     )
 
 

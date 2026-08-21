@@ -233,3 +233,106 @@ class TestRequiredArgumentValidation:
         assert result.status == "FAILED"
         assert result.error is not None
         assert result.error.error_code == "INVALID_ARGUMENT"
+
+
+class TestGetProductById:
+    def test_get_product_by_id_returns_product(self) -> None:
+        result = _run("getProductById", {"product_id": 1})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["product_id"] == 1
+        assert result.data["name"] == "苹果"
+        assert result.data["price"] == 10.0
+
+    def test_get_product_by_id_not_found(self) -> None:
+        result = _run("getProductById", {"product_id": 999})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_NOT_FOUND"
+
+    def test_get_product_by_id_missing_arg(self) -> None:
+        result = _run("getProductById", {})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+    def test_get_product_by_id_non_int(self) -> None:
+        result = _run("getProductById", {"product_id": "1"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+
+class TestGetProductSubstitutes:
+    def test_by_id_returns_seed_substitute(self) -> None:
+        result = _run("getProductSubstitutes", {"product_id": 1})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert [p["name"] for p in result.data["substitutes"]] == ["香蕉"]
+
+    def test_by_name_returns_seed_substitute(self) -> None:
+        result = _run("getProductSubstitutesByName", {"name": "苹果"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert [p["name"] for p in result.data["substitutes"]] == ["香蕉"]
+
+    def test_no_substitute_returns_empty_list(self) -> None:
+        result = _run("getProductSubstitutes", {"product_id": 3})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"substitutes": []}
+
+    def test_by_id_not_found(self) -> None:
+        result = _run("getProductSubstitutes", {"product_id": 999})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_NOT_FOUND"
+
+    def test_by_name_not_found(self) -> None:
+        result = _run("getProductSubstitutesByName", {"name": "榴莲"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_NOT_FOUND"
+
+    def test_missing_arguments_fail_closed(self) -> None:
+        by_id = _run("getProductSubstitutes", {})
+        by_name = _run("getProductSubstitutesByName", {})
+
+        assert by_id.error is not None and by_id.error.error_code == "INVALID_ARGUMENT"
+        assert by_name.error is not None and by_name.error.error_code == "INVALID_ARGUMENT"
+
+
+class TestGetBatchProductByProductIds:
+    def test_batch_returns_id_range_in_order(self) -> None:
+        result = _run("getBatchProductByProductIds", {"start_id": 1, "end_id": 3})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert [p["product_id"] for p in result.data["products"]] == [1, 2, 3]
+
+    def test_batch_empty_range_is_success(self) -> None:
+        result = _run("getBatchProductByProductIds", {"start_id": 100, "end_id": 200})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"products": []}
+
+    def test_batch_reversed_range_returns_empty(self) -> None:
+        result = _run("getBatchProductByProductIds", {"start_id": 5, "end_id": 1})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"products": []}
+
+    def test_batch_missing_args(self) -> None:
+        result = _run("getBatchProductByProductIds", {})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
