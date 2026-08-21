@@ -62,8 +62,10 @@ _ORDER_WRITE_SCOPE = "order:write"
 # a plan that labels one of them READ is rejected as RISK_DOWNGRADE — the LLM
 # planner must not downgrade risk to slip a write past the approval gate.
 # Product/supplier maintenance tools (add/update/delete) carry the single
-# order:write scope the current coarse scope model exposes; M3 re-classifies
-# the four delete tools as DANGEROUS with per-domain scopes.
+# order:write scope the current coarse scope model exposes. The four delete
+# tools additionally appear in DANGEROUS_TOOLS: the planner stamps them
+# DANGEROUS and validate_plan rejects any labeling below DANGEROUS (the
+# DANGEROUS risk feeds the approval/audit surface, not a distinct scope).
 WRITE_TOOLS: frozenset[str] = frozenset(
     {
         _CREATE_ORDER,
@@ -73,6 +75,20 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         _ADD_SUPPLIERS,
         _UPDATE_PRODUCT_DESCRIPTION,
         _UPDATE_PRODUCT_SUBSTITUTES,
+        _REMOVE_PRODUCT_BY_NAME,
+        _REMOVE_PRODUCT_BY_ID,
+        _DELETE_SUPPLIER_BY_NAME,
+        _DELETE_SUPPLIER_BY_ID,
+    }
+)
+
+# Delete-class tools: DANGEROUS (stronger than WRITE). The deterministic
+# planner stamps these via _dangerous_step; validate_plan (defence layer 2)
+# rejects any delete tool labeled WRITE or READ so the LLM planner cannot
+# weaken a delete into the same approval class as an add/update. They stay in
+# WRITE_TOOLS too so the existing READ-downgrade check keeps firing.
+DANGEROUS_TOOLS: frozenset[str] = frozenset(
+    {
         _REMOVE_PRODUCT_BY_NAME,
         _REMOVE_PRODUCT_BY_ID,
         _DELETE_SUPPLIER_BY_NAME,
@@ -145,6 +161,34 @@ def _write_step(
         argument_sources=argument_sources,
         depends_on=depends_on,
         risk_level=ToolRiskLevel.WRITE,
+        required_scope=_ORDER_WRITE_SCOPE,
+        requires_approval=True,
+        timeout_s=30,
+        max_retries=2,
+        fallback=fallback,
+        success_condition=_condition_for(tool_name, arguments),
+    )
+
+
+def _dangerous_step(
+    step_id: str,
+    tool_name: str,
+    description: str,
+    arguments: dict[str, Any],
+    argument_sources: dict[str, str],
+    depends_on: list[str],
+    fallback: str,
+) -> PlanStep:
+    """Delete-class step builder: same approval/scope contract as _write_step,
+    but stamped DANGEROUS so the risk surfaces in approvals and audit."""
+    return PlanStep(
+        step_id=step_id,
+        tool_name=tool_name,
+        description=description,
+        arguments=arguments,
+        argument_sources=argument_sources,
+        depends_on=depends_on,
+        risk_level=ToolRiskLevel.DANGEROUS,
         required_scope=_ORDER_WRITE_SCOPE,
         requires_approval=True,
         timeout_s=30,
@@ -241,7 +285,7 @@ def _supplier_create_steps(entities: dict[str, Any]) -> list[PlanStep] | None:
 def _supplier_delete_steps(entities: dict[str, Any]) -> list[PlanStep] | None:
     if entities.get("supplier_id") is not None:
         return [
-            _write_step(
+            _dangerous_step(
                 "s1",
                 _DELETE_SUPPLIER_BY_ID,
                 description="按 ID 删除供应商",
@@ -255,7 +299,7 @@ def _supplier_delete_steps(entities: dict[str, Any]) -> list[PlanStep] | None:
     if not name:
         return None
     return [
-        _write_step(
+        _dangerous_step(
             "s1",
             _DELETE_SUPPLIER_BY_NAME,
             description="按名称删除供应商",
@@ -328,7 +372,7 @@ def _product_update_steps(entities: dict[str, Any]) -> list[PlanStep] | None:
 def _product_delete_steps(entities: dict[str, Any]) -> list[PlanStep] | None:
     if entities.get("product_id") is not None:
         return [
-            _write_step(
+            _dangerous_step(
                 "s1",
                 _REMOVE_PRODUCT_BY_ID,
                 description="按 ID 删除商品",
@@ -342,7 +386,7 @@ def _product_delete_steps(entities: dict[str, Any]) -> list[PlanStep] | None:
     if not name:
         return None
     return [
-        _write_step(
+        _dangerous_step(
             "s1",
             _REMOVE_PRODUCT_BY_NAME,
             description="按名称删除商品",

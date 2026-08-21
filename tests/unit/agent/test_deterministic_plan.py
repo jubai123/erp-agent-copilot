@@ -194,6 +194,26 @@ class TestWriteMaintenancePlanShape:
         plan, _ = build_plan_from_intent(classify_intent("删除供应商 5 号"))
         assert plan.steps[0].tool_name == "deleteSupplierById"
 
+    def test_delete_steps_are_dangerous_and_approval_gated(self) -> None:
+        # Delete tools are DANGEROUS (not merely WRITE): the risk feeds the
+        # approval/audit surface and validate_plan guards any downgrade below
+        # DANGEROUS. They keep the coarse order:write scope so existing RBAC
+        # grants (which hold order:write, not per-domain delete scopes) still
+        # reach the approval gate instead of being DENYed.
+        for query, expected in [
+            ("删除商品 4 号", "removeProductById"),
+            ("删除商品 苹果", "removeProductByName"),
+            ("删除供应商 5 号", "deleteSupplierById"),
+            ("删除供应商 旧物流", "deleteSupplierByName"),
+        ]:
+            plan, errors = build_plan_from_intent(classify_intent(query))
+            assert errors == []
+            step = plan.steps[0]
+            assert step.tool_name == expected
+            assert step.risk_level == ToolRiskLevel.DANGEROUS
+            assert step.requires_approval is True
+            assert step.fallback is not None
+
     def test_order_query_subintents_are_read_steps(self) -> None:
         for query, tool, expected in [
             ("已发货的订单有哪些", "getByOrderStatus", {"status": "SHIPPED"}),

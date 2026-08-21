@@ -236,7 +236,7 @@ class TestM0WriteIntents:
     def test_supplier_delete(self) -> None:
         intent = classify_intent("删除供应商 旧物流")
         assert (intent.domain, intent.action) == ("supplier", "delete")
-        assert intent.risk_level == ToolRiskLevel.WRITE
+        assert intent.risk_level == ToolRiskLevel.DANGEROUS
 
     def test_product_add(self) -> None:
         intent = classify_intent("添加名称为西瓜的商品")
@@ -251,7 +251,7 @@ class TestM0WriteIntents:
     def test_product_delete(self) -> None:
         intent = classify_intent("删除商品 4 号")
         assert (intent.domain, intent.action) == ("product", "delete")
-        assert intent.risk_level == ToolRiskLevel.WRITE
+        assert intent.risk_level == ToolRiskLevel.DANGEROUS
 
 
 class TestClassifyIntentNode:

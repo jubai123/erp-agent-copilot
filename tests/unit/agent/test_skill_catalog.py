@@ -30,7 +30,11 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 from apps.worker.graph_builder import WORKER_TOOL_SCHEMAS  # noqa: E402
 from erp_copilot.agent.nodes.verify_results import evaluate_success_condition  # noqa: E402
-from erp_copilot.agent.planner import _SUCCESS_CONDITION_TEMPLATES, WRITE_TOOLS  # noqa: E402
+from erp_copilot.agent.planner import (  # noqa: E402
+    _SUCCESS_CONDITION_TEMPLATES,
+    DANGEROUS_TOOLS,
+    WRITE_TOOLS,
+)
 from erp_copilot.agent.skill_catalog import AgentSkill, load_agent_skills  # noqa: E402
 from erp_copilot.domain.enums import ToolRiskLevel  # noqa: E402
 from erp_copilot.tools.candidate_filter import V6_TOOL_NAMES  # noqa: E402
@@ -81,7 +85,10 @@ class TestCatalog:
 
     def test_risk_level_and_scope_align_with_planner(self) -> None:
         for skill in _skills():
-            if skill.tool in WRITE_TOOLS:
+            if skill.tool in DANGEROUS_TOOLS:
+                assert skill.risk_level == ToolRiskLevel.DANGEROUS
+                assert skill.required_scope == "order:write"
+            elif skill.tool in WRITE_TOOLS:
                 assert skill.risk_level == ToolRiskLevel.WRITE
                 assert skill.required_scope == "order:write"
             else:

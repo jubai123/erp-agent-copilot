@@ -28,7 +28,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from erp_copilot.agent.planner import WRITE_TOOLS
+from erp_copilot.agent.planner import DANGEROUS_TOOLS, WRITE_TOOLS
 from erp_copilot.agent.state import AgentState, Plan, PlanValidation, StateError
 from erp_copilot.domain.enums import ToolRiskLevel
 
@@ -169,6 +169,17 @@ def _structural_errors(
                     message=(
                         f"step {step.step_id} 将已知写工具 {step.tool_name} 标记为 READ，"
                         "写操作必须按 WRITE 走审批闸门"
+                    ),
+                    step_id=step.step_id,
+                )
+            )
+        if step.tool_name in DANGEROUS_TOOLS and step.risk_level != ToolRiskLevel.DANGEROUS:
+            errors.append(
+                StateError(
+                    code="RISK_DOWNGRADE",
+                    message=(
+                        f"step {step.step_id} 将删除类工具 {step.tool_name} 标记为 "
+                        f"{step.risk_level.value}，删除操作必须按 DANGEROUS 走审批闸门"
                     ),
                     step_id=step.step_id,
                 )

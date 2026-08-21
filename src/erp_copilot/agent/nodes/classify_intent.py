@@ -134,7 +134,7 @@ _INTENT_RULES: tuple[tuple[tuple[str, ...], str, str, ToolRiskLevel], ...] = (
         ("删除商品", "删除产品", "下架商品", "移除商品"),
         "product",
         "delete",
-        ToolRiskLevel.WRITE,
+        ToolRiskLevel.DANGEROUS,
     ),
     (
         (
@@ -164,7 +164,7 @@ _INTENT_RULES: tuple[tuple[tuple[str, ...], str, str, ToolRiskLevel], ...] = (
         ToolRiskLevel.WRITE,
     ),
     (("添加供应商", "新增供应商", "注册供应商"), "supplier", "create", ToolRiskLevel.WRITE),
-    (("删除供应商", "移除供应商"), "supplier", "delete", ToolRiskLevel.WRITE),
+    (("删除供应商", "移除供应商"), "supplier", "delete", ToolRiskLevel.DANGEROUS),
     (("供应商", "物流", "配送", "发货"), "supplier", "query", ToolRiskLevel.READ),
     (("库存",), "product", "check_stock", ToolRiskLevel.READ),
 )

@@ -33,6 +33,8 @@ TOOLS: dict[str, ToolSpec] = {
         name="createOrder",
         required_params=["product_id", "supplier_id", "quantity", "region"],
     ),
+    "removeProductById": ToolSpec(name="removeProductById", required_params=["product_id"]),
+    "deleteSupplierByName": ToolSpec(name="deleteSupplierByName", required_params=["name"]),
 }
 
 
@@ -347,6 +349,55 @@ class TestRiskDowngradeGuard:
     def test_read_tool_labeled_read_untouched(self) -> None:
         result = validate_plan(Plan(steps=[_step()]), TOOLS)  # getProductById
         assert "RISK_DOWNGRADE" not in _codes(result)
+
+    def test_delete_tool_labeled_write_rejected(self) -> None:
+        # M3b: the four delete tools are DANGEROUS, so labeling one WRITE is a
+        # downgrade too — a WRITE-stamped delete would clear the approval gate
+        # with the same approval weight as an add while still deleting data.
+        plan = Plan(
+            steps=[
+                _step(
+                    tool_name="removeProductById",
+                    risk_level=ToolRiskLevel.WRITE,
+                    arguments={"product_id": 1},
+                    argument_sources={},
+                    fallback="撤销删除并恢复商品",
+                )
+            ]
+        )
+        result = validate_plan(plan, TOOLS)
+        assert result.is_valid is False
+        assert "RISK_DOWNGRADE" in _codes(result)
+
+    def test_delete_tool_labeled_read_rejected(self) -> None:
+        plan = Plan(
+            steps=[
+                _step(
+                    tool_name="deleteSupplierByName",
+                    risk_level=ToolRiskLevel.READ,
+                    arguments={"name": "旧物流"},
+                    argument_sources={},
+                )
+            ]
+        )
+        result = validate_plan(plan, TOOLS)
+        assert "RISK_DOWNGRADE" in _codes(result)
+
+    def test_delete_tool_labeled_dangerous_passes(self) -> None:
+        plan = Plan(
+            steps=[
+                _step(
+                    tool_name="removeProductById",
+                    risk_level=ToolRiskLevel.DANGEROUS,
+                    arguments={"product_id": 1},
+                    argument_sources={},
+                    fallback="撤销删除并恢复商品",
+                )
+            ]
+        )
+        result = validate_plan(plan, TOOLS)
+        assert "RISK_DOWNGRADE" not in _codes(result)
+        assert result.is_valid is True
 
 
 class TestTopologicalChecks:
