@@ -44,33 +44,53 @@ class TestDomainToolMap:
             assert 3 <= len(candidates) <= 8, f"{intent}: {len(candidates)} candidates"
 
     def test_supplier_intents_have_all_v6_supplier_tools(self) -> None:
-        """V6 registers only 2 supplier tools — both must be candidates."""
+        """V6 registers 4 supplier tools — all must be candidates."""
         assert set(DOMAIN_TOOL_MAP[("supplier", "query")]) == {
             "querySuppliersByDeliveryRegion",
             "getSupplierByStatus",
+            "getSupplierByName",
+            "getSupplierById",
         }
 
     def test_mapping_has_no_duplicates(self) -> None:
         for intent, tools in DOMAIN_TOOL_MAP.items():
             assert len(tools) == len(set(tools)), f"{intent} has duplicate tools"
 
-    def test_v6_tool_set_matches_design_doc(self) -> None:
-        assert (
-            frozenset(
-                {
-                    "getProductByName",
-                    "getProductById",
-                    "getProductSubstitutesByName",
-                    "querySuppliersByDeliveryRegion",
-                    "getSupplierByStatus",
-                    "getOrderByOrderId",
-                    "createOrder",
-                    "updateOrderStatus",
-                    "cancelOrder",
-                }
-            )
-            == V6_TOOL_NAMES
-        )
+    def test_v6_tool_set_matches_v5_openapi_surface(self) -> None:
+        """V6 registers the full V5 cloud-ERP surface: all 25 interfaces."""
+        assert frozenset(
+            {
+                # products — read / write / delete
+                "getProductByName",
+                "getProductById",
+                "getProductSubstitutesByName",
+                "getProductSubstitutes",
+                "getBatchProductByProductIds",
+                "addProduct",
+                "updateProductDescription",
+                "updateProductSubstitutes",
+                "removeProductByName",
+                "removeProductById",
+                # suppliers — read / write / delete
+                "querySuppliersByDeliveryRegion",
+                "getSupplierByStatus",
+                "getSupplierByName",
+                "getSupplierById",
+                "addSuppliers",
+                "deleteSupplierByName",
+                "deleteSupplierById",
+                # orders — read / write
+                "getOrderByOrderId",
+                "getOrdersBySupplierId",
+                "getByTimeRange",
+                "getByProductId",
+                "getByOrderStatus",
+                "createOrder",
+                "updateOrderStatus",
+                "cancelOrder",
+            }
+        ) == V6_TOOL_NAMES
+        assert len(V6_TOOL_NAMES) == 25
 
 
 class TestFilterCandidates:
@@ -116,7 +136,11 @@ class TestShouldUseToolRetrieval:
         assert should_use_tool_retrieval([]) is False
 
     def test_current_v6_intents_never_trigger_rerank(self) -> None:
-        """With 9 tools, no intent exceeds the threshold — rerank stays off."""
+        """No intent's candidates exceed the threshold — rerank stays off.
+
+        With 25 tools each domain's candidate set still fits in 5, so the
+        second-level vector rerank remains a reserved growth path.
+        """
         for intent, tools in DOMAIN_TOOL_MAP.items():
             assert should_use_tool_retrieval(tools) is False, (
                 f"{intent} unexpectedly triggers tool retrieval"

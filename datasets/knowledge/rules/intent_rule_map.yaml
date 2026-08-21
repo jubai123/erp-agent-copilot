@@ -22,12 +22,47 @@ intents:
       - product-fields
       - scenario-awareness
 
+  - domain: product
+    action: add
+    rules:
+      - product-fields
+      - product-unit-constraint
+      - approval-policy
+
+  - domain: product
+    action: update
+    rules:
+      - product-fields
+      - approval-policy
+
+  - domain: product
+    action: delete
+    rules:
+      - product-fields
+      - approval-policy
+      - data-security-policy
+
   - domain: supplier
     action: query
     rules:
       - region-enum-constraint
       - supplier-status-constraint
       - supplier-fields
+
+  - domain: supplier
+    action: create
+    rules:
+      - supplier-fields
+      - region-enum-constraint
+      - supplier-status-constraint
+      - approval-policy
+
+  - domain: supplier
+    action: delete
+    rules:
+      - supplier-fields
+      - approval-policy
+      - data-security-policy
 
   - domain: order
     action: create
@@ -45,6 +80,30 @@ intents:
     rules:
       - order-state-machine
       - order-param-constraints
+
+  - domain: order
+    action: query_by_time
+    rules:
+      - order-param-constraints
+      - order-state-machine
+
+  - domain: order
+    action: query_by_status
+    rules:
+      - order-param-constraints
+      - order-state-machine
+
+  - domain: order
+    action: query_by_product
+    rules:
+      - order-param-constraints
+      - order-state-machine
+
+  - domain: order
+    action: query_by_supplier
+    rules:
+      - order-param-constraints
+      - order-state-machine
 
   - domain: order
     action: cancel

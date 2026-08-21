@@ -103,9 +103,15 @@ class TestToolRetrieval:
             assert case["expected_tool"] in case["candidate_tools"], case["case_id"]
             assert (case["domain"], case["action"]) in known, case["case_id"]
 
-    def test_all_nine_tools_are_expected_by_some_case(self) -> None:
+    def test_expected_tools_are_subset_of_registry(self) -> None:
+        """Every eval expected tool is registered; the registry may hold more.
+
+        Relaxed from == : tool_retrieval_40 still covers the 9-tool baseline
+        while V6_TOOL_NAMES grew to the full 25-tool V5 surface. M5 (optional)
+        restores per-registered-tool coverage by adding eval cases.
+        """
         expected = {c["expected_tool"] for c in _load("tool_retrieval_40.json")["cases"]}
-        assert expected == set(V6_TOOL_NAMES)
+        assert expected <= set(V6_TOOL_NAMES)
 
     def test_hard_negatives_present(self) -> None:
         cases = _load("tool_retrieval_40.json")["cases"]
