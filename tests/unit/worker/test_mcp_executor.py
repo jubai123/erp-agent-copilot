@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from mcp.types import TextContent
 
 from apps.worker.mcp_executor import MCPToolExecutor, build_mcp_executor
+from erp_copilot.agent.retry_policy import AsyncRetryExecutor, RetryPolicy
 from erp_copilot.security.ssrf_guard import SSRFGuard
 from erp_copilot.tools.mcp_gateway import SSRFBlockedError
 from erp_copilot.tools.tool_result import ToolResult
@@ -206,3 +207,135 @@ class TestErrorMapping:
             build_mcp_executor("http://localhost:8000/mcp", guard=guard)
 
         cls.assert_called_once_with("http://localhost:8000/mcp", guard=guard)
+
+    def test_timeout_code_in_error_text_restores_is_retryable(self) -> None:
+        conn = _make_conn()
+        conn.execute_tool.return_value = _result(
+            is_error=True, text="TIMEOUT: Cloud ERP request timed out"
+        )
+        executor = _build(conn)
+
+        result = _call(executor)
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "TIMEOUT"
+        assert result.error.is_retryable is True
+
+    def test_upstream_unavailable_code_restores_is_retryable(self) -> None:
+        conn = _make_conn()
+        conn.execute_tool.return_value = _result(
+            is_error=True, text="UPSTREAM_UNAVAILABLE: Cloud ERP unreachable"
+        )
+        executor = _build(conn)
+
+        result = _call(executor)
+
+        assert result.error is not None
+        assert result.error.error_code == "UPSTREAM_UNAVAILABLE"
+        assert result.error.is_retryable is True
+
+    def test_upstream_5xx_code_restores_is_retryable(self) -> None:
+        conn = _make_conn()
+        conn.execute_tool.return_value = _result(
+            is_error=True, text="UPSTREAM_503: Cloud ERP returned HTTP 503"
+        )
+        executor = _build(conn)
+
+        result = _call(executor)
+
+        assert result.error is not None
+        assert result.error.error_code == "UPSTREAM_503"
+        assert result.error.is_retryable is True
+
+    def test_upstream_4xx_code_stays_permanent(self) -> None:
+        conn = _make_conn()
+        conn.execute_tool.return_value = _result(
+            is_error=True, text="UPSTREAM_400: Cloud ERP returned HTTP 400"
+        )
+        executor = _build(conn)
+
+        result = _call(executor)
+
+        assert result.error is not None
+        assert result.error.error_code == "MCP_TOOL_ERROR"
+        assert result.error.is_retryable is False
+
+    def test_create_order_timeout_preserves_code_but_stays_permanent(self) -> None:
+        conn = _make_conn()
+        conn.execute_tool.return_value = _result(
+            is_error=True, text="TIMEOUT: Cloud ERP request timed out"
+        )
+        executor = _build(conn)
+
+        result = _call(executor, tool_name="createOrder")
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "TIMEOUT"
+        assert result.error.is_retryable is False
+
+    def test_create_order_upstream_5xx_preserves_code_but_stays_permanent(self) -> None:
+        conn = _make_conn()
+        conn.execute_tool.return_value = _result(
+            is_error=True, text="UPSTREAM_503: Cloud ERP returned HTTP 503"
+        )
+        executor = _build(conn)
+
+        result = _call(executor, tool_name="createOrder")
+
+        assert result.error is not None
+        assert result.error.error_code == "UPSTREAM_503"
+        assert result.error.is_retryable is False
+
+    def test_create_order_not_retried_by_async_retry_executor(self) -> None:
+        conn = _make_conn()
+        attempts: dict[str, int] = {"n": 0}
+
+        async def _flaky(*args: Any, **kwargs: Any) -> Any:
+            attempts["n"] += 1
+            return _result(is_error=True, text="TIMEOUT: Cloud ERP request timed out")
+
+        conn.execute_tool = AsyncMock(side_effect=_flaky)
+        executor = _build(conn)
+        sleep = AsyncMock(return_value=None)
+
+        async def run() -> ToolResult:
+            retry = AsyncRetryExecutor(RetryPolicy(base_delay_s=0.0), sleep=sleep)
+            return await retry.execute(
+                lambda: executor("createOrder", {"product_id": 10094}),
+                max_retries=2,
+            )
+
+        result = asyncio.run(run())
+
+        assert result.status == "FAILED"
+        assert attempts["n"] == 1
+        sleep.assert_not_awaited()
+
+    def test_async_retry_executor_retries_retryable_mcp_error(self) -> None:
+        conn = _make_conn()
+        attempts: dict[str, int] = {"n": 0}
+
+        async def _flaky(*args: Any, **kwargs: Any) -> Any:
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                return _result(is_error=True, text="TIMEOUT: Cloud ERP request timed out")
+            return _result(structured_content={"ok": True})
+
+        conn.execute_tool = AsyncMock(side_effect=_flaky)
+        executor = _build(conn)
+        sleep = AsyncMock(return_value=None)
+
+        async def run() -> ToolResult:
+            retry = AsyncRetryExecutor(RetryPolicy(base_delay_s=0.0), sleep=sleep)
+            return await retry.execute(
+                lambda: executor("getProductByName", {"name": "苹果"}),
+                max_retries=2,
+            )
+
+        result = asyncio.run(run())
+
+        assert result.status == "SUCCEEDED"
+        assert attempts["n"] == 2
+        sleep.assert_awaited_once()
