@@ -522,17 +522,13 @@ def _normalize_substitutes(payload: Any) -> dict[str, Any]:
     business answer.
     """
     items = payload if isinstance(payload, list) else [payload]
-    return {
-        "substitutes": [_normalize_product(item) for item in items if isinstance(item, dict)]
-    }
+    return {"substitutes": [_normalize_product(item) for item in items if isinstance(item, dict)]}
 
 
 def _normalize_product_list(payload: Any) -> dict[str, Any]:
     """Cloud batch result (bare array of Products) -> {"products": [...]}."""
     items = payload if isinstance(payload, list) else []
-    return {
-        "products": [_normalize_product(item) for item in items if isinstance(item, dict)]
-    }
+    return {"products": [_normalize_product(item) for item in items if isinstance(item, dict)]}
 
 
 def _normalize_supplier(payload: dict[str, Any]) -> dict[str, Any]:
