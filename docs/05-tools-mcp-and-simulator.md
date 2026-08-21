@@ -105,19 +105,35 @@ Tool错误统一映射为暂时性、永久性、鉴权、限额、超时、取�
 
 ## 5. ERP Simulator工具
 
-首版提供：
+V5 全量对齐：25 个接口全部进入决策范围、全部可执行（模拟器 / 云 HTTP / MCP 全链路），写/删工具按审批门控。
 
 | Tool | 风险 | 作用 |
 |---|---|---|
 | `getProductByName` | READ | 按产品名称查询价格和库存 |
-| `getProductById` | READ | 按产品ID查询详情 |
-| `getProductSubstitutesByName` | READ | 库存不足时查询替代产品 |
-| `querySuppliersByDeliveryRegion` | READ | 查询指定地区可用供应商 |
+| `getProductById` | READ | 按产品 ID 查询详情 |
+| `getProductSubstitutes` | READ | 按 ID 查询替代产品 |
+| `getProductSubstitutesByName` | READ | 按名称查询替代产品 |
+| `getBatchProductByProductIds` | READ | 按 ID 区间批量查询产品 |
 | `getSupplierByStatus` | READ | 按供应商状态筛选候选 |
+| `querySuppliersByDeliveryRegion` | READ | 查询指定地区可用供应商 |
+| `getSupplierByName` | READ | 按名称查询供应商 |
+| `getSupplierById` | READ | 按 ID 查询供应商 |
 | `getOrderByOrderId` | READ | 查询订单当前状态 |
+| `getOrdersBySupplierId` | READ | 按供应商查询订单 |
+| `getByProductId` | READ | 按产品查询订单 |
+| `getByOrderStatus` | READ | 按状态查询订单 |
+| `getByTimeRange` | READ | 按时间区间查询订单 |
 | `createOrder` | WRITE | 创建订单，需要业务校验和确认 |
 | `updateOrderStatus` | WRITE | 更新订单状态，需要审批 |
-| `cancelOrder` | ADMIN | 取消订单，强制确认 |
+| `cancelOrder` | WRITE | 取消订单，需要审批 |
+| `addProduct` | WRITE | 新增产品，需要审批 |
+| `addSuppliers` | WRITE | 新增供应商，需要审批 |
+| `updateProductDescription` | WRITE | 更新产品描述，需要审批 |
+| `updateProductSubstitutes` | WRITE | 更新产品替代品，需要审批 |
+| `removeProductByName` | DANGEROUS | 按名称删除产品，强审批 |
+| `removeProductById` | DANGEROUS | 按 ID 删除产品，强审批 |
+| `deleteSupplierByName` | DANGEROUS | 按名称删除供应商，强审批 |
+| `deleteSupplierById` | DANGEROUS | 按 ID 删除供应商，强审批 |
 
 ## 6. 场景与状态
 
@@ -161,6 +177,26 @@ LIVE   → 调用真实ERP，仅限显式开启
 5. CI和离线Eval强制禁止`LIVE`模式。
 
 执行器读取配额响应头并记录`remaining_quota`，达到阈值后拒绝非必要LIVE调用。对429使用受限退避，不对写操作进行无幂等保障的自动重试。
+
+### 8.1 真实云 ERP 的 MCP Server（`erp_mcp_server`）
+
+`apps/mcp_gateway/erp_mcp_server.py` 是一个独立 MCP Server，把**真实云 ERP** 的全部 25 个接口（与 §5 工具表完全对齐；写/删工具默认不广告，见下方开关）用 MCP 协议暴露，与内存 `demo_server`（§5）共存。它不是把 ERP 模拟器包一层，而是复用 `apps.worker.executor.build_erp_http_executor`（V5 约定，`X-API-Key` 头，camelCase→snake_case 归一化、302→`ORDER_NOT_FOUND`、`id:-1`→`ORDER_CREATE_FAILED`）——本模块只是 `ToolResult → MCP 响应` 的薄适配，不含任何 ERP 逻辑。
+
+```text
+运行:  python -m apps.mcp_gateway.erp_mcp_server
+端点:  http://127.0.0.1:8766/mcp   （demo_server 占 8765）
+配置:  ERP_API_BASE_URL / ERP_API_KEY（必填，读取真实 ERP）
+订单写开关: ERP_MCP_CREATE_ORDER_ENABLED（默认 0，createOrder/updateOrderStatus/cancelOrder）
+维护开关:  ERP_MCP_MAINTENANCE_ENABLED（默认 0，addProduct/addSuppliers/updateProduct*/removeProduct*/deleteSupplier*）
+```
+
+要点与已知局限：
+
+- **写/删工具默认不注册**（omit 而非 reject）：MCP 无 "disabled tool" 状态，关闭时不把写路径列入 `tools/list`，客户端不会误以为可调用。订单写（createOrder/updateOrderStatus/cancelOrder）由 `ERP_MCP_CREATE_ORDER_ENABLED` 控制，目录增删改（addProduct 等 8 个）由 `ERP_MCP_MAINTENANCE_ENABLED` 控制；真实云下单无法删除，开关需运维显式开启。
+- **云端 createOrder 无幂等键**：MCP Server 端不承担 at-most-once，需调用方（如 worker 的 `IdempotencyStore`）保证；响应丢失的重试可能重复下单。
+- **`is_retryable` 在 MCP 边界不直接传输**：MCP 无重试信号，失败统一表现为 `is_error=True`（error_code 内嵌在消息文本中）。worker 的 `MCPToolExecutor`（apps/worker/mcp_executor.py）会从文本解析已知瞬态 code（`TIMEOUT`/`UPSTREAM_UNAVAILABLE`/`UPSTREAM_5xx`）并保留为 `error_code`；仅对只读工具还原 `is_retryable` 以驱动 `AsyncRetryExecutor`。外部直连客户端看到的是统一 `is_error=True`，需自行按消息内 code 判断。
+- **可重试还原有 write 边界**：瞬态 code 对**所有**工具保留为 `error_code`（recovery 闸门按 code 分类歧义性），但 `is_retryable` 还原仅对 §5 的全部 14 个 READ 工具生效（`apps/worker/mcp_executor.py` 的 `_READ_TOOL_NAMES` allowlist）。云端 `createOrder` 无服务器端幂等，歧义性失败（如超时）保留 code（如 `TIMEOUT`）但 `is_retryable=False`——recover_or_replan 的歧义写闸门据此给出 `WRITE_OUTCOME_AMBIGUOUS` 交人工对账，封死"重规划重调 createOrder"的重复下单窗口；步骤内重试（`AsyncRetryExecutor` 不查 `IdempotencyStore`）也被 `is_retryable=False` 挡住。用 allowlist 而非 blocklist：所有写/删工具（updateOrderStatus/cancelOrder 及维护类）默认同样不自动重试。
+- 业务失败（未知产品、`id:-1`、HTTP 5xx）→ 工具抛 `ValueError` → SDK 转 `CallToolResult(is_error=True)`，与 demo_server 同语义。
 
 ## 9. 推荐开源参考
 

@@ -212,5 +212,6 @@ Token预算按系统指令、Tool Schema、Plan、知识、历史和输出分别
 - `LLM_OUTPUT_ERROR`：结构化输出解析失败。
 - `DEADLINE_EXCEEDED`：Run超过截止时间。
 - `RECOVERY_RECONCILIATION_REQUIRED`：写Step状态不确定，需要对账。
+- `WRITE_OUTCOME_AMBIGUOUS`：写Step以歧义性瞬态失败（TIMEOUT/UPSTREAM_5xx/UPSTREAM_UNAVAILABLE），云端可能已生效且无服务器端幂等，禁止自动重试或重规划，需人工对账。
 
 错误分类决定是否重试，禁止对所有异常统一重试。
