@@ -381,6 +381,27 @@ def _normalize_product(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_substitutes(payload: Any) -> dict[str, Any]:
+    """Cloud substitute result -> the executor's {"substitutes": [...]} shape.
+
+    The OpenAPI schema models a single Product but the live API may answer a
+    bare list; both are tolerated. An empty list is a legal "no substitute"
+    business answer.
+    """
+    items = payload if isinstance(payload, list) else [payload]
+    return {
+        "substitutes": [_normalize_product(item) for item in items if isinstance(item, dict)]
+    }
+
+
+def _normalize_product_list(payload: Any) -> dict[str, Any]:
+    """Cloud batch result (bare array of Products) -> {"products": [...]}."""
+    items = payload if isinstance(payload, list) else []
+    return {
+        "products": [_normalize_product(item) for item in items if isinstance(item, dict)]
+    }
+
+
 def _normalize_supplier(payload: dict[str, Any]) -> dict[str, Any]:
     # The cloud's deliveryAreas is an array of {region, ...} per the OpenAPI
     # spec but the live API returns plain region strings ("北京", "上海"). V6
@@ -486,6 +507,73 @@ async def _dispatch_http(
                 tool_name, "PRODUCT_NOT_FOUND", f"Product '{arguments.get('name')!r}' not found"
             )
         return ToolResult.success(tool_version_id=tool_name, data=_normalize_product(payload))
+
+    if tool_name == "getProductById":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/products/getProductById",
+            headers=headers,
+            json={"productId": arguments["product_id"]},
+        )
+        if payload.get("productId") is None:
+            return _permanent_failure(
+                tool_name,
+                "PRODUCT_NOT_FOUND",
+                f"Product with id {arguments.get('product_id')!r} not found",
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_product(payload))
+
+    if tool_name == "getProductSubstitutes":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/products/getProductSubstitutes",
+            headers=headers,
+            json={"productId": arguments["product_id"]},
+        )
+        # A bare list is the substitute set (possibly empty) — the cloud cannot
+        # signal "product not found" in that shape. A dict with no productId is
+        # the unknown-product answer.
+        if isinstance(payload, list):
+            return ToolResult.success(
+                tool_version_id=tool_name, data=_normalize_substitutes(payload)
+            )
+        if payload.get("productId") is None:
+            return _permanent_failure(
+                tool_name,
+                "PRODUCT_NOT_FOUND",
+                f"Product with id {arguments.get('product_id')!r} not found",
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_substitutes(payload))
+
+    if tool_name == "getProductSubstitutesByName":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/products/getProductSubstitutesByName",
+            headers=headers,
+            json={"name": arguments["name"]},
+        )
+        if isinstance(payload, list):
+            return ToolResult.success(
+                tool_version_id=tool_name, data=_normalize_substitutes(payload)
+            )
+        if payload.get("productId") is None:
+            return _permanent_failure(
+                tool_name, "PRODUCT_NOT_FOUND", f"Product '{arguments.get('name')!r}' not found"
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_substitutes(payload))
+
+    if tool_name == "getBatchProductByProductIds":
+        payload = await _request_json(
+            client,
+            "POST",
+            "/products/getBatchProductByProductIds",
+            headers=headers,
+            json={"startId": arguments["start_id"], "endId": arguments["end_id"]},
+        )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_product_list(payload))
 
     if tool_name == "getSupplierByStatus":
         cloud_status = (

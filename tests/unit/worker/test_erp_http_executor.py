@@ -511,3 +511,157 @@ class TestResolveErpExecutor:
 
         assert isinstance(executor, MCPToolExecutor)
         assert executor.connection.url == "http://localhost:8765/mcp"
+
+
+class TestGetProductById:
+    def test_posts_id_and_normalizes_product(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/products/getProductById").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "productId": 4,
+                        "name": "电脑",
+                        "description": "办公笔记本",
+                        "price": 5000.0,
+                        "quantityInStock": 15,
+                        "substituteProductId": 5,
+                    },
+                )
+            )
+            result = _call("getProductById", {"product_id": 4})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {
+            "product_id": 4,
+            "name": "电脑",
+            "description": "办公笔记本",
+            "price": 5000.0,
+            "stock": 15,
+        }
+        _assert_body(route.calls.last.request, {"productId": 4})
+
+    def test_empty_response_is_permanent_not_found(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/products/getProductById").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            result = _call("getProductById", {"product_id": 99})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_NOT_FOUND"
+        assert result.error.is_retryable is False
+
+
+class TestGetProductSubstitutes:
+    def test_single_product_response_becomes_list(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/products/getProductSubstitutes").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "productId": 2,
+                        "name": "香蕉",
+                        "description": "进口香蕉",
+                        "price": 8.0,
+                        "quantityInStock": 50,
+                        "substituteProductId": None,
+                    },
+                )
+            )
+            result = _call("getProductSubstitutes", {"product_id": 1})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["substitutes"] == [
+            {"product_id": 2, "name": "香蕉", "description": "进口香蕉", "price": 8.0, "stock": 50}
+        ]
+        _assert_body(route.calls.last.request, {"productId": 1})
+
+    def test_bare_list_response_is_normalized(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/products/getProductSubstitutes").mock(
+                return_value=httpx.Response(200, json=[])
+            )
+            result = _call("getProductSubstitutes", {"product_id": 3})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"substitutes": []}
+
+    def test_by_name_posts_name(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/products/getProductSubstitutesByName").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "productId": 2,
+                        "name": "香蕉",
+                        "description": "进口香蕉",
+                        "price": 8.0,
+                        "quantityInStock": 50,
+                        "substituteProductId": None,
+                    },
+                )
+            )
+            result = _call("getProductSubstitutesByName", {"name": "苹果"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["substitutes"][0]["name"] == "香蕉"
+        _assert_body(route.calls.last.request, {"name": "苹果"})
+
+    def test_empty_response_is_permanent_not_found(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/products/getProductSubstitutesByName").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            result = _call("getProductSubstitutesByName", {"name": "榴莲"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "PRODUCT_NOT_FOUND"
+
+
+class TestGetBatchProductByProductIds:
+    def test_posts_range_and_normalizes_bare_array(self) -> None:
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/products/getBatchProductByProductIds").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "productId": 1,
+                            "name": "苹果",
+                            "description": "红富士",
+                            "price": 10.0,
+                            "quantityInStock": 100,
+                            "substituteProductId": 2,
+                        },
+                        {
+                            "productId": 2,
+                            "name": "香蕉",
+                            "description": "进口香蕉",
+                            "price": 8.0,
+                            "quantityInStock": 50,
+                            "substituteProductId": None,
+                        },
+                    ],
+                )
+            )
+            result = _call("getBatchProductByProductIds", {"start_id": 1, "end_id": 3})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert [p["product_id"] for p in result.data["products"]] == [1, 2]
+        _assert_body(route.calls.last.request, {"startId": 1, "endId": 3})
+
+    def test_empty_array_is_success(self) -> None:
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/products/getBatchProductByProductIds").mock(
+                return_value=httpx.Response(200, json=[])
+            )
+            result = _call("getBatchProductByProductIds", {"start_id": 100, "end_id": 200})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"products": []}
