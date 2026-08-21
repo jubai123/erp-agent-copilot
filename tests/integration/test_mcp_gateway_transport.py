@@ -148,6 +148,8 @@ class TestRealTransportRoundTrip:
             "getSupplierByName",
             "getSupplierById",
             "createOrder",
+            "updateOrderStatus",
+            "cancelOrder",
             "getOrderByOrderId",
             "getOrdersBySupplierId",
             "getByProductId",

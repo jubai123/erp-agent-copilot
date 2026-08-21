@@ -30,6 +30,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from apps.erp_simulator.data.orders import (
+    cancel_order,
     create_order,
     get_by_id,
     get_by_idempotency_key,
@@ -37,6 +38,7 @@ from apps.erp_simulator.data.orders import (
     get_orders_by_status,
     get_orders_by_supplier,
     get_orders_by_time_range,
+    update_order_status,
 )
 from apps.erp_simulator.data.products import (
     PRODUCT_BY_ID,
@@ -243,6 +245,33 @@ def build_demo_server() -> MCPServer:
             unit_price=product.price,
             idempotency_key=idempotency_key,
         )
+        return _order_to_dict(order)
+
+    @server.tool(name="updateOrderStatus")
+    def update_order_status_tool(
+        order_id: str, status: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        """Advance an order's status at-most-once per idempotency_key.
+
+        Mirrors the simulator executor: a replay (same key) returns the recorded
+        order without re-applying; an illegal transition raises ValueError,
+        surfaced as is_error=True.
+        """
+        order = update_order_status(order_id, status, idempotency_key)
+        if order is None:
+            raise ValueError(f"Order '{order_id}' not found")
+        return _order_to_dict(order)
+
+    @server.tool(name="cancelOrder")
+    def cancel_order_tool(order_id: str, idempotency_key: str) -> dict[str, Any]:
+        """Cancel an order at-most-once per idempotency_key (mirrors the executor).
+
+        Only CREATED/CONFIRMED/SHIPPED orders may be cancelled; a terminal order
+        raises ValueError, surfaced as is_error=True.
+        """
+        order = cancel_order(order_id, idempotency_key)
+        if order is None:
+            raise ValueError(f"Order '{order_id}' not found")
         return _order_to_dict(order)
 
     @server.tool(name="getOrderByOrderId")

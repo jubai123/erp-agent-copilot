@@ -159,6 +159,43 @@ def build_erp_mcp_server(
                 )
             )
 
+        @server.tool(name="updateOrderStatus")
+        async def update_order_status_tool(
+            order_id: str, status: str, idempotency_key: str
+        ) -> dict[str, Any]:
+            """Advance an order's status on the real ERP (gated write).
+
+            The cloud API has no idempotency-key field, so the key is accepted
+            for contract parity but dropped by the executor; at-most-once must be
+            provided by the caller. Illegal transitions (terminal order,
+            rollback, skip-level) surface as an MCP error result.
+            """
+            return _result_to_mcp(
+                await executor(
+                    "updateOrderStatus",
+                    {
+                        "order_id": order_id,
+                        "status": status,
+                        "idempotency_key": idempotency_key,
+                    },
+                )
+            )
+
+        @server.tool(name="cancelOrder")
+        async def cancel_order_tool(order_id: str, idempotency_key: str) -> dict[str, Any]:
+            """Cancel an order on the real ERP (gated write).
+
+            Only CREATED/CONFIRMED/SHIPPED orders may be cancelled; a terminal
+            order surfaces as an MCP error result. At-most-once must be provided
+            by the caller (no cloud idempotency field).
+            """
+            return _result_to_mcp(
+                await executor(
+                    "cancelOrder",
+                    {"order_id": order_id, "idempotency_key": idempotency_key},
+                )
+            )
+
     @server.tool(name="getOrderByOrderId")
     async def get_order_by_order_id(order_id: str) -> dict[str, Any]:
         """Return an order by its order_id (real ERP)."""

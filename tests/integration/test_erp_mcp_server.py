@@ -44,6 +44,8 @@ _ALL_TOOLS = [
     "getSupplierByName",
     "getSupplierById",
     "createOrder",
+    "updateOrderStatus",
+    "cancelOrder",
     "getOrderByOrderId",
     "getOrdersBySupplierId",
     "getByProductId",
