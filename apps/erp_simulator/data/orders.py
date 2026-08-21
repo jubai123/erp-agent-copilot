@@ -65,3 +65,53 @@ def get_by_idempotency_key(key: str) -> Order | None:
 
 def get_by_id(order_id: str) -> Order | None:
     return _orders_by_id.get(order_id)
+
+
+def get_orders_by_supplier(supplier_id: int) -> list[Order]:
+    """Return orders delivered by *supplier_id*, newest first."""
+    orders = [o for o in _orders_by_id.values() if o.supplier_id == supplier_id]
+    return _by_recency(orders)
+
+
+def get_orders_by_product(product_id: int) -> list[Order]:
+    """Return orders for *product_id*, newest first."""
+    orders = [o for o in _orders_by_id.values() if o.product_id == product_id]
+    return _by_recency(orders)
+
+
+def get_orders_by_status(status: str) -> list[Order]:
+    """Return orders in *status*, newest first."""
+    orders = [o for o in _orders_by_id.values() if o.status == status]
+    return _by_recency(orders)
+
+
+def get_orders_by_time_range(start_date: str, end_date: str) -> list[Order]:
+    """Return orders created in [start_date, end_date] (inclusive), newest first.
+
+    Both bounds are ISO-8601 strings; the date-only form ("2023-01-01") is
+    interpreted as midnight UTC. Order statuses are compared against the V6
+    enum (CREATED/CONFIRMED/SHIPPED/DELIVERED/CANCELLED).
+    """
+    start = _parse_iso(start_date)
+    end = _parse_iso(end_date)
+    if start is None or end is None:
+        return []
+    orders = [o for o in _orders_by_id.values() if start <= _parse_iso(o.created_at) <= end]
+    return _by_recency(orders)
+
+
+def _parse_iso(value: str) -> datetime | None:
+    """Parse an ISO-8601 timestamp; tolerate a missing offset (assume UTC)."""
+    normalized = value.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
+
+
+def _by_recency(orders: list[Order]) -> list[Order]:
+    """Sort orders newest-first by created_at, then by order_id for determinism."""
+    return sorted(orders, key=lambda o: (o.created_at, o.order_id), reverse=True)

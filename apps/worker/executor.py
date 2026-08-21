@@ -29,7 +29,15 @@ from typing import Any
 
 import httpx
 
-from apps.erp_simulator.data.orders import create_order, get_by_id, get_by_idempotency_key
+from apps.erp_simulator.data.orders import (
+    create_order,
+    get_by_id,
+    get_by_idempotency_key,
+    get_orders_by_product,
+    get_orders_by_status,
+    get_orders_by_supplier,
+    get_orders_by_time_range,
+)
 from apps.erp_simulator.data.products import (
     PRODUCT_BY_ID,
     PRODUCT_BY_NAME,
@@ -81,6 +89,14 @@ async def erp_simulator_executor(tool_name: str, arguments: dict[str, Any]) -> T
         return _create_order(arguments)
     if tool_name == "getOrderByOrderId":
         return _get_order(arguments)
+    if tool_name == "getOrdersBySupplierId":
+        return _get_orders_by_supplier(arguments)
+    if tool_name == "getByProductId":
+        return _get_orders_by_product(arguments)
+    if tool_name == "getByOrderStatus":
+        return _get_orders_by_status(arguments)
+    if tool_name == "getByTimeRange":
+        return _get_orders_by_time_range(arguments)
     return ToolResult.failure(
         tool_version_id=tool_name,
         error_code="UNKNOWN_TOOL",
@@ -387,6 +403,68 @@ def _get_order(arguments: dict[str, Any]) -> ToolResult:
             error_message=f"Order '{order_id}' not found",
         )
     return ToolResult.success(tool_version_id="getOrderByOrderId", data=_order_to_dict(order))
+
+
+def _orders_data(orders: list[Any]) -> dict[str, Any]:
+    """Serialize order matches; an empty list is a legal business answer."""
+    return {"orders": [_order_to_dict(o) for o in orders]}
+
+
+def _get_orders_by_supplier(arguments: dict[str, Any]) -> ToolResult:
+    supplier_id = arguments.get("supplier_id")
+    if not isinstance(supplier_id, int):
+        return ToolResult.failure(
+            tool_version_id="getOrdersBySupplierId",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"supplier_id 必须为整数，got {supplier_id!r}",
+        )
+    return ToolResult.success(
+        tool_version_id="getOrdersBySupplierId",
+        data=_orders_data(get_orders_by_supplier(supplier_id)),
+    )
+
+
+def _get_orders_by_product(arguments: dict[str, Any]) -> ToolResult:
+    product_id = arguments.get("product_id")
+    if not isinstance(product_id, int):
+        return ToolResult.failure(
+            tool_version_id="getByProductId",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"product_id 必须为整数，got {product_id!r}",
+        )
+    return ToolResult.success(
+        tool_version_id="getByProductId",
+        data=_orders_data(get_orders_by_product(product_id)),
+    )
+
+
+def _get_orders_by_status(arguments: dict[str, Any]) -> ToolResult:
+    status = arguments.get("status")
+    if not isinstance(status, str):
+        return ToolResult.failure(
+            tool_version_id="getByOrderStatus",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"status 必须为字符串，got {status!r}",
+        )
+    return ToolResult.success(
+        tool_version_id="getByOrderStatus",
+        data=_orders_data(get_orders_by_status(status)),
+    )
+
+
+def _get_orders_by_time_range(arguments: dict[str, Any]) -> ToolResult:
+    start_date = arguments.get("start_date")
+    end_date = arguments.get("end_date")
+    if not isinstance(start_date, str) or not isinstance(end_date, str):
+        return ToolResult.failure(
+            tool_version_id="getByTimeRange",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"start_date/end_date 必须为字符串，got {start_date!r}/{end_date!r}",
+        )
+    return ToolResult.success(
+        tool_version_id="getByTimeRange",
+        data=_orders_data(get_orders_by_time_range(start_date, end_date)),
+    )
 
 
 def _order_to_dict(order: Any) -> dict[str, Any]:

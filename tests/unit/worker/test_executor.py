@@ -139,6 +139,106 @@ class TestGetOrderByOrderId:
         assert result.error.error_code == "ORDER_NOT_FOUND"
 
 
+class TestOrderQueryTools:
+    """Set-query order tools return {"orders": [...]}; an empty list is a legal
+    business answer, so these tools never fail on no-match (unlike the single
+    lookups getOrderByOrderId / getSupplierByName)."""
+
+    def _create_order(self) -> dict[str, Any]:
+        created = _run("createOrder", _create_args())
+        assert created.status == "SUCCEEDED"
+        assert created.data is not None
+        return created.data
+
+    def test_get_orders_by_supplier_includes_created_order(self) -> None:
+        order = self._create_order()
+
+        result = _run("getOrdersBySupplierId", {"supplier_id": 3})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert order["order_id"] in [o["order_id"] for o in result.data["orders"]]
+
+    def test_get_orders_by_supplier_no_match_is_empty_success(self) -> None:
+        result = _run("getOrdersBySupplierId", {"supplier_id": 999})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"orders": []}
+
+    def test_get_orders_by_supplier_missing_arg(self) -> None:
+        result = _run("getOrdersBySupplierId", {})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+    def test_get_orders_by_product_includes_created_order(self) -> None:
+        order = self._create_order()
+
+        result = _run("getByProductId", {"product_id": 1})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert order["order_id"] in [o["order_id"] for o in result.data["orders"]]
+
+    def test_get_orders_by_product_no_match_is_empty_success(self) -> None:
+        result = _run("getByProductId", {"product_id": 999})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"orders": []}
+
+    def test_get_orders_by_product_missing_arg(self) -> None:
+        result = _run("getByProductId", {})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+    def test_get_orders_by_status_includes_created_order(self) -> None:
+        order = self._create_order()
+
+        result = _run("getByOrderStatus", {"status": "CREATED"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert order["order_id"] in [o["order_id"] for o in result.data["orders"]]
+
+    def test_get_orders_by_status_no_match_is_empty_success(self) -> None:
+        result = _run("getByOrderStatus", {"status": "DELIVERED"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"orders": []}
+
+    def test_get_orders_by_status_missing_arg(self) -> None:
+        result = _run("getByOrderStatus", {})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+    def test_get_orders_by_time_range_includes_created_order(self) -> None:
+        order = self._create_order()
+
+        result = _run("getByTimeRange", {"start_date": "2000-01-01", "end_date": "2100-01-01"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert order["order_id"] in [o["order_id"] for o in result.data["orders"]]
+
+    def test_get_orders_by_time_range_no_match_is_empty_success(self) -> None:
+        result = _run("getByTimeRange", {"start_date": "2099-01-01", "end_date": "2099-12-31"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"orders": []}
+
+    def test_get_orders_by_time_range_missing_arg(self) -> None:
+        result = _run("getByTimeRange", {"start_date": "2024-01-01"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_ARGUMENT"
+
+
 class TestSupplierRead:
     def test_get_supplier_by_status_carries_canonical_supplier_id(self) -> None:
         result = _run("getSupplierByStatus", {"status": "AVAILABLE"})
