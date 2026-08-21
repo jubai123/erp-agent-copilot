@@ -3,8 +3,9 @@
 Retires the "MCP 是展示件" critique: a client built on
 :class:`MCPGatewayConnection` can initialize, list tools, and execute them
 against this server over a real Streamable HTTP transport with no mocks. The
-server exposes the full 5-tool simulator contract the worker's executor maps
-(getProductByName, getSupplierByStatus, querySuppliersByDeliveryRegion,
+server exposes the simulator tool contract the worker's executor maps (the
+product reads getProductByName/getProductById/getProductSubstitutes/
+getProductSubstitutesByName/getBatchProductByProductIds, the supplier reads,
 createOrder, getOrderByOrderId), backed by the same seed data
 (apps.erp_simulator.data), so the tool contract is the one the agent already
 validates against (docs/05). createOrder writes into the simulator's in-memory
@@ -29,12 +30,29 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from apps.erp_simulator.data.orders import create_order, get_by_id, get_by_idempotency_key
-from apps.erp_simulator.data.products import PRODUCT_BY_ID, PRODUCT_BY_NAME
+from apps.erp_simulator.data.products import (
+    PRODUCT_BY_ID,
+    PRODUCT_BY_NAME,
+    get_products_by_id_range,
+    get_substitutes,
+)
 from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS
 
 HOST = "127.0.0.1"
 PORT = 8765
 MCP_PATH = "/mcp"
+
+
+def _product_dict(product: Any) -> dict[str, Any]:
+    """Serialize a product in the same shape as the simulator executor."""
+    return {
+        "product_id": product.product_id,
+        "name": product.name,
+        "description": product.description,
+        "price": product.price,
+        "stock": product.quantity_in_stock,
+        "unit": product.unit,
+    }
 
 
 def _suppliers_data(matches: list[Any]) -> dict[str, Any]:
@@ -101,13 +119,37 @@ def build_demo_server() -> MCPServer:
         product = PRODUCT_BY_NAME.get(name)
         if product is None:
             raise ValueError(f"Product '{name}' not found")
+        return _product_dict(product)
+
+    @server.tool(name="getProductById")
+    def get_product_by_id(product_id: int) -> dict[str, Any]:
+        """Return a product's catalog fields by id (mirrors the simulator executor)."""
+        product = PRODUCT_BY_ID.get(product_id)
+        if product is None:
+            raise ValueError(f"Product with id {product_id!r} not found")
+        return _product_dict(product)
+
+    @server.tool(name="getProductSubstitutes")
+    def get_product_substitutes(product_id: int) -> dict[str, Any]:
+        """Return a product's substitutes by id; an empty list is a legal answer."""
+        product = PRODUCT_BY_ID.get(product_id)
+        if product is None:
+            raise ValueError(f"Product with id {product_id!r} not found")
+        return {"substitutes": [_product_dict(p) for p in get_substitutes(product)]}
+
+    @server.tool(name="getProductSubstitutesByName")
+    def get_product_substitutes_by_name(name: str) -> dict[str, Any]:
+        """Return a product's substitutes by name; an empty list is a legal answer."""
+        product = PRODUCT_BY_NAME.get(name)
+        if product is None:
+            raise ValueError(f"Product '{name}' not found")
+        return {"substitutes": [_product_dict(p) for p in get_substitutes(product)]}
+
+    @server.tool(name="getBatchProductByProductIds")
+    def get_batch_product_by_product_ids(start_id: int, end_id: int) -> dict[str, Any]:
+        """Return products whose id falls in [start_id, end_id], in id order."""
         return {
-            "product_id": product.product_id,
-            "name": product.name,
-            "description": product.description,
-            "price": product.price,
-            "stock": product.quantity_in_stock,
-            "unit": product.unit,
+            "products": [_product_dict(p) for p in get_products_by_id_range(start_id, end_id)]
         }
 
     @server.tool(name="getSupplierByStatus")

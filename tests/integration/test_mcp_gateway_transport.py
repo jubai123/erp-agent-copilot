@@ -139,6 +139,10 @@ class TestRealTransportRoundTrip:
         assert conn.is_connected is False
         assert tools == [
             "getProductByName",
+            "getProductById",
+            "getProductSubstitutes",
+            "getProductSubstitutesByName",
+            "getBatchProductByProductIds",
             "getSupplierByStatus",
             "querySuppliersByDeliveryRegion",
             "createOrder",
