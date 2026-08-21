@@ -63,6 +63,17 @@ class TestIntentRouting:
                 "改单：把订单 3f2a9c1d 数量从 10 改成 20",
                 ["getOrderByOrderId", "cancelOrder", "createOrder"],
             ),
+            ("已发货的订单有哪些", ["getByOrderStatus"]),
+            ("查询2023年1月1日至2023年1月31日之间的订单", ["getByTimeRange"]),
+            ("商品 3 号的订单", ["getByProductId"]),
+            ("供应商 3 号的订单", ["getOrdersBySupplierId"]),
+            ("添加供应商 旧物流，覆盖上海", ["addSuppliers"]),
+            ("删除供应商 旧物流", ["deleteSupplierByName"]),
+            ("添加名称为西瓜的商品 价格10元 库存100", ["addProduct"]),
+            ("修改商品 3 号描述为鲜甜多汁", ["updateProductDescription"]),
+            ("把商品 4 号的替代品改为西瓜", ["updateProductSubstitutes"]),
+            ("删除商品 4 号", ["removeProductById"]),
+            ("删除商品 苹果", ["removeProductByName"]),
         ],
     )
     def test_routes_each_intent_to_expected_tools(self, query: str, expected: list[str]) -> None:
@@ -113,6 +124,94 @@ class TestWritePlanShape:
         plan, errors = build_plan_from_intent(intent)
         assert plan.steps == []
         assert any(e.code == "EMPTY_PLAN" for e in errors)
+
+
+class TestWriteMaintenancePlanShape:
+    """V5-aligned write intents emit WRITE + approval-gated steps (M0).
+
+    Maintenance/deletes are single-step DAGs; a step emitted with a missing
+    required argument (e.g. addSuppliers without regions) is deliberately left
+    for validate_plan's MISSING_REQUIRED_ARG gate rather than written partial.
+    """
+
+    def test_add_supplier_carries_regions_and_status(self) -> None:
+        intent = classify_intent("添加供应商 旧物流，覆盖上海")
+        plan, errors = build_plan_from_intent(intent)
+        assert errors == []
+        step = plan.steps[0]
+        assert step.tool_name == "addSuppliers"
+        assert step.risk_level == ToolRiskLevel.WRITE
+        assert step.requires_approval is True
+        assert step.arguments["name"] == "旧物流"
+        assert step.arguments["regions"] == ["上海"]
+        assert step.arguments["status"] == "AVAILABLE"
+
+    def test_add_supplier_without_region_stays_honest(self) -> None:
+        intent = classify_intent("添加供应商 旧物流")
+        plan, errors = build_plan_from_intent(intent)
+        assert errors == []
+        step = plan.steps[0]
+        assert step.tool_name == "addSuppliers"
+        assert "regions" not in step.arguments
+
+    def test_add_supplier_without_name_is_empty_plan(self) -> None:
+        intent = classify_intent("添加供应商")
+        plan, errors = build_plan_from_intent(intent)
+        assert plan.steps == []
+        assert any(e.code == "EMPTY_PLAN" for e in errors)
+
+    def test_add_product_carries_price_and_stock(self) -> None:
+        intent = classify_intent("添加名称为西瓜的商品 价格10元 库存100")
+        plan, errors = build_plan_from_intent(intent)
+        assert errors == []
+        step = plan.steps[0]
+        assert step.tool_name == "addProduct"
+        assert step.risk_level == ToolRiskLevel.WRITE
+        assert step.requires_approval is True
+        assert step.arguments == {"name": "西瓜", "price": 10.0, "quantity_in_stock": 100}
+
+    def test_update_description_targets_product_by_id(self) -> None:
+        intent = classify_intent("修改商品 3 号描述为鲜甜多汁")
+        plan, errors = build_plan_from_intent(intent)
+        assert errors == []
+        step = plan.steps[0]
+        assert step.tool_name == "updateProductDescription"
+        assert step.arguments == {"product_id": 3, "description": "鲜甜多汁"}
+
+    def test_update_substitutes_targets_product_by_id(self) -> None:
+        intent = classify_intent("把商品 4 号的替代品改为西瓜")
+        plan, errors = build_plan_from_intent(intent)
+        assert errors == []
+        step = plan.steps[0]
+        assert step.tool_name == "updateProductSubstitutes"
+        assert step.arguments == {"product_id": 4, "substitute_name": "西瓜"}
+
+    def test_delete_by_id_and_by_name(self) -> None:
+        plan, _ = build_plan_from_intent(classify_intent("删除商品 4 号"))
+        assert plan.steps[0].tool_name == "removeProductById"
+        plan, _ = build_plan_from_intent(classify_intent("删除商品 苹果"))
+        assert plan.steps[0].tool_name == "removeProductByName"
+        plan, _ = build_plan_from_intent(classify_intent("删除供应商 5 号"))
+        assert plan.steps[0].tool_name == "deleteSupplierById"
+
+    def test_order_query_subintents_are_read_steps(self) -> None:
+        for query, tool, expected in [
+            ("已发货的订单有哪些", "getByOrderStatus", {"status": "SHIPPED"}),
+            (
+                "查询2023年1月1日至2023年1月31日之间的订单",
+                "getByTimeRange",
+                {"start_date": "2023-01-01", "end_date": "2023-01-31"},
+            ),
+            ("商品 3 号的订单", "getByProductId", {"product_id": 3}),
+            ("供应商 3 号的订单", "getOrdersBySupplierId", {"supplier_id": 3}),
+        ]:
+            intent = classify_intent(query)
+            plan, errors = build_plan_from_intent(intent)
+            assert errors == [], query
+            step = plan.steps[0]
+            assert step.tool_name == tool, query
+            assert step.risk_level == ToolRiskLevel.READ, query
+            assert step.arguments == expected, query
 
 
 class TestIdempotencyKeyStamping:

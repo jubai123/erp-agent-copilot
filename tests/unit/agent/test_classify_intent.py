@@ -93,6 +93,33 @@ class TestPrecedence:
         intent = classify_intent("切换到库存不足场景")
         assert (intent.domain, intent.action) == ("system", "scenario")
 
+    def test_query_by_status_beats_update_status(self) -> None:
+        # 已发货的订单 is a read; only bare 已发货 is the write verb.
+        intent = classify_intent("已发货的订单有哪些")
+        assert (intent.domain, intent.action) == ("order", "query_by_status")
+
+    def test_query_by_supplier_beats_supplier_query(self) -> None:
+        intent = classify_intent("供应商的订单")
+        assert (intent.domain, intent.action) == ("order", "query_by_supplier")
+
+    def test_supplier_create_beats_supplier_query(self) -> None:
+        intent = classify_intent("添加供应商 旧物流")
+        assert (intent.domain, intent.action) == ("supplier", "create")
+
+    def test_product_update_beats_order_update_status(self) -> None:
+        # The bare "改为" verb must not swallow a product substitute update.
+        intent = classify_intent("把商品 4 号的替代品改为西瓜")
+        assert (intent.domain, intent.action) == ("product", "update")
+
+    def test_order_update_status_unaffected_by_product_rules(self) -> None:
+        intent = classify_intent("把订单 a1b2c3 改为已发货")
+        assert (intent.domain, intent.action) == ("order", "update_status")
+
+    def test_order_create_beats_supplier_mention(self) -> None:
+        # A create order that names a supplier must not route to supplier/query.
+        intent = classify_intent("找一个可用的供应商，在北京买 8 台电脑")
+        assert (intent.domain, intent.action) == ("order", "create")
+
 
 class TestEntityExtraction:
     def test_product_name(self) -> None:
@@ -118,6 +145,113 @@ class TestEntityExtraction:
 
     def test_no_entities_when_none_present(self) -> None:
         assert classify_intent("查一下库存情况").entities == {}
+
+    def test_supplier_id(self) -> None:
+        assert classify_intent("id为3的物流供应商有哪些").entities["supplier_id"] == 3
+
+    def test_supplier_name(self) -> None:
+        assert classify_intent("添加供应商 旧物流").entities["supplier_name"] == "旧物流"
+
+    def test_name_after_for_create(self) -> None:
+        entities = classify_intent("添加名称为西瓜的商品").entities
+        assert entities["name"] == "西瓜"
+
+    def test_price_and_stock(self) -> None:
+        entities = classify_intent("添加名称为西瓜的商品 价格10元 库存100").entities
+        assert entities["price"] == 10.0
+        assert entities["stock"] == 100
+
+    def test_description(self) -> None:
+        entities = classify_intent("修改商品 3 号描述为鲜甜多汁").entities
+        assert entities["description"] == "鲜甜多汁"
+
+    def test_substitute_name(self) -> None:
+        entities = classify_intent("把商品 4 号的替代品改为西瓜").entities
+        assert entities["substitute_name"] == "西瓜"
+
+    def test_all_regions(self) -> None:
+        entities = classify_intent("添加供应商 旧物流，覆盖上海和北京").entities
+        assert entities["regions"] == ["上海", "北京"]
+        assert entities["region"] == "上海"
+
+    def test_date_year_is_not_quantity(self) -> None:
+        entities = classify_intent("查询2023年1月的订单").entities
+        assert "quantity" not in entities
+
+    def test_supplier_id_digits_are_not_quantity(self) -> None:
+        entities = classify_intent("id为3的物流供应商有哪些").entities
+        assert "quantity" not in entities
+
+
+class TestM0OrderReadIntents:
+    """V5-aligned order query sub-intents (M0)."""
+
+    def test_query_by_status(self) -> None:
+        intent = classify_intent("已发货的订单有哪些")
+        assert (intent.domain, intent.action) == ("order", "query_by_status")
+        assert intent.entities["status"] == "SHIPPED"
+
+    def test_query_by_status_pending(self) -> None:
+        intent = classify_intent("待确认的订单")
+        assert (intent.domain, intent.action) == ("order", "query_by_status")
+        assert intent.entities["status"] == "CONFIRMED"
+
+    def test_query_by_time_keyword(self) -> None:
+        intent = classify_intent("本月的订单有哪些")
+        assert (intent.domain, intent.action) == ("order", "query_by_time")
+
+    def test_query_by_time_date_range(self) -> None:
+        intent = classify_intent("查询2023年1月1日至2023年1月31日之间的订单")
+        assert (intent.domain, intent.action) == ("order", "query_by_time")
+        assert intent.entities["time_range"] == ("2023-01-01", "2023-01-31")
+
+    def test_query_by_time_lone_month_expands(self) -> None:
+        intent = classify_intent("查询2023年1月的订单")
+        assert (intent.domain, intent.action) == ("order", "query_by_time")
+        assert intent.entities["time_range"] == ("2023-01-01", "2023-01-31")
+
+    def test_query_by_product_keyword(self) -> None:
+        intent = classify_intent("该商品的订单")
+        assert (intent.domain, intent.action) == ("order", "query_by_product")
+
+    def test_query_by_product_with_id(self) -> None:
+        intent = classify_intent("商品 3 号的订单")
+        assert (intent.domain, intent.action) == ("order", "query_by_product")
+        assert intent.entities["product_id"] == 3
+
+    def test_query_by_supplier_with_id(self) -> None:
+        intent = classify_intent("供应商 3 号的订单")
+        assert (intent.domain, intent.action) == ("order", "query_by_supplier")
+        assert intent.entities["supplier_id"] == 3
+
+
+class TestM0WriteIntents:
+    """V5-aligned supplier/product maintenance intents (M0)."""
+
+    def test_supplier_create(self) -> None:
+        intent = classify_intent("添加供应商 旧物流")
+        assert (intent.domain, intent.action) == ("supplier", "create")
+        assert intent.risk_level == ToolRiskLevel.WRITE
+
+    def test_supplier_delete(self) -> None:
+        intent = classify_intent("删除供应商 旧物流")
+        assert (intent.domain, intent.action) == ("supplier", "delete")
+        assert intent.risk_level == ToolRiskLevel.WRITE
+
+    def test_product_add(self) -> None:
+        intent = classify_intent("添加名称为西瓜的商品")
+        assert (intent.domain, intent.action) == ("product", "add")
+        assert intent.risk_level == ToolRiskLevel.WRITE
+
+    def test_product_update(self) -> None:
+        intent = classify_intent("修改商品 3 号描述为鲜甜多汁")
+        assert (intent.domain, intent.action) == ("product", "update")
+        assert intent.risk_level == ToolRiskLevel.WRITE
+
+    def test_product_delete(self) -> None:
+        intent = classify_intent("删除商品 4 号")
+        assert (intent.domain, intent.action) == ("product", "delete")
+        assert intent.risk_level == ToolRiskLevel.WRITE
 
 
 class TestClassifyIntentNode:
