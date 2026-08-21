@@ -46,7 +46,7 @@ from apps.erp_simulator.data.products import (
     get_products_by_id_range,
     get_substitutes,
 )
-from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS, SUPPLIER_BY_ID, SUPPLIER_BY_NAME
+from apps.erp_simulator.data.suppliers import SUPPLIER_BY_ID, SUPPLIER_BY_NAME
 from apps.erp_simulator.scenarios import get_scenario
 from apps.worker.mcp_executor import build_mcp_executor
 from erp_copilot.infrastructure.config import Settings
@@ -229,18 +229,27 @@ def _get_products_batch(arguments: dict[str, Any]) -> ToolResult:
     )
 
 
+def _all_suppliers() -> list[Any]:
+    """The live supplier catalog in id order (the index, not the seed list).
+
+    Sourcing reads from the index keeps a runtime-added supplier visible to
+    status/region queries — the same reason batch product reads use the index.
+    """
+    return sorted(SUPPLIER_BY_ID.values(), key=lambda s: s.supplier_id)
+
+
 def _get_suppliers(arguments: dict[str, Any]) -> ToolResult:
     status = arguments.get("status", "AVAILABLE")
     if get_scenario() == "supplier_unavailable":
-        matches = [s for s in SEED_SUPPLIERS if s.status != status]
+        matches = [s for s in _all_suppliers() if s.status != status]
     else:
-        matches = [s for s in SEED_SUPPLIERS if s.status == status]
+        matches = [s for s in _all_suppliers() if s.status == status]
     return ToolResult.success(tool_version_id="getSupplierByStatus", data=_suppliers_data(matches))
 
 
 def _query_suppliers_by_region(arguments: dict[str, Any]) -> ToolResult:
     region = arguments.get("region")
-    matches = [s for s in SEED_SUPPLIERS if region in s.regions]
+    matches = [s for s in _all_suppliers() if region in s.regions]
     return ToolResult.success(
         tool_version_id="querySuppliersByDeliveryRegion",
         data=_suppliers_data(matches),

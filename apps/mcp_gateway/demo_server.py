@@ -46,7 +46,7 @@ from apps.erp_simulator.data.products import (
     get_products_by_id_range,
     get_substitutes,
 )
-from apps.erp_simulator.data.suppliers import SEED_SUPPLIERS, SUPPLIER_BY_ID, SUPPLIER_BY_NAME
+from apps.erp_simulator.data.suppliers import SUPPLIER_BY_ID, SUPPLIER_BY_NAME
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -181,12 +181,14 @@ def build_demo_server() -> MCPServer:
     @server.tool(name="getSupplierByStatus")
     def get_supplier_by_status(status: str = "AVAILABLE") -> dict[str, Any]:
         """Return suppliers with *status* (default AVAILABLE), first as supplier_id."""
-        return _suppliers_data([s for s in SEED_SUPPLIERS if s.status == status])
+        suppliers = sorted(SUPPLIER_BY_ID.values(), key=lambda s: s.supplier_id)
+        return _suppliers_data([s for s in suppliers if s.status == status])
 
     @server.tool(name="querySuppliersByDeliveryRegion")
     def query_suppliers_by_delivery_region(region: str) -> dict[str, Any]:
         """Return suppliers covering *region*, with the first as ``supplier_id``."""
-        return _suppliers_data([s for s in SEED_SUPPLIERS if region in s.regions])
+        suppliers = sorted(SUPPLIER_BY_ID.values(), key=lambda s: s.supplier_id)
+        return _suppliers_data([s for s in suppliers if region in s.regions])
 
     @server.tool(name="getSupplierByName")
     def get_supplier_by_name(name: str) -> dict[str, Any]:

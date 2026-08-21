@@ -11,18 +11,31 @@ Override the target via the ``TEST_DATABASE_URL`` environment variable.
 from __future__ import annotations
 
 import os
+from copy import deepcopy
 
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
-from apps.erp_simulator.data.products import PRODUCT_BY_NAME
+from apps.erp_simulator.data.products import (
+    _PRODUCT_WRITES,
+    PRODUCT_BY_ID,
+    PRODUCT_BY_NAME,
+    SEED_PRODUCTS,
+)
+from apps.erp_simulator.data.suppliers import (
+    _SUPPLIER_WRITES,
+    SEED_SUPPLIERS,
+    SUPPLIER_BY_ID,
+    SUPPLIER_BY_NAME,
+)
 
-# The simulator's in-memory stock lives on the same Product objects that back
-# SEED_PRODUCTS and PRODUCT_BY_NAME, so a runtime createOrder deducts the
-# "seed" itself and there is no clean object to restore from later. Captured at
-# conftest load — before any test body runs — this holds the pristine values.
-_SEED_STOCK: dict[str, int] = {p.name: p.quantity_in_stock for p in PRODUCT_BY_NAME.values()}
+# Pristine copies of the seed catalog captured at conftest load — before any
+# test body runs. The live SEED lists hold the objects the runtime mutates in
+# place (stock deduction, description/substitute updates, index removal), so
+# they are not safe to rebuild from directly; these copies never get touched.
+_PRISTINE_PRODUCTS = [deepcopy(p) for p in SEED_PRODUCTS]
+_PRISTINE_SUPPLIERS = [deepcopy(s) for s in SEED_SUPPLIERS]
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -114,14 +127,30 @@ def ensure_test_database() -> str:
 
 
 @pytest.fixture(autouse=True)
-def _reset_simulator_stock() -> None:
-    """Restore the ERP simulator's in-memory stock before every test.
+def _reset_simulator_state() -> None:
+    """Restore the ERP simulator's in-memory catalog before every test.
 
-    createOrder (worker executor and simulator routes) deducts stock in place
-    on the shared Product objects; a test that places an order without restoring
-    stock pollutes every later absolute-stock assertion (the recovery-decision
-    seed mirror, the executor get-order default quantity=20). Resetting per test
-    keeps the whole suite order-independent.
+    Rebuilds the product/supplier index dicts from pristine seed copies and
+    clears the per-key write records. Two kinds of state would otherwise leak
+    across tests: (1) in-place mutations on the seed objects — createOrder
+    deducts stock, and the M3 catalog writes update description/substitutes or
+    drop entries from the index — which would pollute later absolute-stock and
+    catalog-size assertions; (2) runtime-added products/suppliers and their
+    idempotency records, which would corrupt absolute set assertions (e.g. the
+    executor's AVAILABLE supplier set {3, 4, 6, 7}) and replay another test's
+    write under the same idempotency_key.
     """
-    for name, stock in _SEED_STOCK.items():
-        PRODUCT_BY_NAME[name].quantity_in_stock = stock
+    PRODUCT_BY_ID.clear()
+    PRODUCT_BY_NAME.clear()
+    for product in _PRISTINE_PRODUCTS:
+        fresh = deepcopy(product)
+        PRODUCT_BY_ID[fresh.product_id] = fresh
+        PRODUCT_BY_NAME[fresh.name] = fresh
+    SUPPLIER_BY_ID.clear()
+    SUPPLIER_BY_NAME.clear()
+    for supplier in _PRISTINE_SUPPLIERS:
+        fresh = deepcopy(supplier)
+        SUPPLIER_BY_ID[fresh.supplier_id] = fresh
+        SUPPLIER_BY_NAME[fresh.name] = fresh
+    _PRODUCT_WRITES.clear()
+    _SUPPLIER_WRITES.clear()
