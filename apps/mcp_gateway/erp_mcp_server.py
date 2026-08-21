@@ -92,21 +92,15 @@ def build_erp_mcp_server(
     @server.tool(name="getProductSubstitutes")
     async def get_product_substitutes(product_id: int) -> dict[str, Any]:
         """Return a product's substitutes by id (real ERP), possibly empty."""
-        return _result_to_mcp(
-            await executor("getProductSubstitutes", {"product_id": product_id})
-        )
+        return _result_to_mcp(await executor("getProductSubstitutes", {"product_id": product_id}))
 
     @server.tool(name="getProductSubstitutesByName")
     async def get_product_substitutes_by_name(name: str) -> dict[str, Any]:
         """Return a product's substitutes by name (real ERP), possibly empty."""
-        return _result_to_mcp(
-            await executor("getProductSubstitutesByName", {"name": name})
-        )
+        return _result_to_mcp(await executor("getProductSubstitutesByName", {"name": name}))
 
     @server.tool(name="getBatchProductByProductIds")
-    async def get_batch_product_by_product_ids(
-        start_id: int, end_id: int
-    ) -> dict[str, Any]:
+    async def get_batch_product_by_product_ids(start_id: int, end_id: int) -> dict[str, Any]:
         """Return products whose id falls in [start_id, end_id] (real ERP)."""
         return _result_to_mcp(
             await executor(
@@ -123,9 +117,7 @@ def build_erp_mcp_server(
     @server.tool(name="querySuppliersByDeliveryRegion")
     async def query_suppliers_by_delivery_region(region: str) -> dict[str, Any]:
         """Return suppliers covering *region*, with the first as ``supplier_id``."""
-        return _result_to_mcp(
-            await executor("querySuppliersByDeliveryRegion", {"region": region})
-        )
+        return _result_to_mcp(await executor("querySuppliersByDeliveryRegion", {"region": region}))
 
     @server.tool(name="getSupplierByName")
     async def get_supplier_by_name(name: str) -> dict[str, Any]:
@@ -135,9 +127,7 @@ def build_erp_mcp_server(
     @server.tool(name="getSupplierById")
     async def get_supplier_by_id(supplier_id: int) -> dict[str, Any]:
         """Return a single supplier's fields by id (real ERP)."""
-        return _result_to_mcp(
-            await executor("getSupplierById", {"supplier_id": supplier_id})
-        )
+        return _result_to_mcp(await executor("getSupplierById", {"supplier_id": supplier_id}))
 
     if create_order_enabled:
 
@@ -173,6 +163,28 @@ def build_erp_mcp_server(
     async def get_order_by_order_id(order_id: str) -> dict[str, Any]:
         """Return an order by its order_id (real ERP)."""
         return _result_to_mcp(await executor("getOrderByOrderId", {"order_id": order_id}))
+
+    @server.tool(name="getOrdersBySupplierId")
+    async def get_orders_by_supplier_id(supplier_id: int) -> dict[str, Any]:
+        """Return orders delivered by *supplier_id*, newest first (possibly empty)."""
+        return _result_to_mcp(await executor("getOrdersBySupplierId", {"supplier_id": supplier_id}))
+
+    @server.tool(name="getByProductId")
+    async def get_by_product_id(product_id: int) -> dict[str, Any]:
+        """Return orders for *product_id*, newest first (possibly empty)."""
+        return _result_to_mcp(await executor("getByProductId", {"product_id": product_id}))
+
+    @server.tool(name="getByOrderStatus")
+    async def get_by_order_status(status: str) -> dict[str, Any]:
+        """Return orders in *status*, newest first (possibly empty)."""
+        return _result_to_mcp(await executor("getByOrderStatus", {"status": status}))
+
+    @server.tool(name="getByTimeRange")
+    async def get_by_time_range(start_date: str, end_date: str) -> dict[str, Any]:
+        """Return orders created in [start_date, end_date], newest first."""
+        return _result_to_mcp(
+            await executor("getByTimeRange", {"start_date": start_date, "end_date": end_date})
+        )
 
     return server
 

@@ -45,6 +45,10 @@ _ALL_TOOLS = [
     "getSupplierById",
     "createOrder",
     "getOrderByOrderId",
+    "getOrdersBySupplierId",
+    "getByProductId",
+    "getByOrderStatus",
+    "getByTimeRange",
 ]
 _READ_TOOLS = [
     "getProductByName",
@@ -57,6 +61,10 @@ _READ_TOOLS = [
     "getSupplierByName",
     "getSupplierById",
     "getOrderByOrderId",
+    "getOrdersBySupplierId",
+    "getByProductId",
+    "getByOrderStatus",
+    "getByTimeRange",
 ]
 
 
@@ -608,3 +616,65 @@ class TestSupplierReadTools:
 
         assert result.is_error is True
         assert "SUPPLIER_NOT_FOUND" in result.content[0].text
+
+
+class TestOrderQueryTools:
+    """The four order set-queries round-trip over real MCP + respx cloud.
+
+    The cloud answers a bare Order array; the executor wraps it in
+    {"orders": [...]}, and an empty array stays a successful "no match".
+    """
+
+    def test_get_orders_by_supplier_round_trips(self, erp_mcp_url: str) -> None:
+        async def exercise() -> tuple[dict[str, Any], MCPGatewayConnection]:
+            conn = _connect(erp_mcp_url)
+            await conn.connect()
+            try:
+                orders = await conn.execute_tool("getOrdersBySupplierId", {"supplier_id": 2987})
+                return orders.structured_content, conn
+            finally:
+                await conn.disconnect()
+
+        with respx.mock:
+            route = respx.post(f"{_BASE_URL}/orders/getOrdersBySupplierId").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": 120562,
+                            "orderTime": "2026-08-15T16:31:29.518+00:00",
+                            "quantity": 1,
+                            "amount": 5.0,
+                            "status": "已下单",
+                            "supplierId": 2987,
+                            "productId": 10094,
+                            "orderRegion": "上海",
+                        }
+                    ],
+                )
+            )
+            orders, conn = _run_in_one_loop(exercise())
+
+        assert conn.is_connected is False
+        assert orders["orders"][0]["order_id"] == 120562
+        assert orders["orders"][0]["supplier_id"] == 2987
+        assert orders["orders"][0]["status"] == "已下单"  # cloud status passthrough
+        assert json.loads(route.calls.last.request.content) == {"supplierId": 2987}
+
+    def test_empty_array_is_success(self, erp_mcp_url: str) -> None:
+        async def exercise() -> Any:
+            conn = _connect(erp_mcp_url)
+            await conn.connect()
+            try:
+                return await conn.execute_tool("getByOrderStatus", {"status": "DELIVERED"})
+            finally:
+                await conn.disconnect()
+
+        with respx.mock:
+            respx.post(f"{_BASE_URL}/orders/getByOrderStatus").mock(
+                return_value=httpx.Response(200, json=[])
+            )
+            result = _run_in_one_loop(exercise())
+
+        assert result.is_error is False
+        assert result.structured_content == {"orders": []}

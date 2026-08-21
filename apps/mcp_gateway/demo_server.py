@@ -29,7 +29,15 @@ from mcp.server.mcpserver import MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from apps.erp_simulator.data.orders import create_order, get_by_id, get_by_idempotency_key
+from apps.erp_simulator.data.orders import (
+    create_order,
+    get_by_id,
+    get_by_idempotency_key,
+    get_orders_by_product,
+    get_orders_by_status,
+    get_orders_by_supplier,
+    get_orders_by_time_range,
+)
 from apps.erp_simulator.data.products import (
     PRODUCT_BY_ID,
     PRODUCT_BY_NAME,
@@ -107,6 +115,11 @@ def _order_to_dict(order: Any) -> dict[str, Any]:
     }
 
 
+def _orders_data(orders: list[Any]) -> dict[str, Any]:
+    """Serialize order matches; an empty list is a legal business answer."""
+    return {"orders": [_order_to_dict(o) for o in orders]}
+
+
 def build_demo_server() -> MCPServer:
     """Build an MCPServer exposing the simulator's five tools over MCP."""
     server = MCPServer(
@@ -161,9 +174,7 @@ def build_demo_server() -> MCPServer:
     @server.tool(name="getBatchProductByProductIds")
     def get_batch_product_by_product_ids(start_id: int, end_id: int) -> dict[str, Any]:
         """Return products whose id falls in [start_id, end_id], in id order."""
-        return {
-            "products": [_product_dict(p) for p in get_products_by_id_range(start_id, end_id)]
-        }
+        return {"products": [_product_dict(p) for p in get_products_by_id_range(start_id, end_id)]}
 
     @server.tool(name="getSupplierByStatus")
     def get_supplier_by_status(status: str = "AVAILABLE") -> dict[str, Any]:
@@ -241,6 +252,26 @@ def build_demo_server() -> MCPServer:
         if order is None:
             raise ValueError(f"Order '{order_id}' not found")
         return _order_to_dict(order)
+
+    @server.tool(name="getOrdersBySupplierId")
+    def get_orders_by_supplier_id(supplier_id: int) -> dict[str, Any]:
+        """Return orders delivered by *supplier_id*, newest first (possibly empty)."""
+        return _orders_data(get_orders_by_supplier(supplier_id))
+
+    @server.tool(name="getByProductId")
+    def get_by_product_id(product_id: int) -> dict[str, Any]:
+        """Return orders for *product_id*, newest first (possibly empty)."""
+        return _orders_data(get_orders_by_product(product_id))
+
+    @server.tool(name="getByOrderStatus")
+    def get_by_order_status(status: str) -> dict[str, Any]:
+        """Return orders in *status*, newest first (possibly empty)."""
+        return _orders_data(get_orders_by_status(status))
+
+    @server.tool(name="getByTimeRange")
+    def get_by_time_range(start_date: str, end_date: str) -> dict[str, Any]:
+        """Return orders created in [start_date, end_date], newest first."""
+        return _orders_data(get_orders_by_time_range(start_date, end_date))
 
     return server
 

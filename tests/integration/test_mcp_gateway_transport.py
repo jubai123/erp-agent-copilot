@@ -149,6 +149,10 @@ class TestRealTransportRoundTrip:
             "getSupplierById",
             "createOrder",
             "getOrderByOrderId",
+            "getOrdersBySupplierId",
+            "getByProductId",
+            "getByOrderStatus",
+            "getByTimeRange",
         ]
         assert product["product_id"] == 1
         assert product["name"] == "苹果"
