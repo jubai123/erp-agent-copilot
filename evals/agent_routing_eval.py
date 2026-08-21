@@ -26,7 +26,7 @@ not real-world recall. That is exactly the "know your boundary" evidence, not a
 claim of general router quality.
 
 Standalone on purpose: it is NOT one of run_all's five categories, so the
-documented "175 条五大分类" numbers stay untouched. Purely deterministic — no
+documented "205 条五大分类" numbers stay untouched. Purely deterministic — no
 LLM, no DB, no network — so the unit tests run the real router over the full
 dataset.
 """

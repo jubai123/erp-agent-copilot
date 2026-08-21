@@ -508,7 +508,7 @@ CATEGORY_RUNNERS: dict[str, RunnerFn] = {
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the 175-case eval harness")
+    parser = argparse.ArgumentParser(description="Run the 205-case eval harness")
     parser.add_argument(
         "--report",
         type=str,

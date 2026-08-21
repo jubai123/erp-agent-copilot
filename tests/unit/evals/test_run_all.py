@@ -1,6 +1,6 @@
 """Unit tests for the real five-category runners — task 6.6.
 
-Runs the actual run_all.py wiring against the real 175-case datasets. No LLM,
+Runs the actual run_all.py wiring against the real 205-case datasets. No LLM,
 no network: tool_retrieval uses the deterministic candidate_filter, security
 uses the real guards with faked DNS, planning runs the real classify →
 build_plan → validate_plan node chain with the worker's tool schemas, and
@@ -20,9 +20,9 @@ from evals.harness import RunnerFn, RunnerOutput, run_all
 from evals.run_all import CATEGORY_RUNNERS, _tool_retrieval
 
 EXPECTED_COUNTS = {
-    "tool_retrieval": 40,
+    "tool_retrieval": 56,
     "knowledge_rag": 40,
-    "planning": 50,
+    "planning": 64,
     "recover_or_replan": 20,
     "security": 25,
 }
@@ -110,7 +110,7 @@ def runners() -> dict[str, RunnerFn]:
 
 
 class TestRealRunners:
-    def test_run_all_covers_175(self, runners: dict[str, RunnerFn]) -> None:
+    def test_run_all_covers_205(self, runners: dict[str, RunnerFn]) -> None:
         report = run_all(runners)
         assert report["summary"]["total_cases"] == sum(EXPECTED_COUNTS.values())
         assert report["summary"]["categories"] == 5
@@ -133,7 +133,8 @@ class TestRealRunners:
         result = report["categories"]["tool_retrieval"]
         assert result["mode"] == "deterministic"
         # DOMAIN_TOOL_MAP's first-level filter recovers the expected tool for
-        # every authored case — the (domain, action) taxonomy suffices at 9 tools.
+        # every authored case — the (domain, action) taxonomy suffices at all
+        # 25 tools (M5 restored per-registered-tool coverage).
         assert result["primary_score"] == 1.0
         assert all(pc["passed"] for pc in result["per_case"])
 

@@ -1,6 +1,6 @@
 """Validation tests for the evaluation dataset files — task 6.5.
 
-Five category files in evals/datasets/ total 175 independently executable
+Five category files in evals/datasets/ total 205 independently executable
 cases (docs/08 section 2). These tests assert the count, per-category
 schema, enumerated values, and grounding of every case against the
 authoritative sources: V6_TOOL_NAMES / DOMAIN_TOOL_MAP
@@ -27,9 +27,9 @@ DATASETS = PROJECT_ROOT / "evals" / "datasets"
 KNOWLEDGE = PROJECT_ROOT / "datasets" / "knowledge"
 
 EXPECTED_COUNTS: dict[str, int] = {
-    "tool_retrieval_40.json": 40,
+    "tool_retrieval_40.json": 56,
     "knowledge_rag_40.json": 40,
-    "planning_50.json": 50,
+    "planning_50.json": 64,
     "recover_or_replan_20.json": 20,
     "security_25.json": 25,
 }
@@ -67,9 +67,9 @@ class TestAggregate:
             assert data["description"]
             assert data["version"]
 
-    def test_five_categories_total_175(self) -> None:
+    def test_five_categories_total_205(self) -> None:
         total = sum(len(_load(f)["cases"]) for f in EXPECTED_COUNTS)
-        assert total == 175
+        assert total == 205
 
     def test_per_file_counts(self) -> None:
         for filename, expected in EXPECTED_COUNTS.items():
@@ -103,15 +103,15 @@ class TestToolRetrieval:
             assert case["expected_tool"] in case["candidate_tools"], case["case_id"]
             assert (case["domain"], case["action"]) in known, case["case_id"]
 
-    def test_expected_tools_are_subset_of_registry(self) -> None:
-        """Every eval expected tool is registered; the registry may hold more.
+    def test_expected_tools_cover_whole_registry(self) -> None:
+        """Every registered tool has at least one retrieval eval case.
 
-        Relaxed from == : tool_retrieval_40 still covers the 9-tool baseline
-        while V6_TOOL_NAMES grew to the full 25-tool V5 surface. M5 (optional)
-        restores per-registered-tool coverage by adding eval cases.
+        tool_retrieval_56 covers all 25 tools in V6_TOOL_NAMES — the M5
+        invariant "每个注册工具都有评测用例" restored after the 25-tool V5
+        alignment.
         """
         expected = {c["expected_tool"] for c in _load("tool_retrieval_40.json")["cases"]}
-        assert expected <= set(V6_TOOL_NAMES)
+        assert expected == set(V6_TOOL_NAMES)
 
     def test_hard_negatives_present(self) -> None:
         cases = _load("tool_retrieval_40.json")["cases"]

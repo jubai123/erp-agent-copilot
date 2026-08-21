@@ -118,12 +118,17 @@ class TestDataset200:
 
         Drift compares current run vs the 50-case baseline report on the shared
         case ids; if the expected plans for plan-001..050 changed, the delta
-        would mix dataset edits with model drift.
+        would mix dataset edits with model drift. planning_50 has since grown
+        past 50 (plan-051..064 cover the V5-aligned tools), so the comparison
+        stays restricted to the original ids — planning_200's plan-051..064 are
+        unrelated LLM-stratified cases.
         """
         old = {c["case_id"]: c for c in _load(PLANNING_50)["cases"]}
         new = {c["case_id"]: c for c in _cases()}
-        assert set(old) == {f"plan-{i:03d}" for i in range(1, 51)}
-        for case_id, original in old.items():
+        original_ids = {f"plan-{i:03d}" for i in range(1, 51)}
+        assert original_ids <= set(old)
+        for case_id in original_ids:
+            original = old[case_id]
             updated = new[case_id]
             assert [s["tool"] for s in updated["steps"]] == [s["tool"] for s in original["steps"]]
             assert updated["single_step"] == original["single_step"]

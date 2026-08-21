@@ -26,9 +26,9 @@ from evals.harness import (
 )
 
 SPEC_COUNTS = {
-    "tool_retrieval": 40,
+    "tool_retrieval": 56,
     "knowledge_rag": 40,
-    "planning": 50,
+    "planning": 64,
     "recover_or_replan": 20,
     "security": 25,
 }
@@ -68,9 +68,9 @@ class TestDatasets:
         cases = load_cases(filename)
         assert len(cases) == SPEC_COUNTS["recover_or_replan"]
 
-    def test_total_cases_is_175(self) -> None:
+    def test_total_cases_is_205(self) -> None:
         total = sum(len(load_cases(filename)) for _, filename in DATASET_SPECS)
-        assert total == 175
+        assert total == 205
 
 
 class TestRunCategory:
@@ -102,7 +102,7 @@ class TestRunAll:
         runners = {category: _fake_runner(0.8) for category, _ in DATASET_SPECS}
         report = run_all(runners)
         assert set(report["categories"]) == {category for category, _ in DATASET_SPECS}
-        assert report["summary"]["total_cases"] == 175
+        assert report["summary"]["total_cases"] == 205
         assert report["summary"]["categories"] == 5
 
     def test_runner_error_is_isolated(self) -> None:
@@ -115,7 +115,7 @@ class TestRunAll:
         assert report["categories"]["recover_or_replan"]["mode"] == "error"
         assert report["errors"] == {"recover_or_replan": "RuntimeError: kaboom"}
         # Other four categories still score; the errored category counts as 0.
-        assert report["summary"]["overall_score"] == pytest.approx(0.9 * 155 / 175)
+        assert report["summary"]["overall_score"] == pytest.approx(0.9 * 185 / 205)
 
     def test_overall_weighted_by_case_count(self) -> None:
         categories = {

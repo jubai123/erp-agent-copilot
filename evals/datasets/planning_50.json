@@ -1,6 +1,6 @@
 {
-  "description": "计划评测：50 条用例覆盖单步（读操作）与多步（下单/取消/改状态/改单）计划。每条给出期望步骤序列（工具+参数）与 required_params；多步计划的参数用 $N.字段 引用前序步骤输出，构成计划 DAG（依赖校验见 Plan 校验器）。商品/区域/数量锚定 ERP 模拟器种子数据，数量均不超过库存。",
-  "version": "1.0",
+  "description": "计划评测：64 条用例覆盖单步（读操作）与多步（下单/取消/改状态/改单）计划，并补齐 V5 对齐的维护/删除工具单步计划。每条给出期望步骤序列（工具+参数）与 required_params；多步计划的参数用 $N.字段 引用前序步骤输出，构成计划 DAG（依赖校验见 Plan 校验器）。商品/区域/数量锚定 ERP 模拟器种子数据，数量均不超过库存。",
+  "version": "1.1",
   "cases": [
     {"case_id": "plan-001", "query": "苹果多少钱", "steps": [{"tool": "getProductByName", "params": {"name": "苹果"}}], "single_step": true, "required_params": ["name"], "note": "单步：按名查商品"},
     {"case_id": "plan-002", "query": "查一下香蕉的价格", "steps": [{"tool": "getProductByName", "params": {"name": "香蕉"}}], "single_step": true, "required_params": ["name"], "note": "单步：按名查商品"},
@@ -51,6 +51,20 @@
     {"case_id": "plan-047", "query": "确认收货：订单 9f8e7d6 改为 DELIVERED", "steps": [{"tool": "getOrderByOrderId", "params": {"order_id": "9f8e7d6"}}, {"tool": "updateOrderStatus", "params": {"order_id": "$1.order_id", "status": "DELIVERED"}}], "single_step": false, "required_params": ["order_id", "status"], "note": "两步骤：确认收货"},
     {"case_id": "plan-048", "query": "订单 b5c4d3 更新为 SHIPPED", "steps": [{"tool": "getOrderByOrderId", "params": {"order_id": "b5c4d3"}}, {"tool": "updateOrderStatus", "params": {"order_id": "$1.order_id", "status": "SHIPPED"}}], "single_step": false, "required_params": ["order_id", "status"], "note": "两步骤：更新状态"},
     {"case_id": "plan-049", "query": "改单：把订单 3f2a9c1d 数量从 10 改成 20", "steps": [{"tool": "getOrderByOrderId", "params": {"order_id": "3f2a9c1d"}}, {"tool": "cancelOrder", "params": {"order_id": "$1.order_id"}}, {"tool": "createOrder", "params": {"product_id": "$1.product_id", "supplier_id": "$1.supplier_id", "quantity": 20, "region": "$1.region"}}], "single_step": false, "required_params": ["order_id", "product_id", "supplier_id", "quantity", "region"], "note": "改单=取消重下，复用原单字段"},
-    {"case_id": "plan-050", "query": "改单：把订单 a1b2c3 数量从 30 改成 40", "steps": [{"tool": "getOrderByOrderId", "params": {"order_id": "a1b2c3"}}, {"tool": "cancelOrder", "params": {"order_id": "$1.order_id"}}, {"tool": "createOrder", "params": {"product_id": "$1.product_id", "supplier_id": "$1.supplier_id", "quantity": 40, "region": "$1.region"}}], "single_step": false, "required_params": ["order_id", "product_id", "supplier_id", "quantity", "region"], "note": "改单=取消重下，复用原单字段"}
+    {"case_id": "plan-050", "query": "改单：把订单 a1b2c3 数量从 30 改成 40", "steps": [{"tool": "getOrderByOrderId", "params": {"order_id": "a1b2c3"}}, {"tool": "cancelOrder", "params": {"order_id": "$1.order_id"}}, {"tool": "createOrder", "params": {"product_id": "$1.product_id", "supplier_id": "$1.supplier_id", "quantity": 40, "region": "$1.region"}}], "single_step": false, "required_params": ["order_id", "product_id", "supplier_id", "quantity", "region"], "note": "改单=取消重下，复用原单字段"},
+    {"case_id": "plan-051", "query": "添加名称为西瓜的商品 价格10元 库存100", "steps": [{"tool": "addProduct", "params": {"name": "西瓜", "price": 10.0, "quantity_in_stock": 100}}], "single_step": true, "required_params": ["name", "price", "quantity_in_stock"], "note": "单步：新增商品"},
+    {"case_id": "plan-052", "query": "修改商品 3 号描述为鲜甜多汁", "steps": [{"tool": "updateProductDescription", "params": {"product_id": 3, "description": "鲜甜多汁"}}], "single_step": true, "required_params": ["product_id", "description"], "note": "单步：更新商品描述"},
+    {"case_id": "plan-053", "query": "把商品 4 号的替代品改为西瓜", "steps": [{"tool": "updateProductSubstitutes", "params": {"product_id": 4, "substitute_name": "西瓜"}}], "single_step": true, "required_params": ["product_id", "substitute_name"], "note": "单步：更新商品替代品"},
+    {"case_id": "plan-054", "query": "删除商品 苹果", "steps": [{"tool": "removeProductByName", "params": {"name": "苹果"}}], "single_step": true, "required_params": ["name"], "note": "单步：按名称删除商品（DANGEROUS）"},
+    {"case_id": "plan-055", "query": "删除商品 4 号", "steps": [{"tool": "removeProductById", "params": {"product_id": 4}}], "single_step": true, "required_params": ["product_id"], "note": "单步：按 ID 删除商品（DANGEROUS）"},
+    {"case_id": "plan-056", "query": "查询供应商 旧物流 的信息", "steps": [{"tool": "getSupplierByName", "params": {"name": "旧物流"}}], "single_step": true, "required_params": ["name"], "note": "单步：按名称查供应商"},
+    {"case_id": "plan-057", "query": "查询供应商 5 号的信息", "steps": [{"tool": "getSupplierById", "params": {"supplier_id": 5}}], "single_step": true, "required_params": ["supplier_id"], "note": "单步：按 ID 查供应商"},
+    {"case_id": "plan-058", "query": "添加供应商 旧物流，覆盖上海", "steps": [{"tool": "addSuppliers", "params": {"name": "旧物流", "regions": ["上海"], "status": "AVAILABLE"}}], "single_step": true, "required_params": ["name", "regions", "status"], "note": "单步：新增供应商"},
+    {"case_id": "plan-059", "query": "删除供应商 旧物流", "steps": [{"tool": "deleteSupplierByName", "params": {"name": "旧物流"}}], "single_step": true, "required_params": ["name"], "note": "单步：按名称删除供应商（DANGEROUS）"},
+    {"case_id": "plan-060", "query": "删除供应商 5 号", "steps": [{"tool": "deleteSupplierById", "params": {"supplier_id": 5}}], "single_step": true, "required_params": ["supplier_id"], "note": "单步：按 ID 删除供应商（DANGEROUS）"},
+    {"case_id": "plan-061", "query": "供应商 3 号的订单", "steps": [{"tool": "getOrdersBySupplierId", "params": {"supplier_id": 3}}], "single_step": true, "required_params": ["supplier_id"], "note": "单步：按供应商查订单"},
+    {"case_id": "plan-062", "query": "查询2023年1月1日至2023年1月31日之间的订单", "steps": [{"tool": "getByTimeRange", "params": {"start_date": "2023-01-01", "end_date": "2023-01-31"}}], "single_step": true, "required_params": ["start_date", "end_date"], "note": "单步：按时间段查订单"},
+    {"case_id": "plan-063", "query": "商品 3 号的订单", "steps": [{"tool": "getByProductId", "params": {"product_id": 3}}], "single_step": true, "required_params": ["product_id"], "note": "单步：按商品查订单"},
+    {"case_id": "plan-064", "query": "已发货的订单有哪些", "steps": [{"tool": "getByOrderStatus", "params": {"status": "SHIPPED"}}], "single_step": true, "required_params": ["status"], "note": "单步：按状态查订单"}
   ]
 }
