@@ -145,12 +145,13 @@ class TestEvaluateCases:
         assert all(pc["passed"] for pc in output["per_case"])
 
     def test_deliberately_wrong_expected_fails(self) -> None:
-        # rec-node-001 expects EXECUTING + retry=1; flip it to FAILED to prove
-        # the runner asserts the terminal state rather than always passing.
+        # rec-node-002 expects EXECUTING + retry=2 (retryable READ within budget);
+        # flip it to FAILED to prove the runner asserts the terminal state rather
+        # than always passing.
         wrong = json.loads(json.dumps(_load_cases()))
-        wrong[0]["expected"]["status"] = "FAILED"
+        wrong[1]["expected"]["status"] = "FAILED"
         output = evaluate_cases(wrong)
         assert output["primary_score"] == 19 / 20
-        assert output["per_case"][0]["passed"] is False
-        assert output["per_case"][0]["actual"]["status"] == "EXECUTING"
-        assert output["per_case"][0]["actual"]["retry_count"] == 1
+        assert output["per_case"][1]["passed"] is False
+        assert output["per_case"][1]["actual"]["status"] == "EXECUTING"
+        assert output["per_case"][1]["actual"]["retry_count"] == 2

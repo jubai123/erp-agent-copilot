@@ -49,12 +49,16 @@ def _step(step_id: str = "s1", **overrides: object) -> PlanStep:
 
 
 def _failed(
-    step_id: str, *, is_retryable: bool, risk: ToolRiskLevel = ToolRiskLevel.READ
+    step_id: str,
+    *,
+    is_retryable: bool,
+    risk: ToolRiskLevel = ToolRiskLevel.READ,
+    error_code: str | None = None,
 ) -> StepResult:
     return StepResult(
         step_id=step_id,
         status=StepStatus.FAILED,
-        error_code="TIMEOUT" if is_retryable else "PERMISSION_DENIED",
+        error_code=error_code or ("TIMEOUT" if is_retryable else "PERMISSION_DENIED"),
         is_retryable=is_retryable,
     )
 
@@ -136,8 +140,17 @@ class TestRetryBranch:
         assert updates["errors"][-1].code == "RECOVERY_GIVE_UP"
 
 
-class TestAtMostOnceGuard:
-    def test_write_without_idempotency_key_never_auto_retries(self) -> None:
+class TestAmbiguousWriteGate:
+    """A FAILED WRITE/DANGEROUS step carrying an ambiguous transient code
+    (TIMEOUT/UPSTREAM_UNAVAILABLE/UPSTREAM_5xx) gives up for a human — the cloud
+    may have applied the write and has no server-side idempotency, so retry OR
+    replan would re-invoke it and risk a duplicate order. The gate sits before
+    the status branches so a replan-path ambiguous write never auto-continues
+    either. It subsumes the old no-key WRITE_RETRY_UNSAFE guard: every retryable
+    write failure in this system is ambiguous, and the cloud drops the key.
+    """
+
+    def test_ambiguous_write_without_key_gives_up(self) -> None:
         plan = Plan(steps=[_step("s1", risk_level=ToolRiskLevel.WRITE)])
         state = _state(
             status=AgentStatus.RETRYING,
@@ -146,9 +159,12 @@ class TestAtMostOnceGuard:
         )
         updates = _invoke(state)
         assert updates["status"] == AgentStatus.FAILED
-        assert updates["errors"][-1].code == "WRITE_RETRY_UNSAFE"
+        assert updates["errors"][-1].code == "WRITE_OUTCOME_AMBIGUOUS"
 
-    def test_write_with_idempotency_key_may_retry(self) -> None:
+    def test_ambiguous_write_with_key_still_gives_up(self) -> None:
+        # The cloud ERP drops the idempotency_key, so a keyed write is just as
+        # ambiguous on TIMEOUT — this was WRITE_RETRY_UNSAFE's "safe" case and is
+        # now also gated.
         plan = Plan(steps=[_step("s1", risk_level=ToolRiskLevel.WRITE, idempotency_key="k-1")])
         state = _state(
             status=AgentStatus.RETRYING,
@@ -156,10 +172,10 @@ class TestAtMostOnceGuard:
             step_results={"s1": _failed("s1", is_retryable=True, risk=ToolRiskLevel.WRITE)},
         )
         updates = _invoke(state)
-        assert updates["status"] == AgentStatus.EXECUTING
-        assert updates["retry_count"] == 1
+        assert updates["status"] == AgentStatus.FAILED
+        assert updates["errors"][-1].code == "WRITE_OUTCOME_AMBIGUOUS"
 
-    def test_dangerous_without_idempotency_key_never_auto_retries(self) -> None:
+    def test_ambiguous_dangerous_write_gives_up(self) -> None:
         plan = Plan(steps=[_step("s1", risk_level=ToolRiskLevel.DANGEROUS)])
         state = _state(
             status=AgentStatus.RETRYING,
@@ -168,7 +184,74 @@ class TestAtMostOnceGuard:
         )
         updates = _invoke(state)
         assert updates["status"] == AgentStatus.FAILED
-        assert updates["errors"][-1].code == "WRITE_RETRY_UNSAFE"
+        assert updates["errors"][-1].code == "WRITE_OUTCOME_AMBIGUOUS"
+
+    def test_upstream_5xx_on_write_gives_up(self) -> None:
+        plan = Plan(steps=[_step("s1", risk_level=ToolRiskLevel.WRITE)])
+        state = _state(
+            status=AgentStatus.RETRYING,
+            plan=plan,
+            step_results={
+                "s1": _failed(
+                    "s1",
+                    is_retryable=True,
+                    risk=ToolRiskLevel.WRITE,
+                    error_code="UPSTREAM_503",
+                )
+            },
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.FAILED
+        assert updates["errors"][-1].code == "WRITE_OUTCOME_AMBIGUOUS"
+
+    def test_ambiguous_write_gives_up_in_replanning_too(self) -> None:
+        # An executor that marks an ambiguous write permanent (is_retryable=False,
+        # e.g. the MCP write boundary) routes to REPLANNING; the pre-branch gate
+        # still catches it so replan cannot re-invoke the write.
+        plan = Plan(steps=[_step("s1", risk_level=ToolRiskLevel.WRITE)])
+        state = _state(
+            status=AgentStatus.REPLANNING,
+            plan=plan,
+            step_results={
+                "s1": _failed(
+                    "s1",
+                    is_retryable=False,
+                    risk=ToolRiskLevel.WRITE,
+                    error_code="TIMEOUT",
+                )
+            },
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.FAILED
+        assert updates["errors"][-1].code == "WRITE_OUTCOME_AMBIGUOUS"
+
+    def test_read_ambiguous_failure_still_retries(self) -> None:
+        plan = Plan(steps=[_step("s1")])
+        state = _state(
+            status=AgentStatus.RETRYING,
+            plan=plan,
+            step_results={"s1": _failed("s1", is_retryable=True)},
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.EXECUTING
+        assert updates["retry_count"] == 1
+
+    def test_permanent_write_failure_still_replans(self) -> None:
+        plan = Plan(steps=[_step("s1", risk_level=ToolRiskLevel.WRITE)])
+        state = _state(
+            status=AgentStatus.REPLANNING,
+            plan=plan,
+            step_results={
+                "s1": _failed(
+                    "s1",
+                    is_retryable=False,
+                    risk=ToolRiskLevel.WRITE,
+                    error_code="PERMISSION_DENIED",
+                )
+            },
+        )
+        updates = _invoke(state)
+        assert updates["status"] == AgentStatus.PLANNING
 
 
 class TestReplanBranch:

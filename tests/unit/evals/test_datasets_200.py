@@ -339,7 +339,7 @@ class TestRecoverOrReplan:
     _GIVE_UP_CODES = {
         "RECOVERY_REQUIRES_HUMAN",
         "RECOVERY_GIVE_UP",
-        "WRITE_RETRY_UNSAFE",
+        "WRITE_OUTCOME_AMBIGUOUS",
         "RETRY_BUDGET_EXHAUSTED",
         "REPLAN_BUDGET_EXHAUSTED",
     }
@@ -378,7 +378,7 @@ class TestRecoverOrReplan:
 
     def test_step_results_reference_plan_steps(self) -> None:
         """recover_or_replan looks up a plan step's result by step_id
-        (_failed_write_lacks_idempotency), so every result must map to a plan step."""
+        (_failed_ambiguous_write), so every result must map to a plan step."""
         for case in _load("recover_or_replan_20.json")["cases"]:
             seed = case["seed"]
             if seed["plan"] is None or not seed.get("step_results"):

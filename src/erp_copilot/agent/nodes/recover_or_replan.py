@@ -8,13 +8,16 @@ terminates — every continuing decision strictly increments retry_count or
 replan_count, both capped.
 
 At-most-once is enforced here, not in the executor: a WRITE/DANGEROUS step that
-failed without an idempotency key has an uncertain outcome (a timeout may have
-applied the write), so it is never auto-re-run. Completed step results survive
-both a retry and a replan — the node leaves step_results untouched and the
-executor's resume guard skips COMPLETED steps on the next pass, which matters
-because the deterministic planner reuses positional step ids (s1/s2) across
-regenerations. A run annotated with RECOVERY_RECONCILIATION_REQUIRED (crash
-recovery, RunRecovery) gives up for a human instead of auto-resolving.
+failed with an ambiguous transient code (TIMEOUT/UPSTREAM_UNAVAILABLE/UPSTREAM_5xx)
+has an uncertain outcome — a timeout may have applied the write, and the cloud
+ERP has no server-side idempotency to absorb a re-run — so it is never
+auto-re-run by a retry or a replan; the run gives up for a human to reconcile
+via a read-back. Completed step results survive both a retry and a replan — the
+node leaves step_results untouched and the executor's resume guard skips
+COMPLETED steps on the next pass, which matters because the deterministic
+planner reuses positional step ids (s1/s2) across regenerations. A run annotated
+with RECOVERY_RECONCILIATION_REQUIRED (crash recovery, RunRecovery) gives up for
+a human instead of auto-resolving.
 
 Known limitation: on a replan, a COMPLETED step keeps its old result even if the
 new plan intends it differently (resume guard wins). For the deterministic
@@ -24,6 +27,7 @@ to re-run a completed READ step would need per-step read/write handling here.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from erp_copilot.agent.recovery import RECOVERY_RECONCILIATION_REQUIRED
@@ -37,10 +41,16 @@ from erp_copilot.observability.metrics import METRICS
 MAX_RETRIES = 2
 MAX_REPLANS = 1
 
+# Transient failure codes whose write outcome is unknown — the request may have
+# been applied server-side before the failure surfaced. Mirrors the HTTP/MCP
+# executors' retryable-code taxonomy (apps/worker/executor.py, mcp_executor.py).
+_AMBIGUOUS_TRANSIENT_CODES = frozenset({"TIMEOUT", "UPSTREAM_UNAVAILABLE"})
+_UPSTREAM_STATUS_RE = re.compile(r"^UPSTREAM_(\d{3})$")
+
 
 def _give_up(state: AgentState, code: str, message: str) -> dict[str, Any]:
     # Task 7.3: every give-up path funnels through here, so a single inc covers
-    # human reconciliation, no-plan, unsafe write retry, and budget exhaustion.
+    # human reconciliation, no-plan, ambiguous write outcome, and budget exhaustion.
     METRICS.runs_abandoned.inc()
     return {
         "status": AgentStatus.FAILED,
@@ -48,11 +58,15 @@ def _give_up(state: AgentState, code: str, message: str) -> dict[str, Any]:
     }
 
 
-def _failed_write_lacks_idempotency(state: AgentState) -> bool:
-    """True when a failed WRITE/DANGEROUS step has no idempotency key.
+def _failed_ambiguous_write(state: AgentState) -> bool:
+    """True when a failed WRITE/DANGEROUS step carries an ambiguous transient code.
 
-    A transient failure (e.g. timeout) on such a step leaves its write outcome
-    unknown; auto-retrying would break at-most-once, so the run gives up.
+    The ambiguous codes mirror the executors' retryable taxonomy (TIMEOUT /
+    UPSTREAM_UNAVAILABLE / UPSTREAM_5xx): the request may have been applied
+    server-side before the failure surfaced, so the write outcome is unknown.
+    The cloud ERP has no server-side idempotency (createOrder drops the caller's
+    key), so neither a retry nor a replan may re-invoke it — the run gives up for
+    a human to reconcile via a read-back.
     """
     if state.plan is None:
         return False
@@ -62,9 +76,19 @@ def _failed_write_lacks_idempotency(state: AgentState) -> bool:
         result = state.step_results.get(step.step_id)
         if result is None or result.status != StepStatus.FAILED:
             continue
-        if step.idempotency_key is None:
+        if _is_ambiguous_code(result.error_code):
             return True
     return False
+
+
+def _is_ambiguous_code(code: str | None) -> bool:
+    """True for a transient failure code whose write outcome is uncertain."""
+    if not code:
+        return False
+    if code in _AMBIGUOUS_TRANSIENT_CODES:
+        return True
+    match = _UPSTREAM_STATUS_RE.match(code)
+    return match is not None and 500 <= int(match.group(1)) < 600
 
 
 def recover_or_replan(state: AgentState) -> dict[str, Any]:
@@ -73,11 +97,15 @@ def recover_or_replan(state: AgentState) -> dict[str, Any]:
     Decision order:
     1. An error requiring human reconciliation gives up immediately — an
        uncertain write outcome is never auto-resolved.
-    2. RETRYING retries the failed steps unless a failed write lacks an
-       idempotency key, there is no plan, or the retry budget is exhausted.
-    3. REPLANNING (permanent failure from verify) / PLANNING (invalid plan from
+    2. A failed WRITE/DANGEROUS step carrying an ambiguous transient code gives
+       up for a human: the cloud may have applied the write, so neither retry
+       nor replan may re-invoke it. This sits before the status branches so the
+       replan path is covered too.
+    3. RETRYING retries the failed steps unless there is no plan or the retry
+       budget is exhausted.
+    4. REPLANNING (permanent failure from verify) / PLANNING (invalid plan from
        validate) regenerates the plan unless the replan budget is exhausted.
-    4. Anything else (e.g. SUCCEEDED with leftover non-step errors) is a no-op.
+    5. Anything else (e.g. SUCCEEDED with leftover non-step errors) is a no-op.
     """
     if any(e.code == RECOVERY_RECONCILIATION_REQUIRED for e in state.errors):
         return _give_up(
@@ -86,15 +114,17 @@ def recover_or_replan(state: AgentState) -> dict[str, Any]:
             "存在结果不确定的写操作，需人工对账确认后再继续",
         )
 
+    if _failed_ambiguous_write(state):
+        return _give_up(
+            state,
+            "WRITE_OUTCOME_AMBIGUOUS",
+            "写步骤以歧义性瞬态失败（TIMEOUT/UPSTREAM_5xx/UPSTREAM_UNAVAILABLE），"
+            "云端可能已生效且无服务器端幂等，禁止自动重试/重规划，需人工对账",
+        )
+
     if state.status == AgentStatus.RETRYING:
         if state.plan is None:
             return _give_up(state, "RECOVERY_GIVE_UP", "无可重试的 plan")
-        if _failed_write_lacks_idempotency(state):
-            return _give_up(
-                state,
-                "WRITE_RETRY_UNSAFE",
-                "写步骤无幂等键且结果不确定，禁止自动重试",
-            )
         if state.retry_count >= MAX_RETRIES:
             return _give_up(
                 state,

@@ -67,7 +67,7 @@ _SUGGESTED_ACTION: dict[str, str] = {
     "EMPTY_PLAN": "补充查询条件（商品名/订单号/供应商意图）后重试",
     "RETRY_BUDGET_EXHAUSTED": "检查持续失败根因后人工重试",
     "REPLAN_BUDGET_EXHAUSTED": "检查计划生成失败根因后人工处理",
-    "WRITE_RETRY_UNSAFE": "核对写操作是否已生效后人工处理",
+    "WRITE_OUTCOME_AMBIGUOUS": "云端写操作可能已生效（结果不确定），核对 ERP 侧订单/状态后人工处理",
     "RECOVERY_GIVE_UP": "检查恢复失败原因后人工处理",
     "INSUFFICIENT_STOCK": "确认可用库存后调整下单数量",
     "PRODUCT_NOT_FOUND": "确认商品名称/编号正确后重试",

@@ -4,7 +4,7 @@
   "cases": [
     {
       "case_id": "rec-node-001",
-      "desc": "预算内 retryable 写失败（带幂等键）→ 重试",
+      "desc": "带幂等键的写步骤歧义失败（TIMEOUT）→ 人工对账，禁止重试（云端丢弃 key）",
       "seed": {
         "status": "RETRYING",
         "retry_count": 0,
@@ -13,7 +13,7 @@
         "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-001:s1"}]},
         "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
       },
-      "expected": {"status": "EXECUTING", "retry_count": 1, "replan_count": 0, "error_code": null, "errors_cleared": true}
+      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 0, "error_code": "WRITE_OUTCOME_AMBIGUOUS", "errors_cleared": false}
     },
     {
       "case_id": "rec-node-002",
@@ -30,7 +30,7 @@
     },
     {
       "case_id": "rec-node-003",
-      "desc": "retry 预算耗尽（retry=2 = MAX_RETRIES）→ 放弃",
+      "desc": "歧义写失败优先于 retry 预算 → 人工对账（写步骤不看预算）",
       "seed": {
         "status": "RETRYING",
         "retry_count": 2,
@@ -39,20 +39,20 @@
         "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-003:s1"}]},
         "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
       },
-      "expected": {"status": "FAILED", "retry_count": 2, "replan_count": 0, "error_code": "RETRY_BUDGET_EXHAUSTED", "errors_cleared": false}
+      "expected": {"status": "FAILED", "retry_count": 2, "replan_count": 0, "error_code": "WRITE_OUTCOME_AMBIGUOUS", "errors_cleared": false}
     },
     {
       "case_id": "rec-node-004",
-      "desc": "retry 预算超支守卫（retry=3）→ 仍放弃",
+      "desc": "read 步骤 retry 预算耗尽（retry=2 = MAX_RETRIES）→ 放弃",
       "seed": {
         "status": "RETRYING",
-        "retry_count": 3,
+        "retry_count": 2,
         "replan_count": 0,
         "errors": [{"code": "TIMEOUT", "message": "request timed out", "step_id": "s1"}],
-        "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-004:s1"}]},
+        "plan": {"steps": [{"step_id": "s1", "tool_name": "getProductById", "risk_level": "READ", "idempotency_key": null}]},
         "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
       },
-      "expected": {"status": "FAILED", "retry_count": 3, "replan_count": 0, "error_code": "RETRY_BUDGET_EXHAUSTED", "errors_cleared": false}
+      "expected": {"status": "FAILED", "retry_count": 2, "replan_count": 0, "error_code": "RETRY_BUDGET_EXHAUSTED", "errors_cleared": false}
     },
     {
       "case_id": "rec-node-005",
@@ -69,7 +69,7 @@
     },
     {
       "case_id": "rec-node-006",
-      "desc": "写步骤无幂等键 → 结果不确定，禁止自动重试",
+      "desc": "无幂等键的写步骤歧义失败（TIMEOUT）→ 人工对账",
       "seed": {
         "status": "RETRYING",
         "retry_count": 0,
@@ -78,11 +78,11 @@
         "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": null}]},
         "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
       },
-      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 0, "error_code": "WRITE_RETRY_UNSAFE", "errors_cleared": false}
+      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 0, "error_code": "WRITE_OUTCOME_AMBIGUOUS", "errors_cleared": false}
     },
     {
       "case_id": "rec-node-007",
-      "desc": "写步骤带幂等键 → at-most-once 安全，可重试",
+      "desc": "带幂等键的写步骤歧义失败 → 仍人工对账（云端丢弃 key，key 不提供重试安全）",
       "seed": {
         "status": "RETRYING",
         "retry_count": 0,
@@ -91,11 +91,11 @@
         "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-007:s1"}]},
         "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
       },
-      "expected": {"status": "EXECUTING", "retry_count": 1, "replan_count": 0, "error_code": null, "errors_cleared": true}
+      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 0, "error_code": "WRITE_OUTCOME_AMBIGUOUS", "errors_cleared": false}
     },
     {
       "case_id": "rec-node-008",
-      "desc": "DANGEROUS 步骤无幂等键 → 同样禁止重试",
+      "desc": "DANGEROUS 步骤歧义失败（TIMEOUT）→ 同样人工对账",
       "seed": {
         "status": "RETRYING",
         "retry_count": 0,
@@ -104,7 +104,7 @@
         "plan": {"steps": [{"step_id": "s1", "tool_name": "cancelOrder", "risk_level": "DANGEROUS", "idempotency_key": null}]},
         "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
       },
-      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 0, "error_code": "WRITE_RETRY_UNSAFE", "errors_cleared": false}
+      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 0, "error_code": "WRITE_OUTCOME_AMBIGUOUS", "errors_cleared": false}
     },
     {
       "case_id": "rec-node-009",
@@ -269,7 +269,7 @@
     },
     {
       "case_id": "rec-node-020",
-      "desc": "混合预算独立：RETRYING（replan=1）→ 重试只动 retry 计数",
+      "desc": "歧义写失败在混合预算下仍人工对账（不消耗 retry/replan 预算）",
       "seed": {
         "status": "RETRYING",
         "retry_count": 0,
@@ -278,7 +278,7 @@
         "plan": {"steps": [{"step_id": "s1", "tool_name": "createOrder", "risk_level": "WRITE", "idempotency_key": "eval-rec-node-020:s1"}]},
         "step_results": [{"step_id": "s1", "status": "FAILED", "error_code": "TIMEOUT", "is_retryable": true}]
       },
-      "expected": {"status": "EXECUTING", "retry_count": 1, "replan_count": 1, "error_code": null, "errors_cleared": true}
+      "expected": {"status": "FAILED", "retry_count": 0, "replan_count": 1, "error_code": "WRITE_OUTCOME_AMBIGUOUS", "errors_cleared": false}
     }
   ]
 }
