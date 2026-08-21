@@ -30,6 +30,7 @@ from typing import Any
 import httpx
 
 from apps.erp_simulator.data.orders import (
+    cancel_order,
     create_order,
     get_by_id,
     get_by_idempotency_key,
@@ -37,6 +38,7 @@ from apps.erp_simulator.data.orders import (
     get_orders_by_status,
     get_orders_by_supplier,
     get_orders_by_time_range,
+    update_order_status,
 )
 from apps.erp_simulator.data.products import (
     PRODUCT_BY_ID,
@@ -87,6 +89,10 @@ async def erp_simulator_executor(tool_name: str, arguments: dict[str, Any]) -> T
         return _get_supplier_by_id(arguments)
     if tool_name == "createOrder":
         return _create_order(arguments)
+    if tool_name == "updateOrderStatus":
+        return _update_order_status(arguments)
+    if tool_name == "cancelOrder":
+        return _cancel_order(arguments)
     if tool_name == "getOrderByOrderId":
         return _get_order(arguments)
     if tool_name == "getOrdersBySupplierId":
@@ -385,6 +391,93 @@ def _create_order(arguments: dict[str, Any]) -> ToolResult:
         idempotency_key=idempotency_key,
     )
     return ToolResult.success(tool_version_id="createOrder", data=_order_to_dict(order))
+
+
+def _update_order_status(arguments: dict[str, Any]) -> ToolResult:
+    """Apply a status transition at-most-once per idempotency_key.
+
+    Mirrors the simulator's PUT /orders/updateOrderStatus route. Illegal
+    transitions (terminal state, rollback, skip-level) are permanent failures —
+    the status state machine is deterministic, so a retry cannot succeed.
+    """
+    idempotency_key = arguments.get("idempotency_key")
+    if not idempotency_key:
+        return ToolResult.failure(
+            tool_version_id="updateOrderStatus",
+            error_code="IDEMPOTENCY_KEY_REQUIRED",
+            error_message="写操作必须携带 idempotency_key（at-most-once 前提）",
+        )
+
+    order_id = arguments.get("order_id")
+    if not isinstance(order_id, str):
+        return ToolResult.failure(
+            tool_version_id="updateOrderStatus",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"order_id 必须为字符串，got {order_id!r}",
+        )
+    status = arguments.get("status")
+    if not isinstance(status, str):
+        return ToolResult.failure(
+            tool_version_id="updateOrderStatus",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"status 必须为字符串，got {status!r}",
+        )
+
+    try:
+        order = update_order_status(order_id, status, idempotency_key)
+    except ValueError as exc:
+        return ToolResult.failure(
+            tool_version_id="updateOrderStatus",
+            error_code="INVALID_STATUS_TRANSITION",
+            error_message=str(exc),
+        )
+    if order is None:
+        return ToolResult.failure(
+            tool_version_id="updateOrderStatus",
+            error_code="ORDER_NOT_FOUND",
+            error_message=f"Order '{order_id}' not found",
+        )
+    return ToolResult.success(tool_version_id="updateOrderStatus", data=_order_to_dict(order))
+
+
+def _cancel_order(arguments: dict[str, Any]) -> ToolResult:
+    """Cancel an order at-most-once per idempotency_key.
+
+    Mirrors the simulator's DELETE /orders/cancelOrder route. Only
+    CREATED/CONFIRMED/SHIPPED orders may reach CANCELLED; a terminal order is a
+    permanent failure.
+    """
+    idempotency_key = arguments.get("idempotency_key")
+    if not idempotency_key:
+        return ToolResult.failure(
+            tool_version_id="cancelOrder",
+            error_code="IDEMPOTENCY_KEY_REQUIRED",
+            error_message="写操作必须携带 idempotency_key（at-most-once 前提）",
+        )
+
+    order_id = arguments.get("order_id")
+    if not isinstance(order_id, str):
+        return ToolResult.failure(
+            tool_version_id="cancelOrder",
+            error_code="INVALID_ARGUMENT",
+            error_message=f"order_id 必须为字符串，got {order_id!r}",
+        )
+
+    try:
+        order = cancel_order(order_id, idempotency_key)
+    except ValueError as exc:
+        return ToolResult.failure(
+            tool_version_id="cancelOrder",
+            error_code="INVALID_STATUS_TRANSITION",
+            error_message=str(exc),
+        )
+    if order is None:
+        return ToolResult.failure(
+            tool_version_id="cancelOrder",
+            error_code="ORDER_NOT_FOUND",
+            error_message=f"Order '{order_id}' not found",
+        )
+    return ToolResult.success(tool_version_id="cancelOrder", data=_order_to_dict(order))
 
 
 def _get_order(arguments: dict[str, Any]) -> ToolResult:
@@ -796,6 +889,46 @@ async def _dispatch_http(
             reason = payload.get("status") or "cloud returned no order"
             return _permanent_failure(
                 tool_name, "ORDER_CREATE_FAILED", f"Cloud ERP rejected order: {reason}"
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_order(payload))
+
+    if tool_name == "updateOrderStatus":
+        # idempotency_key is deliberately dropped: the cloud updateOrderStatus
+        # API has no idempotency field, so at-most-once rests solely on the DB
+        # IdempotencyStore replay (honest limitation, same as createOrder). The
+        # newStatus is sent as the V6 enum verbatim — 待对真实 API 确认.
+        payload = await _request_json(
+            client,
+            "PUT",
+            "/orders/updateOrderStatus",
+            headers=headers,
+            json={"orderId": arguments["order_id"], "newStatus": arguments["status"]},
+        )
+        if payload.get("id") in (None, -1):
+            reason = payload.get("status") or "cloud returned no order"
+            return _permanent_failure(
+                tool_name,
+                "ORDER_UPDATE_FAILED",
+                f"Cloud ERP rejected order update: {reason}",
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_order(payload))
+
+    if tool_name == "cancelOrder":
+        # idempotency_key deliberately dropped — same honest limitation as
+        # updateOrderStatus above.
+        payload = await _request_json(
+            client,
+            "DELETE",
+            "/orders/cancelOrder",
+            headers=headers,
+            json={"orderId": arguments["order_id"]},
+        )
+        if payload.get("id") in (None, -1):
+            reason = payload.get("status") or "cloud returned no order"
+            return _permanent_failure(
+                tool_name,
+                "ORDER_CANCEL_FAILED",
+                f"Cloud ERP rejected order cancel: {reason}",
             )
         return ToolResult.success(tool_version_id=tool_name, data=_normalize_order(payload))
 

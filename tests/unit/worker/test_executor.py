@@ -239,6 +239,164 @@ class TestOrderQueryTools:
         assert result.error.error_code == "INVALID_ARGUMENT"
 
 
+class TestUpdateOrderStatus:
+    """updateOrderStatus enforces the rules.yaml order state machine."""
+
+    def _created_order_id(self) -> str:
+        created = _run("createOrder", _create_args())
+        assert created.status == "SUCCEEDED"
+        assert created.data is not None
+        return created.data["order_id"]
+
+    def test_legal_transition_applies(self) -> None:
+        order_id = self._created_order_id()
+
+        result = _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "CONFIRMED", "idempotency_key": "u1"},
+        )
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["order_id"] == order_id
+        assert result.data["status"] == "CONFIRMED"
+
+    def test_replay_same_key_returns_without_reapplying(self) -> None:
+        order_id = self._created_order_id()
+        first = _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "CONFIRMED", "idempotency_key": "u-replay"},
+        )
+        assert first.status == "SUCCEEDED"
+
+        replayed = _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "SHIPPED", "idempotency_key": "u-replay"},
+        )
+
+        assert replayed.status == "SUCCEEDED"
+        assert replayed.data is not None
+        assert replayed.data["status"] == "CONFIRMED"  # recorded result, not re-applied
+
+    def test_illegal_transition_fails(self) -> None:
+        order_id = self._created_order_id()
+
+        result = _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "DELIVERED", "idempotency_key": "u-skip"},
+        )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_STATUS_TRANSITION"
+        assert result.error.is_retryable is False
+
+    def test_terminal_order_rejects_update(self) -> None:
+        order_id = self._created_order_id()
+        _run("updateOrderStatus", {"order_id": order_id, "status": "CONFIRMED", "idempotency_key": "u-a"})
+        _run("updateOrderStatus", {"order_id": order_id, "status": "SHIPPED", "idempotency_key": "u-b"})
+        _run("updateOrderStatus", {"order_id": order_id, "status": "DELIVERED", "idempotency_key": "u-c"})
+
+        result = _run(
+            "updateOrderStatus",
+            {"order_id": order_id, "status": "CANCELLED", "idempotency_key": "u-d"},
+        )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_STATUS_TRANSITION"
+
+    def test_unknown_order_is_not_found(self) -> None:
+        result = _run(
+            "updateOrderStatus",
+            {"order_id": "no-such", "status": "CONFIRMED", "idempotency_key": "u-none"},
+        )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "ORDER_NOT_FOUND"
+
+    def test_missing_args_are_invalid(self) -> None:
+        missing_order = _run("updateOrderStatus", {"status": "CONFIRMED", "idempotency_key": "k"})
+        missing_status = _run("updateOrderStatus", {"order_id": "x", "idempotency_key": "k"})
+        missing_key = _run("updateOrderStatus", {"order_id": "x", "status": "CONFIRMED"})
+
+        assert missing_order.error is not None
+        assert missing_order.error.error_code == "INVALID_ARGUMENT"
+        assert missing_status.error is not None
+        assert missing_status.error.error_code == "INVALID_ARGUMENT"
+        assert missing_key.error is not None
+        assert missing_key.error.error_code == "IDEMPOTENCY_KEY_REQUIRED"
+
+
+class TestCancelOrder:
+    """cancelOrder cancels CREATED/CONFIRMED/SHIPPED orders (at-most-once)."""
+
+    def _created_order_id(self) -> str:
+        created = _run("createOrder", _create_args())
+        assert created.status == "SUCCEEDED"
+        assert created.data is not None
+        return created.data["order_id"]
+
+    def test_cancels_created_order(self) -> None:
+        order_id = self._created_order_id()
+
+        result = _run("cancelOrder", {"order_id": order_id, "idempotency_key": "c1"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["order_id"] == order_id
+        assert result.data["status"] == "CANCELLED"
+
+    def test_cancels_shipped_order(self) -> None:
+        order_id = self._created_order_id()
+        _run("updateOrderStatus", {"order_id": order_id, "status": "CONFIRMED", "idempotency_key": "c-a"})
+        _run("updateOrderStatus", {"order_id": order_id, "status": "SHIPPED", "idempotency_key": "c-b"})
+
+        result = _run("cancelOrder", {"order_id": order_id, "idempotency_key": "c-shipped"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["status"] == "CANCELLED"
+
+    def test_delivered_order_cannot_cancel(self) -> None:
+        order_id = self._created_order_id()
+        _run("updateOrderStatus", {"order_id": order_id, "status": "CONFIRMED", "idempotency_key": "c-d-a"})
+        _run("updateOrderStatus", {"order_id": order_id, "status": "SHIPPED", "idempotency_key": "c-d-b"})
+        _run("updateOrderStatus", {"order_id": order_id, "status": "DELIVERED", "idempotency_key": "c-d-c"})
+
+        result = _run("cancelOrder", {"order_id": order_id, "idempotency_key": "c-d-delivered"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "INVALID_STATUS_TRANSITION"
+
+    def test_cancelled_order_cannot_cancel_twice(self) -> None:
+        order_id = self._created_order_id()
+        first = _run("cancelOrder", {"order_id": order_id, "idempotency_key": "c-1"})
+        assert first.status == "SUCCEEDED"
+
+        second = _run("cancelOrder", {"order_id": order_id, "idempotency_key": "c-2"})
+
+        assert second.status == "FAILED"
+        assert second.error is not None
+        assert second.error.error_code == "INVALID_STATUS_TRANSITION"
+
+    def test_unknown_order_is_not_found(self) -> None:
+        result = _run("cancelOrder", {"order_id": "no-such", "idempotency_key": "c-none"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "ORDER_NOT_FOUND"
+
+    def test_missing_idempotency_key_is_rejected(self) -> None:
+        result = _run("cancelOrder", {"order_id": "x"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "IDEMPOTENCY_KEY_REQUIRED"
+
+
 class TestSupplierRead:
     def test_get_supplier_by_status_carries_canonical_supplier_id(self) -> None:
         result = _run("getSupplierByStatus", {"status": "AVAILABLE"})
@@ -334,7 +492,7 @@ class TestErrorMapping:
         assert result.error.is_retryable is True
 
     def test_unknown_tool_fails_closed(self) -> None:
-        result = _run("updateOrderStatus", {"order_id": "x", "status": "SHIPPED"})
+        result = _run("noSuchTool", {"order_id": "x"})
 
         assert result.status == "FAILED"
         assert result.error is not None

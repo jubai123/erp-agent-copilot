@@ -705,10 +705,112 @@ class TestErrorMapping:
         assert result.error is not None
 
 
+class TestUpdateOrderStatus:
+    def test_puts_new_status_and_normalizes_order(self) -> None:
+        with respx.mock:
+            route = respx.put(f"{_BASE_URL}/orders/updateOrderStatus").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "id": 7,
+                        "orderTime": "2026-08-15T10:00:00Z",
+                        "quantity": 20,
+                        "amount": 200.0,
+                        "status": "SHIPPED",
+                        "supplierId": 3,
+                        "productId": 1,
+                        "orderRegion": "上海",
+                    },
+                )
+            )
+            result = _call(
+                "updateOrderStatus",
+                {"order_id": 7, "status": "SHIPPED", "idempotency_key": "k-upd"},
+            )
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {
+            "order_id": 7,
+            "product_id": 1,
+            "quantity": 20,
+            "supplier_id": 3,
+            "region": "上海",
+            "amount": 200.0,
+            "status": "SHIPPED",
+            "created_at": "2026-08-15T10:00:00Z",
+        }
+        request = route.calls.last.request
+        _assert_body(request, {"orderId": 7, "newStatus": "SHIPPED"})
+        assert b"idempotency_key" not in request.content
+
+    def test_business_failure_sentinel_is_permanent_failed(self) -> None:
+        with respx.mock:
+            respx.put(f"{_BASE_URL}/orders/updateOrderStatus").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={"id": -1, "status": "订单已完成，无法修改状态"},
+                )
+            )
+            result = _call(
+                "updateOrderStatus",
+                {"order_id": 7, "status": "SHIPPED", "idempotency_key": "k-upd-2"},
+            )
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "ORDER_UPDATE_FAILED"
+        assert result.error.is_retryable is False
+        assert "订单已完成" in result.error.error_message
+
+
+class TestCancelOrder:
+    def test_deletes_order_and_normalizes_order(self) -> None:
+        with respx.mock:
+            route = respx.delete(f"{_BASE_URL}/orders/cancelOrder").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "id": 7,
+                        "orderTime": "2026-08-15T10:00:00Z",
+                        "quantity": 20,
+                        "amount": 200.0,
+                        "status": "CANCELLED",
+                        "supplierId": 3,
+                        "productId": 1,
+                        "orderRegion": "上海",
+                    },
+                )
+            )
+            result = _call("cancelOrder", {"order_id": 7, "idempotency_key": "k-cancel"})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data is not None
+        assert result.data["status"] == "CANCELLED"
+        request = route.calls.last.request
+        _assert_body(request, {"orderId": 7})
+        assert b"idempotency_key" not in request.content
+
+    def test_business_failure_sentinel_is_permanent_failed(self) -> None:
+        with respx.mock:
+            respx.delete(f"{_BASE_URL}/orders/cancelOrder").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={"id": -1, "status": "订单已完成，无法取消"},
+                )
+            )
+            result = _call("cancelOrder", {"order_id": 7, "idempotency_key": "k-cancel-2"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "ORDER_CANCEL_FAILED"
+        assert result.error.is_retryable is False
+        assert "订单已完成" in result.error.error_message
+
+
 class TestUnknownTool:
     def test_unknown_tool_fails_closed(self) -> None:
         with respx.mock:
-            result = _call("cancelOrder", {"order_id": 1})
+            result = _call("noSuchTool", {"order_id": 1})
 
         assert result.status == "FAILED"
         assert result.error is not None
