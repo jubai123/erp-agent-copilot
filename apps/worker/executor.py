@@ -655,6 +655,37 @@ async def _dispatch_http(
         )
         return ToolResult.success(tool_version_id=tool_name, data=_normalize_suppliers(payload))
 
+    if tool_name == "getSupplierByName":
+        payload = await _request_json(
+            client,
+            "GET",
+            "/suppliers/getSupplierByName",
+            headers=headers,
+            params={"supplierName": arguments["name"]},
+        )
+        if payload.get("supplierId") is None:
+            return _permanent_failure(
+                tool_name,
+                "SUPPLIER_NOT_FOUND",
+                f"Supplier '{arguments.get('name')!r}' not found",
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_supplier(payload))
+
+    if tool_name == "getSupplierById":
+        payload = await _request_json(
+            client,
+            "GET",
+            f"/suppliers/getSupplierById/{arguments['supplier_id']}",
+            headers=headers,
+        )
+        if payload.get("supplierId") is None:
+            return _permanent_failure(
+                tool_name,
+                "SUPPLIER_NOT_FOUND",
+                f"Supplier with id {arguments.get('supplier_id')!r} not found",
+            )
+        return ToolResult.success(tool_version_id=tool_name, data=_normalize_supplier(payload))
+
     if tool_name == "createOrder":
         # idempotency_key is deliberately dropped: the cloud createOrder API
         # has no such field, so at-most-once rests solely on the DB

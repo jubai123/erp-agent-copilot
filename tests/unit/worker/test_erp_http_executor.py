@@ -197,6 +197,93 @@ class TestQuerySuppliersByDeliveryRegion:
         _assert_body(route.calls.last.request, {"region": "上海"})
 
 
+class TestGetSupplierByName:
+    def test_gets_query_param_and_normalizes_supplier(self) -> None:
+        with respx.mock:
+            route = respx.get(f"{_BASE_URL}/suppliers/getSupplierByName").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "supplierId": 10,
+                        "name": "华东物流",
+                        "phone": "021-123",
+                        "address": "上海",
+                        "deliveryAreas": ["上海", "南京"],
+                        "rating": 4.8,
+                        "status": "InUse",
+                    },
+                )
+            )
+            result = _call("getSupplierByName", {"name": "华东物流"})
+
+        assert result.status == "SUCCEEDED"
+        # A single-supplier lookup returns the flat supplier dict (mirrors the
+        # simulator's _supplier_data), not the {"suppliers": [...]} envelope.
+        assert result.data == {
+            "supplier_id": 10,
+            "name": "华东物流",
+            "regions": ["上海", "南京"],
+            "status": "AVAILABLE",
+            "rating": 4.8,
+        }
+        assert dict(route.calls.last.request.url.params) == {"supplierName": "华东物流"}
+        assert route.calls.last.request.headers["X-API-Key"] == _API_KEY
+
+    def test_empty_response_is_permanent_not_found(self) -> None:
+        with respx.mock:
+            respx.get(f"{_BASE_URL}/suppliers/getSupplierByName").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            result = _call("getSupplierByName", {"name": "不存在"})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "SUPPLIER_NOT_FOUND"
+        assert result.error.is_retryable is False
+
+
+class TestGetSupplierById:
+    def test_gets_path_id_and_normalizes_supplier(self) -> None:
+        with respx.mock:
+            route = respx.get(f"{_BASE_URL}/suppliers/getSupplierById/10").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "supplierId": 10,
+                        "name": "华东物流",
+                        "phone": "021-123",
+                        "address": "上海",
+                        "deliveryAreas": ["上海"],
+                        "rating": 4.8,
+                        "status": "InUse",
+                    },
+                )
+            )
+            result = _call("getSupplierById", {"supplier_id": 10})
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {
+            "supplier_id": 10,
+            "name": "华东物流",
+            "regions": ["上海"],
+            "status": "AVAILABLE",
+            "rating": 4.8,
+        }
+        assert route.calls.last.request.headers["X-API-Key"] == _API_KEY
+
+    def test_empty_response_is_permanent_not_found(self) -> None:
+        with respx.mock:
+            respx.get(f"{_BASE_URL}/suppliers/getSupplierById/999").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            result = _call("getSupplierById", {"supplier_id": 999})
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == "SUPPLIER_NOT_FOUND"
+        assert result.error.is_retryable is False
+
+
 class TestCreateOrder:
     def test_drops_idempotency_key_and_maps_fields(self) -> None:
         with respx.mock:
