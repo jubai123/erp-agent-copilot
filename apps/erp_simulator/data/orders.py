@@ -28,6 +28,21 @@ class Order:
 # In-memory stores — shared across requests within the process lifetime.
 _orders_by_id: dict[str, Order] = {}
 _orders_by_idempotency: dict[str, Order] = {}
+# Write idempotency for status mutations, kept separate from the create store:
+# an update/cancel mutates an existing order (no new record to key off), so a
+# replay must return the recorded result without re-applying.
+_order_writes: dict[str, Order] = {}
+
+# Legal transitions mirror rules.yaml order-state-machine: one step forward in
+# CREATED → CONFIRMED → SHIPPED → DELIVERED, or into CANCELLED from any
+# non-terminal state. Terminal states and rollback/skip are rejected.
+_ORDER_STATE_TRANSITIONS: dict[str, frozenset[str]] = {
+    "CREATED": frozenset({"CONFIRMED", "CANCELLED"}),
+    "CONFIRMED": frozenset({"SHIPPED", "CANCELLED"}),
+    "SHIPPED": frozenset({"DELIVERED", "CANCELLED"}),
+    "DELIVERED": frozenset(),
+    "CANCELLED": frozenset(),
+}
 
 
 def create_order(
@@ -65,6 +80,54 @@ def get_by_idempotency_key(key: str) -> Order | None:
 
 def get_by_id(order_id: str) -> Order | None:
     return _orders_by_id.get(order_id)
+
+
+def can_transition(current: str, target: str) -> bool:
+    """Whether rules.yaml order-state-machine allows *current* -> *target*."""
+    return target in _ORDER_STATE_TRANSITIONS.get(current, frozenset())
+
+
+def update_order_status(order_id: str, new_status: str, idempotency_key: str) -> Order | None:
+    """Apply a status change at-most-once per *idempotency_key*.
+
+    A replay (same key) returns the recorded order without re-applying — the
+    same at-most-once contract as ``create_order``. Returns None when the order
+    does not exist; raises ValueError for an illegal transition (terminal state,
+    rollback to CREATED, or a skip-level jump).
+    """
+    existing = _order_writes.get(idempotency_key)
+    if existing is not None:
+        return existing
+    order = _orders_by_id.get(order_id)
+    if order is None:
+        return None
+    if not can_transition(order.status, new_status):
+        raise ValueError(
+            f"Order '{order_id}' cannot transition from {order.status} to {new_status}"
+        )
+    order.status = new_status
+    _order_writes[idempotency_key] = order
+    return order
+
+
+def cancel_order(order_id: str, idempotency_key: str) -> Order | None:
+    """Cancel an order at-most-once per *idempotency_key*.
+
+    Mirrors ``update_order_status``; only CREATED/CONFIRMED/SHIPPED orders may
+    reach CANCELLED (rules.yaml order-cancel-constraint). Returns None when the
+    order does not exist; raises ValueError for a terminal order.
+    """
+    existing = _order_writes.get(idempotency_key)
+    if existing is not None:
+        return existing
+    order = _orders_by_id.get(order_id)
+    if order is None:
+        return None
+    if not can_transition(order.status, "CANCELLED"):
+        raise ValueError(f"Order '{order_id}' in status {order.status} cannot be cancelled")
+    order.status = "CANCELLED"
+    _order_writes[idempotency_key] = order
+    return order
 
 
 def get_orders_by_supplier(supplier_id: int) -> list[Order]:
