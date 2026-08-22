@@ -39,6 +39,7 @@ NODE_NAMES: tuple[str, ...] = (
     "execute_ready_steps",
     "verify_results",
     "recover_or_replan",
+    "compensate_partial_writes",
     "finalize",
 )
 
@@ -98,6 +99,16 @@ def _verify_results_noop(state: AgentState) -> dict[str, Any]:
     app always injects the real node (build_verify_results_node) at startup.
     """
     return {"status": AgentStatus.SUCCEEDED}
+
+
+def _compensate_noop(state: AgentState) -> dict[str, Any]:
+    """No-op compensate_partial_writes used when no compensate node is injected.
+
+    Clears the pending flag so a test graph that never injects the real node
+    (compensation.py) still terminates on the routing edge instead of looping;
+    the worker always injects the real node at startup.
+    """
+    return {"compensation_pending": False}
 
 
 def _llm_plan_noop(state: AgentState) -> dict[str, Any]:
@@ -192,11 +203,14 @@ def _route_to_planner(state: AgentState) -> str:
 def _route_after_recover(state: AgentState) -> str:
     # recover_or_replan sets the next status: EXECUTING -> retry the failed
     # steps, PLANNING -> regenerate the plan (re-entering the layer router);
+    # compensation_pending -> run the automatic compensation before finalize;
     # anything else (FAILED after give up, or a no-op status) ends at finalize.
     if state.status == AgentStatus.EXECUTING:
         return "execute_ready_steps"
     if state.status == AgentStatus.PLANNING:
         return _route_to_planner(state)
+    if state.compensation_pending:
+        return "compensate_partial_writes"
     return "finalize"
 
 
@@ -208,6 +222,7 @@ def build_agent_graph(
     policy_node: Callable[[AgentState], dict[str, Any]] | None = None,
     execute_node: Callable[[AgentState], Awaitable[dict[str, Any]]] | None = None,
     verify_node: Callable[[AgentState], dict[str, Any]] | None = None,
+    compensate_node: Callable[[AgentState], Awaitable[dict[str, Any]]] | None = None,
     checkpoint_saver: CheckpointSaver | None = None,
 ) -> CompiledStateGraph:
     """Build and compile the agent state graph.
@@ -220,9 +235,11 @@ def build_agent_graph(
     *validate_node* the real validate_plan implementation (task 4.7),
     *policy_node* the real policy_check implementation (task 4.8),
     *execute_node* the real execute_ready_steps implementation (task 4.9) and
-    *verify_node* the real verify_results implementation (task 4.11). When
-    omitted, no-ops keep topology/smoke tests free of database, LLM,
-    tool-schema, security-subsystem, executor and success-condition
+    *verify_node* the real verify_results implementation (task 4.11),
+    *compensate_node* the real compensate_partial_writes implementation
+    (compensation.py — saga compensation for partial multi-write failures,
+    缺口二). When omitted, no-ops keep topology/smoke tests free of database,
+    LLM, tool-schema, security-subsystem, executor and success-condition
     dependencies. An omitted *llm_plan_node* reports ROUTED_TIER23_NO_LLM for
     tier2/3 queries — the funnel refuses to overgrab rather than guess.
 
@@ -252,6 +269,10 @@ def build_agent_graph(
         ),
         ("verify_results", verify_node if verify_node is not None else _verify_results_noop),
         ("recover_or_replan", recover_or_replan),
+        (
+            "compensate_partial_writes",
+            compensate_node if compensate_node is not None else _compensate_noop,
+        ),
         ("finalize", finalize),
     ]
     # Registered in a loop — langgraph's _Node protocol does not type-check
@@ -303,9 +324,11 @@ def build_agent_graph(
             "execute_ready_steps": "execute_ready_steps",
             "build_plan": "build_plan",
             "build_plan_llm": "build_plan_llm",
+            "compensate_partial_writes": "compensate_partial_writes",
             "finalize": "finalize",
         },
     )
+    builder.add_edge("compensate_partial_writes", "finalize")
     builder.add_edge("finalize", END)
 
     return builder.compile()

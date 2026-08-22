@@ -27,9 +27,13 @@ to re-run a completed READ step would need per-step read/write handling here.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from erp_copilot.agent.compensation import (
+    PARTIAL_WRITE_DETECTED,
+    detect_partial_writes,
+    is_ambiguous_code,
+)
 from erp_copilot.agent.recovery import RECOVERY_RECONCILIATION_REQUIRED
 from erp_copilot.agent.state import AgentState, AgentStatus, StateError
 from erp_copilot.domain.enums import StepStatus, ToolRiskLevel
@@ -41,12 +45,6 @@ from erp_copilot.observability.metrics import METRICS
 MAX_RETRIES = 2
 MAX_REPLANS = 1
 
-# Transient failure codes whose write outcome is unknown — the request may have
-# been applied server-side before the failure surfaced. Mirrors the HTTP/MCP
-# executors' retryable-code taxonomy (apps/worker/executor.py, mcp_executor.py).
-_AMBIGUOUS_TRANSIENT_CODES = frozenset({"TIMEOUT", "UPSTREAM_UNAVAILABLE"})
-_UPSTREAM_STATUS_RE = re.compile(r"^UPSTREAM_(\d{3})$")
-
 
 def _give_up(state: AgentState, code: str, message: str) -> dict[str, Any]:
     # Task 7.3: every give-up path funnels through here, so a single inc covers
@@ -56,6 +54,29 @@ def _give_up(state: AgentState, code: str, message: str) -> dict[str, Any]:
         "status": AgentStatus.FAILED,
         "errors": [*state.errors, StateError(code=code, message=message)],
     }
+
+
+def _maybe_compensate_give_up(state: AgentState, code: str, message: str) -> dict[str, Any]:
+    """Give up, and when a partial write exists flag it for automatic compensation.
+
+    Budget exhaustion is the only give-up family that compensates: the run can
+    no longer retry/replan, so the completed earlier writes would otherwise
+    dangle. Ambiguous-write and human-reconciliation give-ups return plain
+    _give_up — their outcomes are uncertain, so a compensating write is unsafe.
+    The PARTIAL_WRITE_DETECTED error is appended after the give-up code, so
+    persist_run's failure_code (errors[0]) is unchanged.
+    """
+    updates = _give_up(state, code, message)
+    if detect_partial_writes(state.plan, state.step_results):
+        updates["compensation_pending"] = True
+        updates["errors"] = [
+            *updates["errors"],
+            StateError(
+                code=PARTIAL_WRITE_DETECTED,
+                message="检测到已完成的部分写步骤，自动补偿已启动",
+            ),
+        ]
+    return updates
 
 
 def _failed_ambiguous_write(state: AgentState) -> bool:
@@ -76,19 +97,9 @@ def _failed_ambiguous_write(state: AgentState) -> bool:
         result = state.step_results.get(step.step_id)
         if result is None or result.status != StepStatus.FAILED:
             continue
-        if _is_ambiguous_code(result.error_code):
+        if is_ambiguous_code(result.error_code):
             return True
     return False
-
-
-def _is_ambiguous_code(code: str | None) -> bool:
-    """True for a transient failure code whose write outcome is uncertain."""
-    if not code:
-        return False
-    if code in _AMBIGUOUS_TRANSIENT_CODES:
-        return True
-    match = _UPSTREAM_STATUS_RE.match(code)
-    return match is not None and 500 <= int(match.group(1)) < 600
 
 
 def recover_or_replan(state: AgentState) -> dict[str, Any]:
@@ -126,7 +137,7 @@ def recover_or_replan(state: AgentState) -> dict[str, Any]:
         if state.plan is None:
             return _give_up(state, "RECOVERY_GIVE_UP", "无可重试的 plan")
         if state.retry_count >= MAX_RETRIES:
-            return _give_up(
+            return _maybe_compensate_give_up(
                 state,
                 "RETRY_BUDGET_EXHAUSTED",
                 f"重试预算（{MAX_RETRIES}）已耗尽，放弃自动重试",
@@ -142,7 +153,7 @@ def recover_or_replan(state: AgentState) -> dict[str, Any]:
 
     if state.status in (AgentStatus.REPLANNING, AgentStatus.PLANNING):
         if state.replan_count >= MAX_REPLANS:
-            return _give_up(
+            return _maybe_compensate_give_up(
                 state,
                 "REPLAN_BUDGET_EXHAUSTED",
                 f"重规划预算（{MAX_REPLANS}）已耗尽，放弃自动重规划",

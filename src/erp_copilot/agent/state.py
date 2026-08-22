@@ -236,6 +236,11 @@ class AgentState(_StrictModel):
 
     retry_count: int = 0
     replan_count: int = 0
+    # Set by recover_or_replan when it gives up on a run whose earlier writes
+    # already completed (a partial write): routes the graph to the
+    # compensate_partial_writes node, which clears it after attempting the
+    # compensating actions (缺口二, docs/03 section 9).
+    compensation_pending: bool = False
     errors: list[StateError] = Field(default_factory=list)
 
     started_at: datetime | None = None
