@@ -84,15 +84,18 @@ class TestBuildPlannerPrompt:
             query="查询订单",
             active_rules=rules,
             retrieved_context=knowledge,
-            candidate_tools=["getOrderByOrderId"],
+            candidate_tools=["getOrdersBySupplierId"],
         )
+        # The candidate-tool anchor must be a tool the System section never
+        # names — getOrderByOrderId now appears in the fixed rules' 写前必查 rule,
+        # so prompt.index() would hit the System section instead of the candidates.
         order = [
             prompt.index(anchor)
             for anchor in (
                 "系统",
                 "订单状态机规则",
                 "取消订单流程",
-                "getOrderByOrderId",
+                "getOrdersBySupplierId",
                 "查询订单",
             )
         ]
@@ -189,6 +192,17 @@ class TestBuildPlannerPrompt:
         fixed_rules = SYSTEM_PROMPT.split("固定规则", 1)[1]
         assert "argument_sources" in fixed_rules
         assert "depends_on" in fixed_rules
+
+    def test_system_prompt_requires_lookup_before_order_write(self) -> None:
+        # plan-046/143/181: the LLM omitted getOrderByOrderId before
+        # updateOrderStatus/cancelOrder because each tool contract describes its
+        # tool in isolation. The deterministic planner hardcodes the
+        # [lookup, write] pair (_order_dag_steps); the LLM path must be told the
+        # workflow prerequisite as a fixed rule, not left to model inference.
+        fixed_rules = SYSTEM_PROMPT.split("固定规则", 1)[1]
+        rule = next(ln for ln in fixed_rules.splitlines() if "getOrderByOrderId" in ln)
+        assert "cancelOrder" in rule and "updateOrderStatus" in rule
+        assert "前置" in rule
 
 
 class TestParsePlanResponse:
