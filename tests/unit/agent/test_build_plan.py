@@ -27,7 +27,7 @@ from erp_copilot.agent.nodes.build_plan import (
     parse_plan_response,
     reject_l1_violations,
 )
-from erp_copilot.agent.nodes.validate_plan import ToolSpec
+from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.state import (
     AgentState,
     IntentClassification,
@@ -380,6 +380,127 @@ class TestBuildPlanNode:
         assert updates["candidate_tools"] == []
         assert updates["active_rules"] == []
         assert updates["plan"].steps[0].tool_name == "getProductById"
+
+    def test_node_completes_data_dependencies_from_argument_sources(self) -> None:
+        # plan-049/171/181 class (modify / cancel-rebuy): the LLM emits
+        # createOrder with argument_sources referencing the lookup step (step:1)
+        # but depends_on only lists the cancel step (step:2), so validate_plan
+        # rejects with BROKEN_ARGUMENT_SOURCE even though the plan matches the
+        # deterministic planner's structure (_order_dag_steps). The data
+        # reference IS the dependency declaration — the parse layer completes
+        # the edge (argument_sources ⇒ depends_on) instead of letting a
+        # structurally correct plan fail the gate.
+        def llm(_: str) -> str:
+            return _plan_json(
+                [
+                    _step(
+                        step_id="1",
+                        tool_name="getOrderByOrderId",
+                        arguments={"order_id": "abc"},
+                        argument_sources={"order_id": "user_query"},
+                        depends_on=[],
+                    ),
+                    _step(
+                        step_id="2",
+                        tool_name="cancelOrder",
+                        arguments={},
+                        argument_sources={"order_id": "step:1"},
+                        depends_on=["1"],
+                        risk_level="WRITE",
+                        fallback="重新激活原订单",
+                    ),
+                    _step(
+                        step_id="3",
+                        tool_name="createOrder",
+                        arguments={"quantity": 10},
+                        argument_sources={
+                            "product_id": "step:1",
+                            "supplier_id": "step:1",
+                            "region": "step:1",
+                        },
+                        depends_on=["2"],
+                        risk_level="WRITE",
+                        fallback="取消新建订单以补偿",
+                    ),
+                ]
+            )
+
+        node = build_plan_node(llm_complete=llm)
+        state = _agent_state(
+            query="改单：把订单 abc 数量改成 10",
+            intent=IntentClassification(domain="order", action="modify"),
+        )
+        plan = node(state)["plan"]
+        create = next(s for s in plan.steps if s.tool_name == "createOrder")
+        assert set(create.depends_on) == {"1", "2"}
+
+        schemas = {
+            "getOrderByOrderId": ToolSpec(name="getOrderByOrderId", required_params=["order_id"]),
+            "cancelOrder": ToolSpec(name="cancelOrder"),
+            "createOrder": ToolSpec(name="createOrder", required_params=["quantity"]),
+        }
+        validate = build_validate_plan_node(tool_schemas=schemas)
+        validated = validate(
+            state.model_copy(
+                update={
+                    "plan": plan,
+                    "candidate_tools": ["getOrderByOrderId", "cancelOrder", "createOrder"],
+                }
+            )
+        )
+        assert not validated["plan_validation"].errors
+
+    def test_node_does_not_mask_reference_to_nonexistent_step(self) -> None:
+        # Completing depends_on from argument_sources must not paper over a
+        # genuinely broken plan: a step:9 reference to a step that does not
+        # exist still fails the deterministic gate (as MISSING_DEPENDENCY).
+        def llm(_: str) -> str:
+            return _plan_json(
+                [
+                    _step(
+                        step_id="1",
+                        tool_name="getOrderByOrderId",
+                        arguments={"order_id": "abc"},
+                        argument_sources={"order_id": "user_query"},
+                        depends_on=[],
+                    ),
+                    _step(
+                        step_id="2",
+                        tool_name="createOrder",
+                        arguments={"quantity": 10},
+                        argument_sources={"product_id": "step:9"},
+                        depends_on=[],
+                        risk_level="WRITE",
+                        fallback="取消新建订单以补偿",
+                    ),
+                ]
+            )
+
+        node = build_plan_node(llm_complete=llm)
+        state = _agent_state(
+            query="改单：把订单 abc 数量改成 10",
+            intent=IntentClassification(domain="order", action="modify"),
+        )
+        plan = node(state)["plan"]
+        create = next(s for s in plan.steps if s.tool_name == "createOrder")
+        assert create.depends_on == ["9"]
+
+        schemas = {
+            "getOrderByOrderId": ToolSpec(name="getOrderByOrderId", required_params=["order_id"]),
+            "cancelOrder": ToolSpec(name="cancelOrder"),
+            "createOrder": ToolSpec(name="createOrder", required_params=["quantity"]),
+        }
+        validate = build_validate_plan_node(tool_schemas=schemas)
+        validated = validate(
+            state.model_copy(
+                update={
+                    "plan": plan,
+                    "candidate_tools": ["getOrderByOrderId", "cancelOrder", "createOrder"],
+                }
+            )
+        )
+        codes = [e.code for e in validated["plan_validation"].errors]
+        assert "MISSING_DEPENDENCY" in codes
 
     def test_node_prompt_includes_required_params_when_schemas_given(self) -> None:
         captured: list[str] = []

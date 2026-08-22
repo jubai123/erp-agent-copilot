@@ -191,6 +191,37 @@ def _promote_step_ref_values(plan: Plan) -> Plan:
     return plan.model_copy(update={"steps": steps})
 
 
+def _complete_data_dependencies(plan: Plan) -> Plan:
+    """Complete each step's depends_on from its argument_sources data refs.
+
+    LLMs emit createOrder with argument_sources referencing the order-lookup
+    step (``step:1``) but depends_on only listing the direct write dependency
+    (``step:2``) — the transitive data dependency is implied by the reference
+    but not declared, so validate_plan rejects the otherwise-correct plan with
+    BROKEN_ARGUMENT_SOURCE (plan-049/171/181 class). A step that reads a value
+    produced by step Y necessarily depends on Y, so the edge is completed
+    deterministically at parse time, mirroring the deterministic planner's
+    ``_order_dag_steps``. Existing deps keep their order; refs are appended.
+    """
+    changed = False
+    steps: list[PlanStep] = []
+    for step in plan.steps:
+        missing: list[str] = []
+        for ref in step.argument_sources.values():
+            if not _STEP_REF_RE.match(ref):
+                continue
+            target = ref.split(":", 1)[1]
+            if target not in step.depends_on and target not in missing:
+                missing.append(target)
+        if missing:
+            changed = True
+            step = step.model_copy(update={"depends_on": [*step.depends_on, *missing]})
+        steps.append(step)
+    if not changed:
+        return plan
+    return plan.model_copy(update={"steps": steps})
+
+
 def parse_plan_response(raw: str) -> Plan:
     """Parse the LLM's JSON (optionally fenced) into a strict Plan.
 
@@ -365,6 +396,7 @@ def build_plan_node(
 
         filtered_plan, l1_errors = reject_l1_violations(plan, rules)
         filtered_plan = _promote_step_ref_values(filtered_plan)
+        filtered_plan = _complete_data_dependencies(filtered_plan)
         filtered_plan = stamp_idempotency_keys(filtered_plan, state.run_id)
         updates: dict[str, Any] = {
             "plan": filtered_plan,
