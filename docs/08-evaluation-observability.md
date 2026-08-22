@@ -44,7 +44,7 @@ uv run python -m evals.scripts.export_failure_regression --days 30 --tenant-id <
 - **三态子集**：`load_planning_cases(split)` 支持 `heldout`（manifest）/ `dev`（补集 160）/ `all`（200）。prompt 调优在 dev 上迭代；held-out 是 clean set，最终报告只报它。
 - **机械守卫**：`--split heldout` 时显式 `--system` 直接报错拒绝——held-out 只测生产 `SYSTEM_PROMPT`，调优 A/B 必须 `--split dev`。
 - **用法**：默认即 held-out（`uv run python -m evals.llm_planner_eval`）；调优 `--split dev --system "<变体>"`；报告带 `split` 字段自描述。
-- **权衡与现状**：held-out 每层仅 10 例 → 分层 Wilson CI 更宽（n=10 仍有效）；默认 held-out 与 50-case 基线重叠可能为 0，漂移先报 `no_baseline`，建立 held-out 基线报告后再启用告警。
+- **权衡与现状**：held-out 每层仅 10 例 → 分层 Wilson CI 更宽（n=10 仍有效）；**2026-08-22 真实 DeepSeek held-out 基线已建立**（`evals/reports/report_llm_planner_heldout_deepseek_20260822.json`：选型 0.90、单步 1.0、多步 0.80、contract_valid 0.90）；与 50 例基线在共享 12 例上 **drift 0.0**——drift 闸门基线侧已改为同样限制到共享集（此前基线侧用全量 50 例，会把更难的 held-out 混合误报成 -6.3% 假阳性，已修并加回归测试 `test_baseline_side_restricted_to_same_overlap`）。
 
 ## 3. AI与Agent指标
 

@@ -84,7 +84,7 @@ classify_intent
 
 **三层漏斗（词表外默认开 LLM）**：`classify_intent` 先判复杂度/区域/词表，Tier1 词表内查询走确定性 `build_plan` 快速路径；Tier2/Tier3 词表外查询（复杂度闸门、未知区域、EMPTY_PLAN）走 LLM 规划节点 `build_plan_llm`。LLM 漏斗**默认启用**（`LLM_PLANNING_ENABLED=true`，见 .env.example），词表外意图/规划真正进生产主路径；`resolve_llm_plan_node` 三态接线：`false` 保持离线（tier2/3 诚实失败 `ROUTED_TIER23_NO_LLM`）、启用但无 key 报配置错误 `LLM_NOT_CONFIGURED`、启用有 key 走真实 `build_plan_node`。LLM 输出仍被 §5.6 四层确定性护栏严格校验，路由边界（`route_query_layer`）不随开关变化。
 
-**LLM 兜底上限（实测，2026-08-18 真实 DeepSeek 50 例基线）**：词表外走 LLM 时工具选型准确率 **0.98**、parse 1.0、工具覆盖 1.0；但 8 个失败里 7 个是"工具选对了、计划没通过确定性校验"（`RISK_DOWNGRADE`×5、`BROKEN_ARGUMENT_SOURCE`×2），仅 1 个选错工具。结论：LLM 的贡献被封顶在 ~98% 选型，且 `contract_valid` 只有 0.86——工具对但参数/风险不对的计划被护栏拦下，无法静默污染执行。P3 之后报告只报 40 例 held-out 冻结集数字（`--split heldout`，默认），prompt 调优只能在 dev 补集上做、held-out 上显式 `--system` 被 CLI 拒绝。
+**LLM 兜底上限（实测，2026-08-22 真实 DeepSeek held-out 冻结集 40 例）**：词表外走 LLM 时工具选型准确率 **0.90**（单步 1.0 / 多步 0.80）、parse 1.0、工具覆盖 0.96；8 个失败里 4 个"工具选对了、计划没通过确定性校验"（`BROKEN_ARGUMENT_SOURCE`）、4 个工具选错（3 个漏查 `getOrderByOrderId`、1 个选错供应商工具）。结论：LLM 的贡献被封顶在 ~90% 选型，工具对但参数来源不对的计划被护栏拦下，无法静默污染执行；与更易的 50 例基线在共享 12 例上 drift 0.0（难度差异而非模型退化）。报告只报 held-out 冻结集数字（`--split heldout`，默认），prompt 调优只能在 dev 补集上做、held-out 上显式 `--system` 被 CLI 拒绝。
 
 ### validate_plan
 
@@ -167,7 +167,7 @@ Plan DAG 的正确性由四层叠加保证，单层无法防语义错选：
 
 例如"查苹果却选了 getProductById 传 id=苹果"：第2层放行（Schema 都接受一个参数），但第4层 `success_condition` 检查返回产品名是否为"苹果"，验证失败。因此既要靠第4层兜底，也要靠第1层把语义错选概率压到评测可接受范围。
 
-**实证（真实 DeepSeek 50 例）**：四层中真正拦下 LLM 错误的是第2层 `validate_plan`——8 个失败里 7 个是工具选对但计划没过确定性校验（`RISK_DOWNGRADE`×5、`BROKEN_ARGUMENT_SOURCE`×2），第1层选型上限 98% 之外仅剩 1 例工具选错。护栏不追求"LLM 零错误"，而是把 LLM 的贡献封顶在可测区间、把剩余错误变成确定性拦截而非静默放行。
+**实证（真实 DeepSeek held-out 冻结集 40 例）**：四层中真正拦下 LLM 错误的是第2层 `validate_plan`——8 个失败里 4 个是工具选对但计划没过确定性校验（`BROKEN_ARGUMENT_SOURCE`），第1层选型上限 90%（单步 100%、多步 80%）之外是 4 例工具选错（3 例漏查 `getOrderByOrderId`、1 例选错供应商工具）。护栏不追求"LLM 零错误"，而是把 LLM 的贡献封顶在可测区间、把剩余错误变成确定性拦截而非静默放行。
 
 ## 6. 并行与依赖规则
 
