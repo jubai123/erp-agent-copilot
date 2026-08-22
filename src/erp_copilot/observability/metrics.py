@@ -63,7 +63,8 @@ def create_metrics() -> Metrics:
         registry=registry,
         runs_created=prometheus_client.Counter(
             "erp_runs_created_total",
-            "Total number of runs created",
+            "Total number of runs created, labeled by funnel tier",
+            labelnames=["tier"],
             registry=registry,
         ),
         runs_completed=prometheus_client.Counter(

@@ -16,6 +16,7 @@ from apps.worker.executor import resolve_erp_executor
 from apps.worker.graph_builder import build_worker_graph
 from apps.worker.llm_planner import resolve_llm_plan_node
 from erp_copilot.agent.nodes.classify_intent import classify_intent
+from erp_copilot.agent.routing import route_query_layer
 from erp_copilot.agent.state import AgentState, AgentStatus, ApprovalStatus
 from erp_copilot.application.events import append_run_event
 from erp_copilot.application.reconciliation import build_terminal_reconciler
@@ -178,7 +179,11 @@ async def create_run(
         session.commit()
         append_run_event(session, run.id, "RUN_CREATED", {"status": AgentStatus.QUEUED.value})
         session.commit()
-        METRICS.runs_created.inc()
+        # The tier comes from the same pure route_query_layer the graph routes on
+        # (and persist_run re-labels completed/failed with), so per-tier creation
+        # counts align with per-tier completion/failure for the P1 success rate.
+        query_text = body.query or f"查询{body.product_name}库存"
+        METRICS.runs_created.labels(tier=route_query_layer(query_text)).inc()
         from apps.worker.tasks import execute_run
 
         execute_run.delay(run.id, body.product_name, query=body.query)
