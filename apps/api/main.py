@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from erp_copilot.infrastructure.config import Settings
-from erp_copilot.infrastructure.database import init_db
+from erp_copilot.infrastructure.database import get_session, init_db
 from erp_copilot.observability.http import TraceContextMiddleware
 from erp_copilot.observability.logging import setup_logging
 from erp_copilot.observability.tracing import build_otlp_exporter, setup_tracing
+from erp_copilot.tools.contract import ensure_contracts_loaded
+
+_logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -26,6 +30,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = Settings()  # type: ignore[call-arg]
     init_db(settings)
     setup_logging(level=settings.log_level, service=settings.app_name)
+    seeded = ensure_contracts_loaded(get_session())
+    _logger.info("seeded %d tool contracts from the registry authority", seeded)
     setup_tracing(
         service_name=settings.app_name,
         exporter=build_otlp_exporter(settings.otel_exporter_endpoint),

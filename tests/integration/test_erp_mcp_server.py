@@ -28,6 +28,7 @@ import uvicorn
 from apps.mcp_gateway.erp_mcp_server import build_erp_mcp_app
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.security.ssrf_guard import SSRFConfig, SSRFGuard
+from erp_copilot.tools.contract import ToolContract, load_seed_contracts
 from erp_copilot.tools.mcp_gateway import MCPGatewayConnection
 
 _BASE_URL = "http://121.43.198.13:8080"
@@ -362,6 +363,43 @@ class TestCreateOrderGate:
         assert set(tools) == {*_READ_TOOLS, *_ORDER_WRITE_TOOLS}
         assert err.is_error is True
         assert "Unknown tool" in err.content[0].text
+
+
+class TestToolCatalog:
+    """MCP tool descriptions come from the tool-contract authority (M3)."""
+
+    def test_server_advertises_contract_descriptions(self, erp_mcp_url: str) -> None:
+        async def exercise() -> list[ToolContract]:
+            conn = _connect(erp_mcp_url)
+            await conn.connect()
+            try:
+                return await conn.list_tool_catalog()
+            finally:
+                await conn.disconnect()
+
+        catalog = _run_in_one_loop(exercise())
+        seed = load_seed_contracts()
+        assert len(catalog) == 25
+        assert {c.name for c in catalog} == set(_ALL_TOOLS)
+        for contract in catalog:
+            assert contract.description == seed[contract.name].description
+
+    def test_gated_server_catalog_reflects_advertised_tools(
+        self, erp_mcp_url_gated: str
+    ) -> None:
+        async def exercise() -> list[ToolContract]:
+            conn = _connect(erp_mcp_url_gated)
+            await conn.connect()
+            try:
+                return await conn.list_tool_catalog()
+            finally:
+                await conn.disconnect()
+
+        catalog = _run_in_one_loop(exercise())
+        seed = load_seed_contracts()
+        assert {c.name for c in catalog} == set(_READ_TOOLS)
+        for contract in catalog:
+            assert contract.description == seed[contract.name].description
 
 
 class TestFailureMapping:

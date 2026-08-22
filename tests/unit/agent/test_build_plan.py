@@ -28,7 +28,6 @@ from erp_copilot.agent.nodes.build_plan import (
     reject_l1_violations,
 )
 from erp_copilot.agent.nodes.validate_plan import ToolSpec
-from erp_copilot.agent.skill_catalog import AgentSkill
 from erp_copilot.agent.state import (
     AgentState,
     IntentClassification,
@@ -36,7 +35,6 @@ from erp_copilot.agent.state import (
     PlanStep,
     RetrievedDocument,
 )
-from erp_copilot.domain.enums import ToolRiskLevel
 from erp_copilot.retrieval.rule_matcher import match_rules
 from erp_copilot.tools.candidate_filter import filter_candidates
 
@@ -445,42 +443,33 @@ class TestBuildPlanNode:
         assert step.argument_sources["supplier_id"] == "step:2"
 
 
-def _skill(**overrides: object) -> AgentSkill:
-    data: dict[str, object] = {
-        "name": "product-name-lookup",
-        "description": "按名称查询商品详情。用户直接说出商品名时使用。触发词：多少钱、价格。",
-        "tool": "getProductByName",
-        "required_params": ["name"],
-        "risk_level": ToolRiskLevel.READ,
-        "required_scope": "product:read",
-    }
-    data.update(overrides)
-    return AgentSkill(**data)
-
-
-class TestSkillCatalogPrompt:
-    """The skill catalog is the Tier2 routing basis — its descriptions must be
+class TestContractPrompt:
+    """The tool contract is the Tier2 routing basis — its selection prose must be
     visible to the LLM next to the tool names it chooses between."""
 
     _SCHEMAS = {
         "getProductByName": ToolSpec(name="getProductByName", required_params=["name"]),
     }
 
-    def test_inline_description_appears_with_catalog(self) -> None:
-        catalog = {"getProductByName": _skill()}
+    def test_inline_description_appears_with_contract(self) -> None:
+        descriptions = {
+            "getProductByName": (
+                "按名称查询商品详情。用户直接说出商品名时使用。触发词：多少钱、价格。"
+            )
+        }
         prompt = build_planner_prompt(
             query="苹果多少钱",
             active_rules=[],
             retrieved_context=[],
             candidate_tools=["getProductByName"],
             tool_schemas=self._SCHEMAS,
-            skill_catalog=catalog,
+            contract_descriptions=descriptions,
         )
         assert "getProductByName: 按名称查询商品详情" in prompt
         assert "触发词：多少钱、价格" in prompt
         assert "(必填参数: name)" in prompt
 
-    def test_no_description_when_catalog_absent(self) -> None:
+    def test_no_description_when_contract_absent(self) -> None:
         prompt = build_planner_prompt(
             query="苹果多少钱",
             active_rules=[],
@@ -491,22 +480,22 @@ class TestSkillCatalogPrompt:
         assert "按名称查询商品详情" not in prompt
         assert "- getProductByName(必填参数: name)" in prompt
 
-    def test_tool_without_skill_entry_falls_back_to_bare(self) -> None:
-        # A candidate tool the catalog does not cover must not break rendering —
-        # it falls back to the bare format (defensive; all 9 tools are cataloged).
-        catalog = {"getProductById": _skill(name="product-id-lookup", tool="getProductById")}
+    def test_tool_without_contract_entry_falls_back_to_bare(self) -> None:
+        # A candidate tool the description map does not cover must not break
+        # rendering — it falls back to the bare format (defensive).
+        descriptions = {"getProductById": "按 ID 查询商品详情。"}
         prompt = build_planner_prompt(
             query="q",
             active_rules=[],
             retrieved_context=[],
             candidate_tools=["getProductByName"],
             tool_schemas=self._SCHEMAS,
-            skill_catalog=catalog,
+            contract_descriptions=descriptions,
         )
         assert "- getProductByName(必填参数: name)" in prompt
 
-    def test_node_injects_real_catalog_descriptions_by_default(self) -> None:
-        # The node wires the on-disk catalog (datasets/knowledge/agent_skills)
+    def test_node_injects_real_contract_descriptions_by_default(self) -> None:
+        # The node wires the contract seed (datasets/knowledge/tool_contracts.yaml)
         # so the production/LLM-eval prompt carries the routing descriptions.
         captured: list[str] = []
 
@@ -518,7 +507,7 @@ class TestSkillCatalogPrompt:
         node(_agent_state(intent=IntentClassification(domain="product", action="query")))
         assert "按商品名称查询商品详情" in captured[0]
 
-    def test_node_accepts_explicit_catalog(self) -> None:
+    def test_node_accepts_explicit_contract_descriptions(self) -> None:
         captured: list[str] = []
 
         def llm(prompt: str) -> str:
@@ -528,7 +517,7 @@ class TestSkillCatalogPrompt:
         node = build_plan_node(
             llm_complete=llm,
             available_tools={"getProductByName"},
-            skill_catalog={"getProductByName": _skill(description="显式注入的描述")},
+            contract_descriptions={"getProductByName": "显式注入的描述"},
         )
         node(_agent_state(intent=IntentClassification(domain="product", action="query")))
         assert "显式注入的描述" in captured[0]

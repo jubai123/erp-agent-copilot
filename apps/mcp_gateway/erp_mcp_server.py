@@ -37,6 +37,7 @@ from starlette.responses import JSONResponse
 
 from apps.worker.executor import build_erp_http_executor
 from erp_copilot.infrastructure.config import Settings
+from erp_copilot.tools.contract import get_contract
 from erp_copilot.tools.tool_result import ToolResult
 
 HOST = "127.0.0.1"
@@ -55,6 +56,18 @@ def _result_to_mcp(result: ToolResult) -> dict[str, Any]:
     if result.status == "FAILED" and result.error is not None:
         raise ValueError(f"{result.error.error_code}: {result.error.error_message}")
     return result.data or {}
+
+
+def _tool_description(name: str) -> str:
+    """Return the contract's selection prose for *name* (the MCP description).
+
+    The MCP surface is a consumer of the tool-contract authority: what a client
+    sees as a tool's description is the contract's prose (the seed, or an
+    operator's DB override), never a hand-written docstring. A tool with no
+    contract degrades to its name so it still lists.
+    """
+    contract = get_contract(name)
+    return contract.description if contract is not None else name
 
 
 def build_erp_mcp_server(
@@ -84,27 +97,35 @@ def build_erp_mcp_server(
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok", "service": "erp-cloud-mcp"})
 
-    @server.tool(name="getProductByName")
+    @server.tool(name="getProductByName", description=_tool_description("getProductByName"))
     async def get_product_by_name(name: str) -> dict[str, Any]:
         """Return a product's catalog fields by name (real ERP)."""
         return _result_to_mcp(await executor("getProductByName", {"name": name}))
 
-    @server.tool(name="getProductById")
+    @server.tool(name="getProductById", description=_tool_description("getProductById"))
     async def get_product_by_id(product_id: int) -> dict[str, Any]:
         """Return a product's catalog fields by id (real ERP)."""
         return _result_to_mcp(await executor("getProductById", {"product_id": product_id}))
 
-    @server.tool(name="getProductSubstitutes")
+    @server.tool(
+        name="getProductSubstitutes", description=_tool_description("getProductSubstitutes")
+    )
     async def get_product_substitutes(product_id: int) -> dict[str, Any]:
         """Return a product's substitutes by id (real ERP), possibly empty."""
         return _result_to_mcp(await executor("getProductSubstitutes", {"product_id": product_id}))
 
-    @server.tool(name="getProductSubstitutesByName")
+    @server.tool(
+        name="getProductSubstitutesByName",
+        description=_tool_description("getProductSubstitutesByName"),
+    )
     async def get_product_substitutes_by_name(name: str) -> dict[str, Any]:
         """Return a product's substitutes by name (real ERP), possibly empty."""
         return _result_to_mcp(await executor("getProductSubstitutesByName", {"name": name}))
 
-    @server.tool(name="getBatchProductByProductIds")
+    @server.tool(
+        name="getBatchProductByProductIds",
+        description=_tool_description("getBatchProductByProductIds"),
+    )
     async def get_batch_product_by_product_ids(start_id: int, end_id: int) -> dict[str, Any]:
         """Return products whose id falls in [start_id, end_id] (real ERP)."""
         return _result_to_mcp(
@@ -114,29 +135,32 @@ def build_erp_mcp_server(
             )
         )
 
-    @server.tool(name="getSupplierByStatus")
+    @server.tool(name="getSupplierByStatus", description=_tool_description("getSupplierByStatus"))
     async def get_supplier_by_status(status: str = "AVAILABLE") -> dict[str, Any]:
         """Return suppliers with *status* (default AVAILABLE), first as supplier_id."""
         return _result_to_mcp(await executor("getSupplierByStatus", {"status": status}))
 
-    @server.tool(name="querySuppliersByDeliveryRegion")
+    @server.tool(
+        name="querySuppliersByDeliveryRegion",
+        description=_tool_description("querySuppliersByDeliveryRegion"),
+    )
     async def query_suppliers_by_delivery_region(region: str) -> dict[str, Any]:
         """Return suppliers covering *region*, with the first as ``supplier_id``."""
         return _result_to_mcp(await executor("querySuppliersByDeliveryRegion", {"region": region}))
 
-    @server.tool(name="getSupplierByName")
+    @server.tool(name="getSupplierByName", description=_tool_description("getSupplierByName"))
     async def get_supplier_by_name(name: str) -> dict[str, Any]:
         """Return a single supplier's fields by name (real ERP)."""
         return _result_to_mcp(await executor("getSupplierByName", {"name": name}))
 
-    @server.tool(name="getSupplierById")
+    @server.tool(name="getSupplierById", description=_tool_description("getSupplierById"))
     async def get_supplier_by_id(supplier_id: int) -> dict[str, Any]:
         """Return a single supplier's fields by id (real ERP)."""
         return _result_to_mcp(await executor("getSupplierById", {"supplier_id": supplier_id}))
 
     if create_order_enabled:
 
-        @server.tool(name="createOrder")
+        @server.tool(name="createOrder", description=_tool_description("createOrder"))
         async def create_order_tool(
             idempotency_key: str,
             product_id: int,
@@ -164,7 +188,7 @@ def build_erp_mcp_server(
                 )
             )
 
-        @server.tool(name="updateOrderStatus")
+        @server.tool(name="updateOrderStatus", description=_tool_description("updateOrderStatus"))
         async def update_order_status_tool(
             order_id: str, status: str, idempotency_key: str
         ) -> dict[str, Any]:
@@ -186,7 +210,7 @@ def build_erp_mcp_server(
                 )
             )
 
-        @server.tool(name="cancelOrder")
+        @server.tool(name="cancelOrder", description=_tool_description("cancelOrder"))
         async def cancel_order_tool(order_id: str, idempotency_key: str) -> dict[str, Any]:
             """Cancel an order on the real ERP (gated write).
 
@@ -203,7 +227,7 @@ def build_erp_mcp_server(
 
     if maintenance_enabled:
 
-        @server.tool(name="addProduct")
+        @server.tool(name="addProduct", description=_tool_description("addProduct"))
         async def add_product_tool(
             idempotency_key: str,
             name: str,
@@ -225,7 +249,7 @@ def build_erp_mcp_server(
                 )
             )
 
-        @server.tool(name="addSuppliers")
+        @server.tool(name="addSuppliers", description=_tool_description("addSuppliers"))
         async def add_suppliers_tool(
             idempotency_key: str,
             name: str,
@@ -245,7 +269,10 @@ def build_erp_mcp_server(
                 )
             )
 
-        @server.tool(name="updateProductDescription")
+        @server.tool(
+            name="updateProductDescription",
+            description=_tool_description("updateProductDescription"),
+        )
         async def update_product_description_tool(
             idempotency_key: str, product_id: int, description: str
         ) -> dict[str, Any]:
@@ -261,7 +288,10 @@ def build_erp_mcp_server(
                 )
             )
 
-        @server.tool(name="updateProductSubstitutes")
+        @server.tool(
+            name="updateProductSubstitutes",
+            description=_tool_description("updateProductSubstitutes"),
+        )
         async def update_product_substitutes_tool(
             idempotency_key: str, product_id: int, substitute_name: str
         ) -> dict[str, Any]:
@@ -277,7 +307,9 @@ def build_erp_mcp_server(
                 )
             )
 
-        @server.tool(name="removeProductByName")
+        @server.tool(
+            name="removeProductByName", description=_tool_description("removeProductByName")
+        )
         async def remove_product_by_name_tool(idempotency_key: str, name: str) -> dict[str, Any]:
             """Remove a product by name (gated DANGEROUS delete)."""
             return _result_to_mcp(
@@ -287,7 +319,7 @@ def build_erp_mcp_server(
                 )
             )
 
-        @server.tool(name="removeProductById")
+        @server.tool(name="removeProductById", description=_tool_description("removeProductById"))
         async def remove_product_by_id_tool(
             idempotency_key: str, product_id: int
         ) -> dict[str, Any]:
@@ -299,7 +331,9 @@ def build_erp_mcp_server(
                 )
             )
 
-        @server.tool(name="deleteSupplierByName")
+        @server.tool(
+            name="deleteSupplierByName", description=_tool_description("deleteSupplierByName")
+        )
         async def delete_supplier_by_name_tool(idempotency_key: str, name: str) -> dict[str, Any]:
             """Delete a supplier by name (gated DANGEROUS delete)."""
             return _result_to_mcp(
@@ -309,7 +343,7 @@ def build_erp_mcp_server(
                 )
             )
 
-        @server.tool(name="deleteSupplierById")
+        @server.tool(name="deleteSupplierById", description=_tool_description("deleteSupplierById"))
         async def delete_supplier_by_id_tool(
             idempotency_key: str, supplier_id: int
         ) -> dict[str, Any]:
@@ -321,27 +355,29 @@ def build_erp_mcp_server(
                 )
             )
 
-    @server.tool(name="getOrderByOrderId")
+    @server.tool(name="getOrderByOrderId", description=_tool_description("getOrderByOrderId"))
     async def get_order_by_order_id(order_id: str) -> dict[str, Any]:
         """Return an order by its order_id (real ERP)."""
         return _result_to_mcp(await executor("getOrderByOrderId", {"order_id": order_id}))
 
-    @server.tool(name="getOrdersBySupplierId")
+    @server.tool(
+        name="getOrdersBySupplierId", description=_tool_description("getOrdersBySupplierId")
+    )
     async def get_orders_by_supplier_id(supplier_id: int) -> dict[str, Any]:
         """Return orders delivered by *supplier_id*, newest first (possibly empty)."""
         return _result_to_mcp(await executor("getOrdersBySupplierId", {"supplier_id": supplier_id}))
 
-    @server.tool(name="getByProductId")
+    @server.tool(name="getByProductId", description=_tool_description("getByProductId"))
     async def get_by_product_id(product_id: int) -> dict[str, Any]:
         """Return orders for *product_id*, newest first (possibly empty)."""
         return _result_to_mcp(await executor("getByProductId", {"product_id": product_id}))
 
-    @server.tool(name="getByOrderStatus")
+    @server.tool(name="getByOrderStatus", description=_tool_description("getByOrderStatus"))
     async def get_by_order_status(status: str) -> dict[str, Any]:
         """Return orders in *status*, newest first (possibly empty)."""
         return _result_to_mcp(await executor("getByOrderStatus", {"status": status}))
 
-    @server.tool(name="getByTimeRange")
+    @server.tool(name="getByTimeRange", description=_tool_description("getByTimeRange"))
     async def get_by_time_range(start_date: str, end_date: str) -> dict[str, Any]:
         """Return orders created in [start_date, end_date], newest first."""
         return _result_to_mcp(
@@ -373,4 +409,10 @@ def build_erp_mcp_app(settings: Settings) -> Starlette:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(build_erp_mcp_app(Settings()), host=HOST, port=PORT)  # type: ignore[call-arg]
+    from erp_copilot.infrastructure.database import get_session, init_db
+    from erp_copilot.tools.contract import ensure_contracts_loaded
+
+    settings = Settings()  # type: ignore[call-arg]
+    init_db(settings)
+    ensure_contracts_loaded(get_session())
+    uvicorn.run(build_erp_mcp_app(settings), host=HOST, port=PORT)  # type: ignore[call-arg]

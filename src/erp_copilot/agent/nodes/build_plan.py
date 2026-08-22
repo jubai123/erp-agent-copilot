@@ -24,10 +24,10 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from erp_copilot.agent.planner import DANGEROUS_TOOLS, WRITE_TOOLS, stamp_idempotency_keys
-from erp_copilot.agent.skill_catalog import AgentSkill, load_agent_skills
 from erp_copilot.agent.state import AgentState, Plan, PlanStep, RetrievedDocument, StateError
 from erp_copilot.retrieval.rule_matcher import match_rules
 from erp_copilot.tools.candidate_filter import filter_candidates
+from erp_copilot.tools.contract import get_contract, load_seed_contracts
 
 if TYPE_CHECKING:
     from erp_copilot.agent.nodes.validate_plan import ToolSpec
@@ -86,25 +86,25 @@ _ANY_STATE = "*"
 def _render_candidate_tool(
     name: str,
     spec: ToolSpec | None,
-    skill: AgentSkill | None = None,
+    description: str | None = None,
 ) -> str:
-    """Render one candidate tool with its routing description and required params.
+    """Render one candidate tool with its contract description and required params.
 
     A bare tool name leaves the LLM guessing both the argument names (it invented
     ``product_name`` for getProductByName — a MISSING_REQUIRED_ARG gate failure)
-    and *when* the tool applies. The skill catalog (Tier2 routing basis) fixes
-    the second: its description — what the tool does, when to use it, trigger
-    words — is inlined next to the name so the LLM reasons over "which tool for
-    this query" at the point of choice. Without a description the line keeps the
-    bare name + required params format (backward compatible).
+    and *when* the tool applies. The tool contract's description (Tier2 routing
+    basis) fixes the second: what the tool does, when to use it, trigger words —
+    is inlined next to the name so the LLM reasons over "which tool for this
+    query" at the point of choice. Without a description the line keeps the bare
+    name + required params format (backward compatible).
     """
     params = (
         f"(必填参数: {', '.join(spec.required_params)})"
         if spec is not None and spec.required_params
         else ""
     )
-    if skill is not None and skill.description:
-        return f"- {name}: {skill.description} {params}".rstrip()
+    if description:
+        return f"- {name}: {description} {params}".rstrip()
     return f"- {name}{params}"
 
 
@@ -116,7 +116,7 @@ def build_planner_prompt(
     candidate_tools: list[str],
     system: str = SYSTEM_PROMPT,
     tool_schemas: dict[str, ToolSpec] | None = None,
-    skill_catalog: dict[str, AgentSkill] | None = None,
+    contract_descriptions: dict[str, str] | None = None,
 ) -> str:
     """Assemble the constrained planner prompt in the documented order.
 
@@ -127,21 +127,21 @@ def build_planner_prompt(
     When *tool_schemas* is given, each candidate tool renders with its required
     parameter names so the LLM emits arguments that pass validate_plan's
     MISSING_REQUIRED_ARG gate; without it tools render as bare names (backward
-    compatible for callers that only pass names). When *skill_catalog* is given,
-    each candidate tool also renders its skill description (the Tier2 routing
-    basis) inline; a candidate the catalog does not cover falls back to the
-    bare format.
+    compatible for callers that only pass names). When *contract_descriptions*
+    is given, each candidate tool also renders its contract description (the
+    Tier2 routing basis — selection prose + trigger words) inline; a candidate
+    the map does not cover falls back to the bare format.
     """
     rules_block = "\n".join(
         f"- {rule.get('rule_id', 'rule')}: {rule.get('content', '')}" for rule in active_rules
     )
     knowledge_block = "\n".join(f"- [{doc.source}] {doc.content}" for doc in retrieved_context)
-    if tool_schemas or skill_catalog:
+    if tool_schemas or contract_descriptions:
 
         def _render(tool: str) -> str:
             spec = tool_schemas.get(tool) if tool_schemas else None
-            skill = skill_catalog.get(tool) if skill_catalog else None
-            return _render_candidate_tool(tool, spec, skill)
+            description = contract_descriptions.get(tool) if contract_descriptions else None
+            return _render_candidate_tool(tool, spec, description)
 
         tools_block = "\n".join(_render(tool) for tool in candidate_tools)
     else:
@@ -288,20 +288,19 @@ def reject_l1_violations(
     return Plan(steps=kept, title=plan.title), errors
 
 
-_SKILL_CATALOG_CACHE: dict[str, AgentSkill] | None = None
+def _default_contract_descriptions() -> dict[str, str]:
+    """Map every contract tool to its description (seed + DB-overridable).
 
-
-def _get_skill_catalog() -> dict[str, AgentSkill]:
-    """Load the on-disk skill catalog once, keyed by tool name.
-
-    Mirrors rule_matcher's module-level cache so the per-request build_plan
-    node never re-reads the SKILL.md files. Keyed by tool (not skill name) so
-    the prompt renders a description for every candidate tool in O(1).
+    Reads through ContractCache so an operator's DB description edit reaches the
+    planner prompt; a missing DB degrades to the seed. Built once per node so
+    the per-request prompt never re-reads the YAML.
     """
-    global _SKILL_CATALOG_CACHE
-    if _SKILL_CATALOG_CACHE is None:
-        _SKILL_CATALOG_CACHE = {skill.tool: skill for skill in load_agent_skills()}
-    return _SKILL_CATALOG_CACHE
+    result: dict[str, str] = {}
+    for name in load_seed_contracts():
+        contract = get_contract(name)
+        if contract is not None:
+            result[name] = contract.description
+    return result
 
 
 def build_plan_node(
@@ -310,7 +309,7 @@ def build_plan_node(
     available_tools: frozenset[str] | set[str] | None = None,
     system: str = SYSTEM_PROMPT,
     tool_schemas: dict[str, ToolSpec] | None = None,
-    skill_catalog: dict[str, AgentSkill] | None = None,
+    contract_descriptions: dict[str, str] | None = None,
 ) -> Callable[[AgentState], dict[str, Any]]:
     """Build the build_plan LangGraph node with an injected LLM callable.
 
@@ -324,14 +323,14 @@ def build_plan_node(
     planner's at-most-once contract (execute_steps only routes keyed steps
     through the IdempotencyStore).
 
-    *skill_catalog* (tool → AgentSkill) feeds the prompt's inline tool
-    descriptions — the Tier2 routing basis. It defaults to the on-disk catalog
-    (datasets/knowledge/agent_skills) so the interactive path and the LLM
-    planner eval both render real descriptions; an explicit dict lets tests
-    inject a controlled catalog.
+    *contract_descriptions* (tool → description) feeds the prompt's inline tool
+    descriptions — the Tier2 routing basis. It defaults to the tool-contract
+    seed (datasets/knowledge/tool_contracts.yaml, DB-overridable) so the
+    interactive path and the LLM planner eval both render real descriptions; an
+    explicit dict lets tests inject a controlled map.
     """
-    if skill_catalog is None:
-        skill_catalog = _get_skill_catalog()
+    if contract_descriptions is None:
+        contract_descriptions = _default_contract_descriptions()
 
     def plan_node(state: AgentState) -> dict[str, Any]:
         domain = state.intent.domain if state.intent else ""
@@ -345,7 +344,7 @@ def build_plan_node(
             candidate_tools=candidates,
             system=system,
             tool_schemas=tool_schemas,
-            skill_catalog=skill_catalog,
+            contract_descriptions=contract_descriptions,
         )
         try:
             plan = parse_plan_response(llm_complete(prompt))

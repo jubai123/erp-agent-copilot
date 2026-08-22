@@ -1,0 +1,173 @@
+# 工具契约种子 — 25 条云 ERP 工具契约的静态引导权威。
+#
+# 这是工具元数据的单一权威种子：selection 描述（喂 LLM planner 提示词）、
+# required_params（喂 validate_plan 的 MISSING_REQUIRED_ARG 门禁）、
+# risk_level / required_scope / success_condition（喂 planner 的
+# WRITE_TOOLS / DANGEROUS_TOOLS / _SUCCESS_CONDITION_TEMPLATES 派生）。
+# 从 datasets/knowledge/agent_skills/*/SKILL.md 的 frontmatter 忠实迁移。
+# 运行时以 ContractCache 合并 DB registry 的覆盖（仅 description +
+# required_params 可被 DB 覆盖；风险字段保持种子唯一，见 contract.py）。
+#
+# risk_level 取 ToolRiskLevel 枚举值：read / write / dangerous。
+
+# ---- products — read ----
+- name: getProductByName
+  description: 按商品名称查询商品详情（价格、库存、单位）。用户直接说出商品名且需要商品信息时使用。触发词：多少钱、价格、库存、商品信息。
+  required_params: [name]
+  risk_level: read
+  required_scope: product:read
+  success_condition: "response.name == {name!r}"
+
+- name: getProductById
+  description: 按商品编号查询商品详情。用户给出数字编号而非名称时使用。触发词：商品 N 号、编号、product_id。
+  required_params: [product_id]
+  risk_level: read
+  required_scope: product:read
+  success_condition: "response.product_id == {product_id!r}"
+
+- name: getProductSubstitutesByName
+  description: 查询某商品的替代品，用于缺货比价或平替推荐。触发词：替代品、可替换、缺货买什么。
+  required_params: [name]
+  risk_level: read
+  required_scope: product:read
+
+- name: getProductSubstitutes
+  description: 按商品编号查询该商品的替代品，用于缺货比价或平替推荐。触发词：替代品、可替换、缺货买什么，且给定商品编号。
+  required_params: [product_id]
+  risk_level: read
+  required_scope: product:read
+
+- name: getBatchProductByProductIds
+  description: 按起始与终止商品编号批量查询商品信息（名称、库存、价格、描述）。触发词：批量查询、列出商品、商品 1 到 20 的基本信息。
+  required_params: [start_id, end_id]
+  risk_level: read
+  required_scope: product:read
+
+# ---- products — write / delete ----
+- name: addProduct
+  description: 添加新商品到目录。触发词：添加商品、新增商品、上架商品。写操作，必须走审批。
+  required_params: [name, price, quantity_in_stock]
+  risk_level: write
+  required_scope: order:write
+
+- name: updateProductDescription
+  description: 更新某商品的描述信息。触发词：更新描述、改描述、修改商品信息。写操作，必须走审批。
+  required_params: [product_id, description]
+  risk_level: write
+  required_scope: order:write
+
+- name: updateProductSubstitutes
+  description: 更新某商品的替代品（按替代品名称）。触发词：设置替代品、更新替代品、把某商品的替代品改成。
+  required_params: [product_id, substitute_name]
+  risk_level: write
+  required_scope: order:write
+
+- name: removeProductById
+  description: 按商品编号删除商品。触发词：删除商品、下架商品、移除商品，且给定商品编号。
+  required_params: [product_id]
+  risk_level: dangerous
+  required_scope: order:write
+
+- name: removeProductByName
+  description: 按名称删除商品。触发词：删除商品、下架商品、移除商品。写操作，必须走审批。
+  required_params: [name]
+  risk_level: dangerous
+  required_scope: order:write
+
+# ---- suppliers — read ----
+- name: querySuppliersByDeliveryRegion
+  description: 按配送区域查询供应商。用户给出城市并要求该区域可配送的供应商时使用。触发词：上海有哪些供应商、谁能配送、当地供货。
+  required_params: [region]
+  risk_level: read
+  required_scope: supplier:read
+
+- name: getSupplierByStatus
+  description: 按状态查询供应商。用户未指定区域、只问可用/在供供应商时使用。触发词：可用的供应商、AVAILABLE、有哪些供应商在供货。
+  required_params: [status]
+  risk_level: read
+  required_scope: supplier:read
+
+- name: getSupplierByName
+  description: 按供应商名称查询供应商信息。触发词：供应商 XX、查某供应商、京东/顺丰等供应商名字。
+  required_params: [name]
+  risk_level: read
+  required_scope: supplier:read
+  success_condition: "response.name == {name!r}"
+
+- name: getSupplierById
+  description: 按供应商编号查询供应商信息。触发词：供应商 N 号、供应商编号、supplier_id。
+  required_params: [supplier_id]
+  risk_level: read
+  required_scope: supplier:read
+  success_condition: "response.supplier_id == {supplier_id!r}"
+
+# ---- suppliers — write / delete ----
+- name: addSuppliers
+  description: 添加新供应商到目录。触发词：添加供应商、新增供应商、注册供应商。写操作，必须走审批。
+  required_params: [name, regions, status]
+  risk_level: write
+  required_scope: order:write
+
+- name: deleteSupplierByName
+  description: 按名称删除供应商。触发词：删除供应商、移除供应商。写操作，必须走审批。
+  required_params: [name]
+  risk_level: dangerous
+  required_scope: order:write
+
+- name: deleteSupplierById
+  description: 按供应商编号删除供应商。触发词：删除供应商、移除供应商，且给定供应商编号。
+  required_params: [supplier_id]
+  risk_level: dangerous
+  required_scope: order:write
+
+# ---- orders — read ----
+- name: getOrderByOrderId
+  description: 按订单号查询订单详情（状态、金额、商品）。用户给出订单号并想查状态或详情时使用。触发词：查订单、订单状态、订单号。
+  required_params: [order_id]
+  risk_level: read
+  required_scope: order:read
+  success_condition: "response.order_id == {order_id!r}"
+
+- name: getOrdersBySupplierId
+  description: 查询某物流供应商配送的所有订单。触发词：某供应商的订单、按供应商查订单。
+  required_params: [supplier_id]
+  risk_level: read
+  required_scope: order:read
+
+- name: getByTimeRange
+  description: 按订单创建时间范围查询订单。触发词：某时间段/月份的订单、按日期范围查订单。
+  required_params: [start_date, end_date]
+  risk_level: read
+  required_scope: order:read
+
+- name: getByProductId
+  description: 查询某商品的所有订单。触发词：某商品的订单、按商品查订单。
+  required_params: [product_id]
+  risk_level: read
+  required_scope: order:read
+
+- name: getByOrderStatus
+  description: 查询处于某状态的订单。触发词：运输中的订单、已发货的订单、按状态查订单。
+  required_params: [status]
+  risk_level: read
+  required_scope: order:read
+
+# ---- orders — write ----
+- name: createOrder
+  description: 创建新订单（下单）。需先查商品与供应商；仅当商品库存充足且选定区域可配送时使用。触发词：下一单、下单、帮我买、订购。写操作，必须走审批。
+  required_params: [product_id, supplier_id, quantity, region]
+  risk_level: write
+  required_scope: order:write
+  success_condition: "response.amount > 0"
+
+- name: updateOrderStatus
+  description: 更新订单状态。状态流转按 order_status_lifecycle：CREATED→CONFIRMED→SHIPPED→DELIVERED，任一步可 CANCELLED。触发词：改状态、改为已发货、确认订单。写操作，必须走审批。
+  required_params: [order_id, status]
+  risk_level: write
+  required_scope: order:write
+
+- name: cancelOrder
+  description: 取消订单。订单进入终态（DELIVERED / CANCELLED）之前才可取消。触发词：取消订单、退单、不买了。写操作，必须走审批。
+  required_params: [order_id]
+  risk_level: write
+  required_scope: order:write

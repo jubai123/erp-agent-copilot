@@ -147,8 +147,12 @@ class Tool(Base):
     __tablename__ = "tools"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
-    tenant_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    # Nullable for the global seed rows (tenant_id=NULL), the same convention
+    # VocabularyTerm uses for global terms: a seed contract is tenant-neutral
+    # and owned by the operator, not by any tenant. Tenant-scoped tools still
+    # carry their tenant_id.
+    tenant_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(String(1000), default="")
@@ -179,6 +183,12 @@ class ToolVersion(Base):
     )
     version: Mapped[int] = mapped_column(nullable=False)
     risk_level: Mapped[str] = mapped_column(String(20), default="READ")
+    # Contract fields persisted for registry completeness and audit. The runtime
+    # cache deliberately reads only description/required_params from the DB —
+    # risk/scope/success_condition stay seed-only so an operator edit cannot
+    # silently move validate_plan's defence gates (see tools/contract.py).
+    required_scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    success_condition: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str] = mapped_column(String(2048), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

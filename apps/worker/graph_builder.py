@@ -24,6 +24,7 @@ from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.orm import Session
 
 from apps.worker.executor import erp_simulator_executor
+from erp_copilot.agent.compensation import build_compensate_partial_writes_node
 from erp_copilot.agent.graph import build_agent_graph
 from erp_copilot.agent.nodes.execute_steps import build_execute_steps_node
 from erp_copilot.agent.nodes.policy_check import build_policy_check_node
@@ -46,68 +47,17 @@ from erp_copilot.security.injection_guard import (
     record_injection_event,
 )
 from erp_copilot.security.rbac import resolve_user_scopes
+from erp_copilot.tools.contract import load_seed_contracts
 from erp_copilot.tools.idempotency import IdempotencyStore
 
-# Tool schemas the deterministic planner can emit — the full V5 cloud-ERP
-# surface (25 tools). required_params come from the V5 OpenAPI bodies
-# (tests/unit/tools/fixtures/dataset_apis_aliyun.json) mapped to V6 snake_case.
+# Tool schemas the deterministic planner can emit — the full 25-tool cloud-ERP
+# surface, derived from the tool-contract seed (datasets/knowledge/
+# tool_contracts.yaml) so required_params track the declared authority instead
+# of a hand-maintained mapping. Kept as dict[str, ToolSpec] — validate_plan's
+# input type.
 WORKER_TOOL_SCHEMAS: dict[str, ToolSpec] = {
-    # products — read
-    "getProductByName": ToolSpec(name="getProductByName", required_params=["name"]),
-    "getProductById": ToolSpec(name="getProductById", required_params=["product_id"]),
-    "getProductSubstitutesByName": ToolSpec(
-        name="getProductSubstitutesByName", required_params=["name"]
-    ),
-    "getProductSubstitutes": ToolSpec(
-        name="getProductSubstitutes", required_params=["product_id"]
-    ),
-    "getBatchProductByProductIds": ToolSpec(
-        name="getBatchProductByProductIds", required_params=["start_id", "end_id"]
-    ),
-    # products — write / delete
-    "addProduct": ToolSpec(
-        name="addProduct", required_params=["name", "price", "quantity_in_stock"]
-    ),
-    "updateProductDescription": ToolSpec(
-        name="updateProductDescription", required_params=["product_id", "description"]
-    ),
-    "updateProductSubstitutes": ToolSpec(
-        name="updateProductSubstitutes", required_params=["product_id", "substitute_name"]
-    ),
-    "removeProductByName": ToolSpec(name="removeProductByName", required_params=["name"]),
-    "removeProductById": ToolSpec(name="removeProductById", required_params=["product_id"]),
-    # suppliers — read
-    "querySuppliersByDeliveryRegion": ToolSpec(
-        name="querySuppliersByDeliveryRegion", required_params=["region"]
-    ),
-    "getSupplierByStatus": ToolSpec(name="getSupplierByStatus", required_params=["status"]),
-    "getSupplierByName": ToolSpec(name="getSupplierByName", required_params=["name"]),
-    "getSupplierById": ToolSpec(name="getSupplierById", required_params=["supplier_id"]),
-    # suppliers — write / delete
-    "addSuppliers": ToolSpec(
-        name="addSuppliers", required_params=["name", "regions", "status"]
-    ),
-    "deleteSupplierByName": ToolSpec(name="deleteSupplierByName", required_params=["name"]),
-    "deleteSupplierById": ToolSpec(name="deleteSupplierById", required_params=["supplier_id"]),
-    # orders — read
-    "getOrderByOrderId": ToolSpec(name="getOrderByOrderId", required_params=["order_id"]),
-    "getOrdersBySupplierId": ToolSpec(
-        name="getOrdersBySupplierId", required_params=["supplier_id"]
-    ),
-    "getByTimeRange": ToolSpec(
-        name="getByTimeRange", required_params=["start_date", "end_date"]
-    ),
-    "getByProductId": ToolSpec(name="getByProductId", required_params=["product_id"]),
-    "getByOrderStatus": ToolSpec(name="getByOrderStatus", required_params=["status"]),
-    # orders — write
-    "createOrder": ToolSpec(
-        name="createOrder",
-        required_params=["product_id", "supplier_id", "quantity", "region"],
-    ),
-    "updateOrderStatus": ToolSpec(
-        name="updateOrderStatus", required_params=["order_id", "status"]
-    ),
-    "cancelOrder": ToolSpec(name="cancelOrder", required_params=["order_id"]),
+    name: ToolSpec(name=name, required_params=list(contract.required_params))
+    for name, contract in load_seed_contracts().items()
 }
 
 
@@ -271,6 +221,13 @@ def build_worker_graph(
         ),
         verify_node=node_span("verify_results")(
             _observe_phase("verify", build_verify_results_node())
+        ),
+        compensate_node=node_span("compensate_partial_writes")(
+            build_compensate_partial_writes_node(
+                executor=executor or erp_simulator_executor,
+                idempotency_store=IdempotencyStore(session),
+                retry_executor=AsyncRetryExecutor(),
+            )
         ),
         checkpoint_saver=checkpoint_saver,
     )

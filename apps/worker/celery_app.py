@@ -8,13 +8,14 @@ from redis import Redis
 
 from erp_copilot.infrastructure.celery_config import build_celery_config
 from erp_copilot.infrastructure.config import Settings
-from erp_copilot.infrastructure.database import init_db
+from erp_copilot.infrastructure.database import get_session, init_db
 from erp_copilot.observability.logging import setup_logging
 from erp_copilot.observability.metrics import (
     start_queue_length_reporter,
     start_worker_metrics_server,
 )
 from erp_copilot.observability.tracing import build_otlp_exporter, setup_tracing
+from erp_copilot.tools.contract import ensure_contracts_loaded
 
 
 def create_celery_app() -> Celery:
@@ -41,6 +42,10 @@ def _setup_worker_observability(**kwargs: object) -> None:
     settings = Settings()  # type: ignore[call-arg]
     init_db(settings)
     setup_logging(level=settings.log_level, service=settings.app_name)
+    # Bootstrap the global tool contracts in every worker child. insert-if-missing
+    # makes this idempotent across children/restarts; the first seed writes the
+    # rows, later calls no-op.
+    ensure_contracts_loaded(get_session())
     setup_tracing(
         service_name=settings.app_name,
         exporter=build_otlp_exporter(settings.otel_exporter_endpoint),

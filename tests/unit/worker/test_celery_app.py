@@ -47,6 +47,9 @@ class TestWorkerObservabilityWiring:
         monkeypatch.setattr(worker_celery, "setup_logging", Mock())
         monkeypatch.setattr(worker_celery, "setup_tracing", Mock())
         monkeypatch.setattr(worker_celery, "build_otlp_exporter", Mock(return_value="OTLP"))
+        # Seed-the-contracts needs a real tools table; this test is about the
+        # observability wiring, not seeding, so stub it alongside the others.
+        monkeypatch.setattr(worker_celery, "ensure_contracts_loaded", Mock())
 
         worker_celery._setup_worker_observability()
 
@@ -57,6 +60,7 @@ class TestWorkerObservabilityWiring:
         worker_celery.setup_tracing.assert_called_once_with(
             service_name="erp-agent-copilot", exporter="OTLP"
         )
+        worker_celery.ensure_contracts_loaded.assert_called_once()
 
     def test_worker_init_starts_metrics_server(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # worker_init fires once in the worker controller (parent) before the

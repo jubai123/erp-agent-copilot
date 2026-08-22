@@ -15,6 +15,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from erp_copilot.security.ssrf_guard import SSRFGuard
+from erp_copilot.tools.contract import ToolContract, get_contract
 
 
 class SSRFBlockedError(RuntimeError):
@@ -124,6 +125,30 @@ class MCPGatewayConnection:
             )
         result = await self._session.list_tools()
         return [tool.name for tool in result.tools]
+
+    async def list_tool_catalog(self) -> list[ToolContract]:
+        """Return the advertised tools' contracts — the catalog with metadata.
+
+        Additive alongside :meth:`list_tools` (names only): the tool set comes
+        from the same live MCP list_tools handshake, and each name maps to its
+        contract from the tool-contract authority (risk / scope / required
+        params from the merged seed + DB catalog). The description is taken
+        from what the server actually advertises, so the catalog reflects the
+        wire — a server bootstrapped from the contract carries its prose. A
+        tool the catalog does not cover is omitted (the operator has not
+        contracted it).
+        """
+        if self._session is None:
+            raise RuntimeError(
+                f"Cannot list tool catalog: not connected to {self._url}. Call connect() first."
+            )
+        result = await self._session.list_tools()
+        catalog: list[ToolContract] = []
+        for tool in result.tools:
+            contract = get_contract(tool.name)
+            if contract is not None:
+                catalog.append(contract.model_copy(update={"description": tool.description}))
+        return catalog
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         """Execute a tool on the connected MCP server.

@@ -29,6 +29,12 @@ from erp_copilot.agent.state import (
     StateError,
 )
 from erp_copilot.domain.enums import ToolRiskLevel
+from erp_copilot.tools.contract import (
+    dangerous_tool_names,
+    load_seed_contracts,
+    success_condition_templates,
+    write_tool_names,
+)
 
 _PRODUCT_BY_NAME = "getProductByName"
 _PRODUCT_BY_ID = "getProductById"
@@ -66,35 +72,16 @@ _ORDER_WRITE_SCOPE = "order:write"
 # tools additionally appear in DANGEROUS_TOOLS: the planner stamps them
 # DANGEROUS and validate_plan rejects any labeling below DANGEROUS (the
 # DANGEROUS risk feeds the approval/audit surface, not a distinct scope).
-WRITE_TOOLS: frozenset[str] = frozenset(
-    {
-        _CREATE_ORDER,
-        _UPDATE_ORDER_STATUS,
-        _CANCEL_ORDER,
-        _ADD_PRODUCT,
-        _ADD_SUPPLIERS,
-        _UPDATE_PRODUCT_DESCRIPTION,
-        _UPDATE_PRODUCT_SUBSTITUTES,
-        _REMOVE_PRODUCT_BY_NAME,
-        _REMOVE_PRODUCT_BY_ID,
-        _DELETE_SUPPLIER_BY_NAME,
-        _DELETE_SUPPLIER_BY_ID,
-    }
-)
+#
+# WRITE/DANGEROUS/_SUCCESS_CONDITION_TEMPLATES derive from the tool-contract
+# seed (datasets/knowledge/tool_contracts.yaml) — the single authority for
+# risk_level and success_condition. validate_plan imports the same derived sets,
+# and only the seed feeds them: a tenant/operator DB edit overrides
+# description/required_params but can never move a defence gate.
+_SEED_CONTRACTS = load_seed_contracts()
 
-# Delete-class tools: DANGEROUS (stronger than WRITE). The deterministic
-# planner stamps these via _dangerous_step; validate_plan (defence layer 2)
-# rejects any delete tool labeled WRITE or READ so the LLM planner cannot
-# weaken a delete into the same approval class as an add/update. They stay in
-# WRITE_TOOLS too so the existing READ-downgrade check keeps firing.
-DANGEROUS_TOOLS: frozenset[str] = frozenset(
-    {
-        _REMOVE_PRODUCT_BY_NAME,
-        _REMOVE_PRODUCT_BY_ID,
-        _DELETE_SUPPLIER_BY_NAME,
-        _DELETE_SUPPLIER_BY_ID,
-    }
-)
+WRITE_TOOLS: frozenset[str] = write_tool_names(_SEED_CONTRACTS)
+DANGEROUS_TOOLS: frozenset[str] = dangerous_tool_names(_SEED_CONTRACTS)
 
 # Per-tool success_condition templates (defence layer 4, verify_results).
 # Placeholders are formatted with the step's own arguments so the predicate
@@ -103,17 +90,7 @@ DANGEROUS_TOOLS: frozenset[str] = frozenset(
 # (querySuppliersByDeliveryRegion / getSupplierByStatus) are deliberately
 # absent: an empty supplier list is a legitimate answer and the deterministic
 # planner cannot mis-select them, so verify stays lazy there.
-_SUCCESS_CONDITION_TEMPLATES: dict[str, str] = {
-    _PRODUCT_BY_NAME: "response.name == {name!r}",
-    _PRODUCT_BY_ID: "response.product_id == {product_id!r}",
-    _SUPPLIER_BY_NAME: "response.name == {name!r}",
-    _SUPPLIER_BY_ID: "response.supplier_id == {supplier_id!r}",
-    _ORDER_BY_ID: "response.order_id == {order_id!r}",
-    # createOrder: amount (not status) stays stable across the simulator and
-    # the cloud ERP (cloud order status is an unnormalised field), and a real
-    # order always carries a positive amount.
-    _CREATE_ORDER: "response.amount > 0",
-}
+_SUCCESS_CONDITION_TEMPLATES: dict[str, str] = success_condition_templates(_SEED_CONTRACTS)
 
 
 def _condition_for(tool_name: str, arguments: dict[str, Any]) -> str | None:
