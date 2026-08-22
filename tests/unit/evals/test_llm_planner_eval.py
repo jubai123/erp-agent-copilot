@@ -10,11 +10,23 @@ llm_complete so both run deterministically — no LLM, no network.
 
 from __future__ import annotations
 
+import json
+from collections import Counter
+
+import pytest
+
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, validate_plan
 from erp_copilot.agent.planner import WRITE_TOOLS
 from erp_copilot.agent.state import Plan, PlanStep, PlanValidation
 from erp_copilot.domain.enums import ToolRiskLevel
-from evals.llm_planner_eval import evaluate_cases, score_plan
+from evals.harness import DATASET_DIR, load_cases
+from evals.llm_planner_eval import (
+    evaluate_cases,
+    heldout_case_ids,
+    load_planning_cases,
+    score_plan,
+    validate_split_args,
+)
 
 TOOLS: dict[str, ToolSpec] = {
     "getProductByName": ToolSpec(name="getProductByName", required_params=["name"]),
@@ -255,3 +267,68 @@ class TestEvaluateCases:
         assert "getSupplierByStatus" in prompt
         for tool in WRITE_TOOLS:
             assert tool in prompt
+
+
+class TestHeldoutSplit:
+    """P3 held-out discipline: a frozen ~20% clean set, never touched by tuning."""
+
+    def test_heldout_is_20_percent_of_planning_200(self) -> None:
+        cases = load_cases("planning_200.json")
+        assert len(heldout_case_ids(cases)) == 40  # 20% of 200
+
+    def test_heldout_is_stratified_across_all_four_layers(self) -> None:
+        cases = load_cases("planning_200.json")
+        by_id = {c["case_id"]: c for c in cases}
+        counts = Counter(
+            (by_id[cid]["single_step"], by_id[cid].get("difficulty"))
+            for cid in heldout_case_ids(cases)
+        )
+        assert counts == {
+            (True, "easy"): 10,
+            (True, "hard"): 10,
+            (False, "easy"): 10,
+            (False, "hard"): 10,
+        }
+
+    def test_heldout_is_deterministic(self) -> None:
+        cases = load_cases("planning_200.json")
+        assert heldout_case_ids(cases) == heldout_case_ids(cases)
+
+    def test_frozen_manifest_matches_splitter_output(self) -> None:
+        """The checked-in manifest is the boundary that prompt tuning must not
+        cross; it must equal what the splitter produces on the current dataset,
+        or the frozen/observed split have silently drifted."""
+        manifest = json.loads(
+            (DATASET_DIR / "planning_heldout.json").read_text(encoding="utf-8")
+        )
+        assert manifest["case_ids"] == heldout_case_ids(load_cases("planning_200.json"))
+
+
+class TestLoadPlanningCases:
+    def test_heldout_and_dev_partition_planning_200(self) -> None:
+        heldout = load_planning_cases("heldout")
+        dev = load_planning_cases("dev")
+        heldout_ids = {c["case_id"] for c in heldout}
+        dev_ids = {c["case_id"] for c in dev}
+        assert len(heldout) == 40
+        assert len(dev) == 160
+        assert heldout_ids.isdisjoint(dev_ids)
+        assert heldout_ids | dev_ids == {c["case_id"] for c in load_cases("planning_200.json")}
+
+    def test_all_returns_every_case(self) -> None:
+        assert len(load_planning_cases("all")) == 200
+
+
+class TestValidateSplitArgs:
+    """Prompt overrides are refused on the frozen held-out set."""
+
+    def test_refuses_prompt_override_on_heldout(self) -> None:
+        with pytest.raises(ValueError, match="held-out"):
+            validate_split_args("heldout", "tuned prompt v1")
+
+    def test_allows_prompt_override_on_dev_and_all(self) -> None:
+        validate_split_args("dev", "tuned prompt v1")
+        validate_split_args("all", "tuned prompt v1")
+
+    def test_heldout_with_production_prompt_is_fine(self) -> None:
+        validate_split_args("heldout", None)

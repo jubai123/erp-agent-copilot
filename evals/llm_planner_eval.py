@@ -34,7 +34,7 @@ from erp_copilot.agent.nodes.build_plan import SYSTEM_PROMPT, build_plan_node
 from erp_copilot.agent.nodes.classify_intent import classify_intent_node
 from erp_copilot.agent.nodes.validate_plan import ToolSpec, build_validate_plan_node
 from erp_copilot.agent.state import AgentState, Plan, PlanValidation
-from evals.harness import RunnerOutput, collect_failures, load_cases, write_report
+from evals.harness import DATASET_DIR, RunnerOutput, collect_failures, load_cases, write_report
 
 REPORT_DIR = Path(__file__).resolve().parent / "reports"
 
@@ -46,6 +46,14 @@ BASELINE_REPORT = REPORT_DIR / "report_llm_planner_deepseek_real_20260818.json"
 DRIFT_ALARM_THRESHOLD = 0.02
 # 95% two-sided z for the Wilson score interval.
 CONFIDENCE_Z = 1.96
+
+# P3 held-out discipline (docs/08 §2.2): ~20% (40) of planning_200 is frozen as
+# the clean evaluation set. Prompt tuning iterates on the dev complement; the
+# reported headline always comes from heldout — the frozen manifest is the
+# single source of truth for what tuning must never touch.
+HELDOUT_FRACTION = 0.2
+HELDOUT_MANIFEST = "planning_heldout.json"
+HELDOUT_SPLITS = ("heldout", "dev", "all")
 
 
 def wilson_ci(rate: float, n: int, z: float = CONFIDENCE_Z) -> tuple[float, float]:
@@ -63,6 +71,59 @@ def wilson_ci(rate: float, n: int, z: float = CONFIDENCE_Z) -> tuple[float, floa
     center = (p + z2 / (2 * n)) / (1 + z2 / n)
     half = z * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / (1 + z2 / n)
     return (max(0.0, center - half), min(1.0, center + half))
+
+
+def heldout_case_ids(cases: list[dict]) -> list[str]:
+    """Deterministically select ~20% of *cases* as held-out, stratified.
+
+    planning_200 is four strata of 50 (single/multi × easy/hard). Taking every
+    5th case within each stratum (sorted by case_id) yields 10 per stratum =
+    40 total = 20%. No RNG, so the split is reproducible and the frozen
+    manifest can be verified against it on every run.
+    """
+    by_layer: dict[tuple[bool, str], list[dict]] = {}
+    for case in cases:
+        layer = (bool(case["single_step"]), str(case.get("difficulty", "easy")))
+        by_layer.setdefault(layer, []).append(case)
+    selected: list[str] = []
+    for layer in sorted(by_layer):
+        ordered = sorted(by_layer[layer], key=lambda c: c["case_id"])
+        selected.extend(c["case_id"] for i, c in enumerate(ordered) if i % 5 == 0)
+    return sorted(selected)
+
+
+def _load_heldout_ids() -> list[str]:
+    data = json.loads((DATASET_DIR / HELDOUT_MANIFEST).read_text(encoding="utf-8"))
+    return data["case_ids"]
+
+
+def load_planning_cases(split: str, *, cases: list[dict] | None = None) -> list[dict]:
+    """Load planning_200 cases restricted to *split*.
+
+    heldout = the frozen manifest's case_ids; dev = the complement; all =
+    everything. The manifest is the boundary prompt tuning must not cross — the
+    reported (clean) number always comes from heldout, tuning from dev.
+    """
+    all_cases = cases if cases is not None else load_cases(DATASET_FILE)
+    if split == "all":
+        return all_cases
+    heldout = set(_load_heldout_ids())
+    if split == "heldout":
+        return [c for c in all_cases if c["case_id"] in heldout]
+    return [c for c in all_cases if c["case_id"] not in heldout]  # dev
+
+
+def validate_split_args(split: str, system: str | None) -> None:
+    """Refuse prompt overrides on the frozen held-out set.
+
+    The held-out report must measure the production prompt — tuning a prompt on
+    the held-out cases would burn the clean set (docs/08 §2.2). Tuning runs on
+    dev, which is what the reported number is compared against.
+    """
+    if split == "heldout" and system is not None:
+        raise ValueError(
+            "held-out 评测集只使用生产 SYSTEM_PROMPT；prompt 调优请用 --split dev"
+        )
 
 
 def _failure_detail(case: dict, actual: list[str], validation_errors: list[str]) -> str:
@@ -318,7 +379,11 @@ def compute_drift(
 
 
 def _print_summary(category: dict, num_cases: int) -> None:
-    print(f"LLM planner eval over {DATASET_FILE} ({num_cases} cases, mode={category['mode']})")
+    split = category.get("split", "all")
+    print(
+        f"LLM planner eval over {DATASET_FILE} ({num_cases} cases, "
+        f"split={split}, mode={category['mode']})"
+    )
     print(f"  选型准确率 (tool_set_exact): {category['primary_score']:.2%}")
     for key, value in category["metrics"].items():
         rendered = str(value) if isinstance(value, int) else f"{value:.2%}"
@@ -354,7 +419,27 @@ def main() -> None:
         default="",
         help=f"baseline report path (default {BASELINE_REPORT.name})",
     )
+    parser.add_argument(
+        "--split",
+        choices=HELDOUT_SPLITS,
+        default="heldout",
+        help=(
+            "评测子集：heldout=冻结 20%（默认，报告只用它）；dev=调优集"
+            "（prompt A/B 只在此跑）；all=全量 200"
+        ),
+    )
+    parser.add_argument(
+        "--system",
+        type=str,
+        default=None,
+        help="覆盖 SYSTEM_PROMPT 做 A/B 调优（仅允许 --split dev/all；heldout 只测生产 prompt）",
+    )
     args = parser.parse_args()
+
+    try:
+        validate_split_args(args.split, args.system)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     from apps.worker.graph_builder import WORKER_TOOL_SCHEMAS
     from apps.worker.llm_planner import build_real_llm_complete
@@ -362,12 +447,13 @@ def main() -> None:
 
     settings = Settings()
     llm_complete = build_real_llm_complete(settings)
-    cases = load_cases(DATASET_FILE)
+    cases = load_planning_cases(args.split)
     output = evaluate_cases(
         cases,
         llm_complete=llm_complete,
         available_tools=set(WORKER_TOOL_SCHEMAS),
         tool_schemas=WORKER_TOOL_SCHEMAS,
+        system=args.system if args.system is not None else SYSTEM_PROMPT,
     )
     # run_category would drop evaluate_cases' extra keys, so build the category
     # dict directly and attach the task 7.10 strata + drift sections.
@@ -378,6 +464,7 @@ def main() -> None:
         "category": "planning_llm",
         "num_cases": len(cases),
         "mode": output["mode"],
+        "split": args.split,
         "primary_score": output["primary_score"],
         "metrics": output["metrics"],
         "per_case": output["per_case"],

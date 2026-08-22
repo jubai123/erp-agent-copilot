@@ -22,6 +22,30 @@
 | Failure/Cancellation | 20 | Worker恢复、ERP Tool故障、取消、deadline和对账 |
 | 合计 | 200 | 端到端能力闭环 |
 
+### 2.1 失败回归集（P2 反馈半环）
+
+生产环境的 FAILED run（人工介入队列）可一键导出为回归用例，形成评测的反馈半环：修复一个 bug 后，用触发它的真实 query 复验，防止回归。工具只读数据库、不写库：
+
+```
+uv run python -m evals.scripts.export_failure_regression --days 7
+uv run python -m evals.scripts.export_failure_regression --days 30 --tenant-id <id> --output <path>
+```
+
+- 取最近 N 天 `FAILED` 且 `failure_reason` 非空的 run（与 `FailureQueue.list_needing_intervention` 同一队列定义），按 `completed_at` 倒序。
+- Run 行不存 query，query 从最近 checkpoint 的 `AgentState.query` 恢复，`title` 兜底；两者皆无则跳过并报告计数。
+- `scenario`/`expected_behavior` 由 `failure_code` 映射（如 `TIMEOUT→tool_timeout/retry`、`WRITE_OUTCOME_AMBIGUOUS→reconciliation/reconcile_no_duplicate`），未知码兜底 `unknown/no_failure`；`expected_duplicate_writes` 恒为 0（幂等不变量）。
+- 输出 `evals/datasets/failure_regression.json`（`failure_20.json` schema）。输出含真实生产 query，提交前需人工审查。
+
+### 2.2 LLM Planner held-out 纪律（P3）
+
+评测集留 ~20% 冻结集（held-out），prompt 调优永不触碰，报告只报 held-out 数字——防止 prompt 在评测集上过拟合、报出虚高成绩。
+
+- **冻结边界**：`evals/datasets/planning_heldout.json` 是 40 个 `case_id`（planning_200 四层各 10，确定性取每第 5 个，无 RNG）。manifest 与 `heldout_case_ids()` 输出由测试锁定（`test_frozen_manifest_matches_splitter_output`），数据集重平衡时立刻失败。
+- **三态子集**：`load_planning_cases(split)` 支持 `heldout`（manifest）/ `dev`（补集 160）/ `all`（200）。prompt 调优在 dev 上迭代；held-out 是 clean set，最终报告只报它。
+- **机械守卫**：`--split heldout` 时显式 `--system` 直接报错拒绝——held-out 只测生产 `SYSTEM_PROMPT`，调优 A/B 必须 `--split dev`。
+- **用法**：默认即 held-out（`uv run python -m evals.llm_planner_eval`）；调优 `--split dev --system "<变体>"`；报告带 `split` 字段自描述。
+- **权衡与现状**：held-out 每层仅 10 例 → 分层 Wilson CI 更宽（n=10 仍有效）；默认 held-out 与 50-case 基线重叠可能为 0，漂移先报 `no_baseline`，建立 held-out 基线报告后再启用告警。
+
 ## 3. AI与Agent指标
 
 - Tool Recall@1、Recall@5、MRR、NDCG。
