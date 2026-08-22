@@ -257,6 +257,16 @@ class Settings(BaseSettings):
             "prompt-derived."
         ),
     )
+    erp_rate_limit_per_minute: int = Field(
+        default=120,
+        ge=1,
+        description=(
+            "Per-upstream sliding-window rate limit for MCP / cloud ERP calls "
+            "(env ERP_RATE_LIMIT_PER_MINUTE): calls above this many per minute "
+            "fail fast with RATE_LIMITED instead of hitting the shared upstream. "
+            "A protective backstop against bursts — normal runs stay far below it."
+        ),
+    )
 
     # -- API authentication ---------------------------------------------------
 

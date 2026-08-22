@@ -20,7 +20,9 @@ from typing import Any
 
 from apps.erp_simulator.data.products import PRODUCT_BY_ID, PRODUCT_BY_NAME
 from apps.erp_simulator.data.suppliers import SUPPLIER_BY_ID, SUPPLIER_BY_NAME
-from apps.worker.executor import erp_simulator_executor
+from apps.worker.executor import _with_circuit_breaker, _with_rate_limit, erp_simulator_executor
+from erp_copilot.agent.circuit_breaker import CIRCUIT_OPEN_CODE, RedisCircuitBreaker
+from erp_copilot.agent.rate_limiter import RATE_LIMITED_CODE, RedisRateLimiter
 from erp_copilot.tools.tool_result import ToolResult
 
 
@@ -960,6 +962,174 @@ class TestAddSupplier:
         assert result.status == "FAILED"
         assert result.error is not None
         assert result.error.error_code == "INVALID_ARGUMENT"
+
+
+class _FakeRedis:
+    """Minimal redis-py stand-in for the breaker / rate-limiter wrapper tests.
+
+    Models the commands the breaker (exists/set/incr/expire/delete) and the
+    rate limiter (zremrangebyscore/zcard/zadd) touch; ``deleted`` records every
+    key cleared so a test can assert the success path reset the window.
+    """
+
+    def __init__(self) -> None:
+        self.data: dict[str, str] = {}
+        self.deleted: list[str] = []
+        self.zsets: dict[str, dict[str, float]] = {}
+
+    def exists(self, key: str) -> int:
+        return 1 if key in self.data else 0
+
+    def set(self, key: str, value: object, ex: object = None) -> bool:
+        self.data[key] = str(value)
+        return True
+
+    def incr(self, key: str) -> int:
+        self.data[key] = str(int(self.data.get(key, "0")) + 1)
+        return int(self.data[key])
+
+    def expire(self, key: str, seconds: int) -> bool:
+        return True
+
+    def delete(self, key: str) -> int:
+        if key in self.data:
+            del self.data[key]
+            self.deleted.append(key)
+            return 1
+        return 0
+
+    def zremrangebyscore(self, key: str, min_: float, max_: float) -> int:
+        z = self.zsets.setdefault(key, {})
+        stale = [member for member, score in z.items() if min_ <= score <= max_]
+        for member in stale:
+            del z[member]
+        return len(stale)
+
+    def zcard(self, key: str) -> int:
+        return len(self.zsets.get(key, {}))
+
+    def zadd(self, key: str, mapping: dict[str, float]) -> int:
+        z = self.zsets.setdefault(key, {})
+        added = sum(1 for member in mapping if member not in z)
+        z.update(mapping)
+        return added
+
+
+class TestCircuitBreakerWrapper:
+    """_with_circuit_breaker fails fast when the breaker is OPEN and records the
+    outcome otherwise — the breaker sits inside the retry executor, so an OPEN
+    circuit returns a non-retryable CIRCUIT_OPEN that stops retries immediately."""
+
+    def test_open_circuit_short_circuits_without_calling_executor(self) -> None:
+        redis = _FakeRedis()
+        redis.set("erp:cb:mcp:test:open", "1")
+        breaker = RedisCircuitBreaker(redis, "mcp:test", failure_threshold=5)
+
+        calls: list[str] = []
+
+        async def spy(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            calls.append(tool_name)
+            return ToolResult.success(tool_version_id=tool_name, data={})
+
+        guarded = _with_circuit_breaker(spy, breaker)
+        result = asyncio.run(guarded("getProductByName", {"name": "苹果"}))
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == CIRCUIT_OPEN_CODE
+        assert result.error.is_retryable is False
+        assert calls == []  # upstream never touched
+
+    def test_closed_circuit_executes_and_records_outcome(self) -> None:
+        redis = _FakeRedis()
+        breaker = RedisCircuitBreaker(redis, "mcp:test", failure_threshold=5)
+        # Seed a failure window so the success path has something to clear.
+        redis.incr("erp:cb:mcp:test:failures")
+
+        calls: list[str] = []
+
+        async def spy(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            calls.append(tool_name)
+            return ToolResult.success(tool_version_id=tool_name, data={"ok": True})
+
+        guarded = _with_circuit_breaker(spy, breaker)
+        result = asyncio.run(guarded("getProductByName", {"name": "苹果"}))
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"ok": True}
+        assert calls == ["getProductByName"]
+        # A success clears the seeded failure window.
+        assert "erp:cb:mcp:test:failures" not in redis.data
+
+
+class _FakeClock:
+    def __init__(self, t: float = 1_000_000.0) -> None:
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
+
+
+class TestRateLimitWrapper:
+    """_with_rate_limit gates calls against the sliding-window budget and returns
+    a non-retryable RATE_LIMITED before the upstream (or the circuit breaker) is
+    ever touched — the limiter sits outside the breaker so self-throttling never
+    trips the shared circuit."""
+
+    def test_over_limit_short_circuits_without_calling_executor(self) -> None:
+        redis = _FakeRedis()
+        clock = _FakeClock()
+        limiter = RedisRateLimiter(redis, "mcp:test", limit=2, now=clock)
+
+        calls: list[str] = []
+
+        async def spy(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            calls.append(tool_name)
+            return ToolResult.success(tool_version_id=tool_name, data={})
+
+        guarded = _with_rate_limit(
+            _with_circuit_breaker(spy, RedisCircuitBreaker(redis, "mcp:test")), limiter
+        )
+        asyncio.run(guarded("getProductByName", {"name": "苹果"}))
+        asyncio.run(guarded("getProductByName", {"name": "苹果"}))
+        result = asyncio.run(guarded("getProductByName", {"name": "苹果"}))
+
+        assert result.status == "FAILED"
+        assert result.error is not None
+        assert result.error.error_code == RATE_LIMITED_CODE
+        assert result.error.is_retryable is False
+        assert calls == ["getProductByName", "getProductByName"]  # third never hit upstream
+
+    def test_under_limit_executes_and_passes_through(self) -> None:
+        redis = _FakeRedis()
+        clock = _FakeClock()
+        limiter = RedisRateLimiter(redis, "mcp:test", limit=2, now=clock)
+
+        async def spy(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            return ToolResult.success(tool_version_id=tool_name, data={"ok": True})
+
+        guarded = _with_rate_limit(
+            _with_circuit_breaker(spy, RedisCircuitBreaker(redis, "mcp:test")), limiter
+        )
+        result = asyncio.run(guarded("getProductByName", {"name": "苹果"}))
+
+        assert result.status == "SUCCEEDED"
+        assert result.data == {"ok": True}
+
+    def test_exposes_inner_executor_breaker_and_limiter(self) -> None:
+        redis = _FakeRedis()
+        clock = _FakeClock()
+        limiter = RedisRateLimiter(redis, "mcp:test", limit=2, now=clock)
+        breaker = RedisCircuitBreaker(redis, "mcp:test")
+
+        async def spy(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            return ToolResult.success(tool_version_id=tool_name, data={})
+
+        guarded = _with_rate_limit(_with_circuit_breaker(spy, breaker), limiter)
+
+        assert guarded.executor is spy
+        assert guarded.breaker is breaker
+        assert guarded.limiter is limiter
 
 
 class TestDeleteSupplier:

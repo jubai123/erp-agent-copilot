@@ -857,8 +857,13 @@ class TestResolveErpExecutor:
     def test_mcp_url_returns_mcp_executor(self) -> None:
         executor = resolve_erp_executor(_settings(mcp_server_url="http://localhost:8765/mcp"))
 
-        assert isinstance(executor, MCPToolExecutor)
-        assert executor.connection.url == "http://localhost:8765/mcp"
+        # The MCP executor is wrapped in the circuit breaker and rate limiter;
+        # the raw executor, breaker key and limiter name are exposed for
+        # routing introspection.
+        assert isinstance(executor.executor, MCPToolExecutor)
+        assert executor.executor.connection.url == "http://localhost:8765/mcp"
+        assert executor.breaker.name == "mcp:http://localhost:8765/mcp"
+        assert executor.limiter.name == "mcp:http://localhost:8765/mcp"
 
     def test_mcp_url_takes_precedence_over_cloud_http(self) -> None:
         # MCP is the newest path: when both are set, the worker talks to the MCP
@@ -867,8 +872,9 @@ class TestResolveErpExecutor:
             _settings(erp_api_base_url=_BASE_URL, mcp_server_url="http://localhost:8765/mcp")
         )
 
-        assert isinstance(executor, MCPToolExecutor)
-        assert executor.connection.url == "http://localhost:8765/mcp"
+        assert isinstance(executor.executor, MCPToolExecutor)
+        assert executor.executor.connection.url == "http://localhost:8765/mcp"
+        assert executor.limiter.name == "mcp:http://localhost:8765/mcp"
 
 
 class TestGetProductById:

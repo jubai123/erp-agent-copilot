@@ -24,10 +24,12 @@ camelCase and normalized back to the snake_case shapes below.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
+from redis import Redis
 
 from apps.erp_simulator.data.orders import (
     cancel_order,
@@ -60,6 +62,8 @@ from apps.erp_simulator.data.suppliers import (
 )
 from apps.erp_simulator.scenarios import get_scenario
 from apps.worker.mcp_executor import build_mcp_executor
+from erp_copilot.agent.circuit_breaker import CIRCUIT_OPEN_CODE, RedisCircuitBreaker
+from erp_copilot.agent.rate_limiter import RATE_LIMITED_CODE, RedisRateLimiter
 from erp_copilot.infrastructure.config import Settings
 from erp_copilot.tools.tool_result import ToolResult
 
@@ -1528,6 +1532,119 @@ def build_erp_http_executor(
     return erp_http_executor
 
 
+_guard_redis: Redis | None = None
+
+
+def _get_guard_redis(settings: Settings) -> Redis:
+    """Lazily build the process-shared Redis client for guard state.
+
+    Shared by the circuit breaker and the rate limiter. ``Redis.from_url`` only
+    parses the URL — no connection is made until the first command — so
+    building it here is cheap, and the first real command (inside a guard,
+    already fail-open) establishes the connection. Cached per process so each
+    prefork worker child holds one pool instead of one per run
+    (``resolve_erp_executor`` runs once per run inside the task).
+    """
+    global _guard_redis
+    if _guard_redis is None:
+        _guard_redis = Redis.from_url(settings.redis_url)
+    return _guard_redis
+
+
+class _CircuitBreakingExecutor:
+    """The breaker-wrapped executor returned by ``resolve_erp_executor``.
+
+    Wraps the raw network executor (MCPToolExecutor / HTTP closure) behind a
+    fail-fast gate: an OPEN breaker trips CIRCUIT_OPEN (non-retryable, so it
+    stops the outer retry loop immediately) instead of waiting out a full
+    upstream timeout. ``executor`` and ``breaker`` are exposed so routing tests
+    can assert the chosen upstream and its circuit key without reaching through
+    a closure.
+    """
+
+    def __init__(
+        self,
+        executor: Callable[[str, dict[str, Any]], Awaitable[ToolResult]],
+        breaker: RedisCircuitBreaker,
+    ) -> None:
+        self.executor = executor
+        self.breaker = breaker
+
+    async def __call__(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        if await asyncio.to_thread(self.breaker.is_open):
+            return ToolResult.failure(
+                tool_version_id=tool_name,
+                error_code=CIRCUIT_OPEN_CODE,
+                error_message=f"上游 {self.breaker.name} 已熔断，快速失败（cooldown 内不重试）",
+                is_retryable=False,
+            )
+        result = await self.executor(tool_name, arguments)
+        await asyncio.to_thread(self.breaker.record, result)
+        return result
+
+
+def _with_circuit_breaker(
+    executor: Callable[[str, dict[str, Any]], Awaitable[ToolResult]],
+    breaker: RedisCircuitBreaker,
+) -> _CircuitBreakingExecutor:
+    """Wrap *executor* with a fail-fast circuit-breaker gate.
+
+    The breaker sits *inside* the retry executor (AsyncRetryExecutor wraps the
+    whole step), so CIRCUIT_OPEN is non-retryable and stops the retry loop
+    immediately — retrying against a tripped breaker would just burn the
+    upstream's cooldown window. Redis I/O is offloaded to a worker thread so the
+    executor's asyncio.gather loop is never blocked on a synchronous redis call.
+    """
+    return _CircuitBreakingExecutor(executor, breaker)
+
+
+class _RateLimitedExecutor:
+    """A rate-limited executor that wraps a guarded executor.
+
+    Sits *outside* the circuit breaker so a self-throttled call fails fast with
+    RATE_LIMITED before it reaches the breaker — the upstream is healthy, we are
+    just over-frequent, so a rejection must never feed the breaker's failure
+    counter (that would self-trip a shared circuit). ``executor`` and ``breaker``
+    pass through the inner guarded executor's introspection surface, so routing
+    tests keep asserting the chosen upstream and its circuit key unchanged.
+    """
+
+    def __init__(
+        self,
+        guarded: _CircuitBreakingExecutor,
+        limiter: RedisRateLimiter,
+    ) -> None:
+        self._guarded = guarded
+        self.executor = guarded.executor
+        self.breaker = guarded.breaker
+        self.limiter = limiter
+
+    async def __call__(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        if not await asyncio.to_thread(self.limiter.allow):
+            return ToolResult.failure(
+                tool_version_id=tool_name,
+                error_code=RATE_LIMITED_CODE,
+                error_message=f"上游 {self.limiter.name} 调用超频，被限流快速失败",
+                is_retryable=False,
+            )
+        return await self._guarded(tool_name, arguments)
+
+
+def _with_rate_limit(
+    guarded: _CircuitBreakingExecutor,
+    limiter: RedisRateLimiter,
+) -> _RateLimitedExecutor:
+    """Wrap *guarded* (breaker-wrapped) executor behind a fail-fast rate-limit gate.
+
+    The limiter sits *outside* the circuit breaker: a throttled call returns
+    RATE_LIMITED (non-retryable, so the outer retry loop stops immediately)
+    before the breaker sees it, protecting the shared upstream from our own
+    burst without counting the rejection against the circuit. Redis I/O is
+    offloaded to a worker thread, mirroring the breaker wrapper.
+    """
+    return _RateLimitedExecutor(guarded, limiter)
+
+
 def resolve_erp_executor(
     settings: Settings,
 ) -> Callable[[str, dict[str, Any]], Awaitable[ToolResult]]:
@@ -1538,12 +1655,43 @@ def resolve_erp_executor(
     ERP_API_BASE_URL activates the HTTP cloud executor; leaving both empty keeps
     the in-process deterministic simulator, so offline and test environments
     make no network calls.
+
+    The network executors (MCP and cloud HTTP) are wrapped in a Redis-backed
+    circuit breaker so a down upstream trips the circuit and subsequent steps
+    fail fast instead of each waiting out a full timeout, and a sliding-window
+    rate limiter so a burst against a healthy upstream fails fast with
+    RATE_LIMITED instead of hammering the shared service. The simulator stays
+    unwrapped — it is in-process and deterministic, so there is no upstream to
+    protect against.
     """
     if settings.mcp_server_url:
-        return build_mcp_executor(settings.mcp_server_url)
+        return _with_rate_limit(
+            _with_circuit_breaker(
+                build_mcp_executor(settings.mcp_server_url),
+                RedisCircuitBreaker(
+                    _get_guard_redis(settings),
+                    f"mcp:{settings.mcp_server_url}",
+                ),
+            ),
+            RedisRateLimiter(
+                _get_guard_redis(settings),
+                f"mcp:{settings.mcp_server_url}",
+                limit=settings.erp_rate_limit_per_minute,
+            ),
+        )
     if settings.erp_api_base_url:
-        return build_erp_http_executor(
-            settings.erp_api_base_url,
-            settings.erp_api_key.get_secret_value(),
+        return _with_rate_limit(
+            _with_circuit_breaker(
+                build_erp_http_executor(
+                    settings.erp_api_base_url,
+                    settings.erp_api_key.get_secret_value(),
+                ),
+                RedisCircuitBreaker(_get_guard_redis(settings), "erp_http"),
+            ),
+            RedisRateLimiter(
+                _get_guard_redis(settings),
+                "erp_http",
+                limit=settings.erp_rate_limit_per_minute,
+            ),
         )
     return erp_simulator_executor
