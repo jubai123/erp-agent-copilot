@@ -214,16 +214,19 @@ class TestWilsonCI:
 
 class TestDrift:
     def _baseline(self) -> dict:
-        return {
-            "case_ids": {f"plan-{i:03d}" for i in range(1, 51)},
-            "metrics": {
-                "num_cases": 50,
-                "tool_set_exact_rate": 0.98,
-                "tool_seq_exact_rate": 0.98,
-                "contract_valid_rate": 0.86,
-                "parse_success_rate": 1.0,
-            },
+        # 50-case baseline: tool_set is 49/50 = 0.98 overall, but the overlap
+        # subset (plan-001, plan-002) is only 1/2 — a naive full-set delta would
+        # fabricate a drop whenever the current run is a held-out subset.
+        flags = {
+            f"plan-{i:03d}": {
+                "tool_set_exact_rate": i != 2,
+                "tool_seq_exact_rate": i != 2,
+                "contract_valid_rate": True,
+                "parse_success_rate": True,
+            }
+            for i in range(1, 51)
         }
+        return {"case_ids": set(flags), "per_case_flags": flags}
 
     def test_overlap_metrics_restrict_to_shared_cases(self) -> None:
         per_case = [
@@ -234,35 +237,62 @@ class TestDrift:
             {"case_id": "plan-201", "tool_set_exact": False, "tool_seq_exact": False,
              "contract_valid": False, "parse_success": True},
         ]
-        overlap = baseline_overlap_metrics(per_case, {"plan-001", "plan-002"})
+        overlap = baseline_overlap_metrics(per_case, self._baseline())
         assert overlap["num_cases"] == 2
-        assert overlap["tool_set_exact_rate"] == 0.5
         # The out-of-baseline case must not influence the overlap rates.
-        assert overlap["parse_success_rate"] == 1.0
+        assert overlap["current_tool_set_exact_rate"] == 0.5
+        assert overlap["current_parse_success_rate"] == 1.0
+        # The baseline side is restricted to the same two shared cases (1/2),
+        # not its full 50-case aggregate (49/50).
+        assert overlap["baseline_tool_set_exact_rate"] == 0.5
 
     def test_delta_is_current_minus_baseline(self) -> None:
-        overlap = {"num_cases": 50, "tool_set_exact_rate": 0.96}
+        overlap = {"num_cases": 50, "current_tool_set_exact_rate": 0.96,
+                   "baseline_tool_set_exact_rate": 0.98}
         drift = compute_drift(overlap, self._baseline())
         assert drift["tool_set_exact_delta"] == -0.02
         assert drift["alarm"] is False  # exactly at threshold is not a drop
 
     def test_alarm_when_drop_exceeds_threshold(self) -> None:
-        overlap = {"num_cases": 50, "tool_set_exact_rate": 0.94}
+        overlap = {"num_cases": 50, "current_tool_set_exact_rate": 0.94,
+                   "baseline_tool_set_exact_rate": 0.98}
         drift = compute_drift(overlap, self._baseline())
         assert drift["tool_set_exact_delta"] == -0.04
         assert drift["alarm"] is True
 
     def test_no_alarm_when_improved(self) -> None:
-        overlap = {"num_cases": 50, "tool_set_exact_rate": 1.0}
+        overlap = {"num_cases": 50, "current_tool_set_exact_rate": 1.0,
+                   "baseline_tool_set_exact_rate": 0.98}
         drift = compute_drift(overlap, self._baseline())
         assert drift["tool_set_exact_delta"] == 0.02
         assert drift["alarm"] is False
 
     def test_no_alarm_without_baseline(self) -> None:
-        overlap = {"num_cases": 50, "tool_set_exact_rate": 0.9}
+        overlap = {"num_cases": 50, "current_tool_set_exact_rate": 0.9,
+                   "baseline_tool_set_exact_rate": 0.98}
         drift = compute_drift(overlap, None)
         assert drift["alarm"] is False
         assert drift["status"] == "no_baseline"
+
+    def test_baseline_side_restricted_to_same_overlap(self) -> None:
+        """Regression: the drift gate compared the current run's overlap against
+        the baseline's *full* set, fabricating a drop when the current run was a
+        held-out subset. The real held-out run scored 11/12 on both sides yet
+        alarmed -6.33%; both sides must share the overlap so a harder case mix
+        cannot masquerade as model drift."""
+        per_case = [
+            {"case_id": "plan-001", "tool_set_exact": True, "tool_seq_exact": True,
+             "contract_valid": True, "parse_success": True},
+            {"case_id": "plan-002", "tool_set_exact": False, "tool_seq_exact": False,
+             "contract_valid": True, "parse_success": True},
+            {"case_id": "plan-201", "tool_set_exact": False, "tool_seq_exact": False,
+             "contract_valid": False, "parse_success": True},
+        ]
+        overlap = baseline_overlap_metrics(per_case, self._baseline())
+        drift = compute_drift(overlap, self._baseline())
+        assert drift["tool_set_exact_delta"] == 0.0  # 1/2 vs 1/2, not vs 49/50
+        assert drift["alarm"] is False
+        assert drift["status"] == "ok"
 
     def test_load_baseline_report_missing_file(self) -> None:
         assert load_baseline_report(DATASETS / "does_not_exist.json") is None

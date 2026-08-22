@@ -291,11 +291,13 @@ _DRIFT_METRIC_KEYS = (
 
 
 def load_baseline_report(path: Path = BASELINE_REPORT) -> dict[str, object] | None:
-    """Load the baseline report's per-case tool_set_exact + headline rates.
+    """Load the baseline report's per-case drift flags.
 
     Returns None when the file is absent (first run / fresh checkout) so main()
-    reports "no baseline" instead of crashing. The drift gate needs the overlap
-    subset, so the baseline's case ids are carried too.
+    reports "no baseline" instead of crashing. The drift gate needs per-case
+    flags so both sides can be restricted to the same overlap subset — the
+    full-set aggregates alone would compare like with unlike (the held-out
+    false-alarm). Flags are keyed by the drift metric names ("tool_set_exact_rate", ...).
     """
     if not path.exists():
         return None
@@ -303,44 +305,44 @@ def load_baseline_report(path: Path = BASELINE_REPORT) -> dict[str, object] | No
     per_case = data.get("categories", {}).get("planning_llm", {}).get("per_case", [])
     if not per_case:
         return None
-    n = len(per_case)
-
-    def rate(key: str) -> float:
-        return sum(1 for pc in per_case if pc.get(key)) / n
-
-    return {
-        "case_ids": {pc["case_id"] for pc in per_case},
-        "metrics": {
-            "num_cases": n,
-            "tool_set_exact_rate": rate("tool_set_exact"),
-            "tool_seq_exact_rate": rate("tool_seq_exact"),
-            "contract_valid_rate": rate("contract_valid"),
-            "parse_success_rate": rate("parse_success"),
-        },
+    per_case_flags = {
+        pc["case_id"]: {
+            key: bool(pc.get(key.removesuffix("_rate"))) for key in _DRIFT_METRIC_KEYS
+        }
+        for pc in per_case
     }
+    return {"case_ids": set(per_case_flags), "per_case_flags": per_case_flags}
 
 
 def baseline_overlap_metrics(
-    per_case: list[dict], baseline_case_ids: set[str]
+    per_case: list[dict],
+    baseline: dict[str, object] | None,
 ) -> dict[str, float]:
-    """Headline rates restricted to the run's cases shared with the baseline.
+    """Headline rates on the cases the current run shares with the baseline.
 
-    Drift must compare like with like: the baseline was measured on 50 easy-heavy
-    cases, so scoring the full 200 (half of them deliberately hard) would
-    fabricate a regression. Restricting to the overlapping ids keeps difficulty
-    composition identical between the two numbers.
+    Both the current run and the baseline are restricted to the same overlap
+    subset, so a harder case mix in a held-out split cannot masquerade as model
+    drift. (Previously only the current side was restricted; the baseline side
+    used its full-set aggregate, which fabricated a drop whenever the current
+    run was a subset.) ``current_<metric>`` and ``baseline_<metric>`` are
+    returned alongside the overlap size.
     """
+    if baseline is None:
+        return {"num_cases": 0}
+    baseline_case_ids: set[str] = baseline["case_ids"]
     subset = [pc for pc in per_case if pc["case_id"] in baseline_case_ids]
     n = len(subset)
+    result: dict[str, float] = {"num_cases": n}
     if n == 0:
-        return {"num_cases": 0}
-    return {
-        "num_cases": n,
-        "tool_set_exact_rate": sum(1 for pc in subset if pc["tool_set_exact"]) / n,
-        "tool_seq_exact_rate": sum(1 for pc in subset if pc["tool_seq_exact"]) / n,
-        "contract_valid_rate": sum(1 for pc in subset if pc["contract_valid"]) / n,
-        "parse_success_rate": sum(1 for pc in subset if pc["parse_success"]) / n,
-    }
+        return result
+    baseline_flags: dict[str, dict[str, bool]] = baseline["per_case_flags"]
+    for key in _DRIFT_METRIC_KEYS:
+        field = key.removesuffix("_rate")
+        result[f"current_{key}"] = sum(1 for pc in subset if pc[field]) / n
+        result[f"baseline_{key}"] = sum(
+            1 for pc in subset if baseline_flags[pc["case_id"]][key]
+        ) / n
+    return result
 
 
 def compute_drift(
@@ -356,11 +358,12 @@ def compute_drift(
     """
     if baseline is None or current_overlap.get("num_cases", 0) == 0:
         return {"status": "no_baseline", "alarm": False, "message": "基线报告缺失或无可比子集"}
-    baseline_metrics = baseline["metrics"]
     deltas = {
-        key: round(current_overlap[key] - baseline_metrics[key], 4)
+        key: round(
+            current_overlap[f"current_{key}"] - current_overlap[f"baseline_{key}"], 4
+        )
         for key in _DRIFT_METRIC_KEYS
-        if key in current_overlap and key in baseline_metrics
+        if f"current_{key}" in current_overlap and f"baseline_{key}" in current_overlap
     }
     set_delta = deltas.get("tool_set_exact_rate", 0.0)
     alarm = set_delta < -threshold
@@ -459,7 +462,7 @@ def main() -> None:
     # dict directly and attach the task 7.10 strata + drift sections.
     baseline_path = Path(args.baseline) if args.baseline else BASELINE_REPORT
     baseline = load_baseline_report(baseline_path)
-    overlap = baseline_overlap_metrics(output["per_case"], baseline["case_ids"]) if baseline else {}
+    overlap = baseline_overlap_metrics(output["per_case"], baseline) if baseline else {}
     category = {
         "category": "planning_llm",
         "num_cases": len(cases),
