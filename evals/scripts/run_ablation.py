@@ -144,11 +144,6 @@ def load_knowledge_base() -> list[dict]:
     """
     docs = []
     for md_file in sorted(KB_ROOT.rglob("*.md")):
-        # agent_skills/*/SKILL.md are skill-catalog definitions, not knowledge
-        # documents — they carry no document_id and would all collide on stem
-        # "SKILL", breaking the unique-id invariant.
-        if "agent_skills" in md_file.parts:
-            continue
         content = md_file.read_text(encoding="utf-8")
         fm = _parse_frontmatter(content)
         doc_id = fm.get("document_id", md_file.stem)
