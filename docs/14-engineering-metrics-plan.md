@@ -48,10 +48,14 @@
 | 失败路径识别 | timeout 场景正确 FAILED | 驱动 timeout 场景 | 正确 FAILED | 单测覆盖 |
 | 执行成功率 | `(happy_ok + timeout_ok) / 2`，场景到达**预期终态**比例（happy→COMPLETED、timeout→FAILED 各记 1 分） | e2e 驱动逐场景判定 | 1.0 | 实测 |
 | 重试率 / 恢复率 | retry_count/replan_count 占比 | `erp_run_retries_total`/`erp_run_replans_total`/`erp_run_abandoned_total`（任务 7.3） | MEASURED | retry_rate 4.0 / recovery_rate 1.5 |
+| 端到端任务成功率 | completed / created，整体 + 按 tier 分层 | `erp_runs_completed_total` / `erp_runs_created_total`（P1 起 created 带 tier 标签，各层分母是真实总数而非仅已结算的 Run） | MEASURED | 接线已验证（e2e 2-run 样本），真实值待实测 |
+| 人工介入率 | (审批暂停 + 进人工队列的失败) / created | `erp_approval_requests_total{outcome="pending"}` + `erp_runs_failed_total` | MEASURED | 接线已验证（e2e 2-run 样本），真实值待实测 |
+
+**教学点**：为什么业务指标从计数器读、不靠 e2e 驱动那 2 条用例？单次 e2e 样本太小，是接线验证不是业务数字；计数器聚合的是真实生产流量，跑得越久越接近真值。**人工介入率的分子为什么是"审批暂停 + runs_failed"而不是再加 RECOVERY_RECONCILIATION_REQUIRED？** 每个终态失败都经 `FailureQueue.record` 入队（run_persistence.py），所以 `runs_failed` ≡ 人工队列入队数；RECOVERY_RECONCILIATION_REQUIRED 只是失败集合里需要人复核的子集，重复相加会把人命中断点算两次。
 
 **教学点**：为什么阶段延迟从 Prometheus 直方图读而非自己计时？评测脚本与生产埋点用**同一个**采集器（`graph_builder._observe_phase` 写 `METRICS.phase_latency`），测得的就是线上会看到的值；若脚本自己计时，埋点漂移就测不出来。读法用 `generate_latest` 文本解析 `_sum{phase=..}`/`_count{phase=..}`，这是公共 API，不碰私有 `_sum` 字段。
 
-**已知缺口**：`retry_count`/`replan_count` 只在 `AgentState` 字段，未落库、未上指标。执行成功率按"预期终态"判定（timeout 场景本来就该 FAILED，不计为失败）；真正的重试率/恢复率需新增生产指标（见 §5）。
+**已知缺口（已闭环）**：`retry_count`/`replan_count` 曾只在 `AgentState` 字段、未上指标——任务 7.3 已接线 `erp_run_retries_total`/`erp_run_replans_total`/`erp_run_abandoned_total`。执行成功率按"预期终态"判定（timeout 场景本来就该 FAILED，不计为失败），与上表 `e2e_task_success_rate`（completed/created）口径不同：前者是**单次 e2e 驱动**的预期终态达成率，后者是**计数器聚合**的端到端成功率。
 
 ### D3 可观测性指标验证（observability）
 

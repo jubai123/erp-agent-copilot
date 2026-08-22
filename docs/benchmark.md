@@ -12,6 +12,7 @@
 | 故障注入 | 3/3 场景 PASS | `uv run python tests/performance/fault_injection.py` |
 | 检索消融 | 42 条查询 × 3 配置 | `evals/reports/ablation_after_keyword_fix.json` |
 | 负载测试 | 50 并发/60s：1385 请求 0 失败，吞吐 23.25 req/s，P50 20ms / P95 44ms / P99 57ms | 本机实测，详见 §5 |
+| 业务闭环指标 | 端到端任务成功率 / 人工介入率：**接线已验证，数值待实测**（需长窗口真实流量） | 详见 §6 |
 
 ## 2. 检索消融（42 条查询，本机实测）
 
@@ -90,7 +91,18 @@ uv run locust -f tests/performance/locustfile.py \
 >
 > 环境：Windows 11、Postgres 与 Redis 同机、单进程 uvicorn、目标库为测试库 `erp_copilot_test`（绝不指回开发库）。原始 HTML 报告由上述命令即时生成，不入库。
 
-## 6. 复现全部数字
+## 6. 业务闭环指标（端到端任务成功率 / 人工介入率）— 接线已验证，数值待实测
+
+两个业务指标由 Prometheus 计数器直接聚合，P1 已闭环（定义见 `docs/14` §D2）：
+
+- **端到端任务成功率** = `erp_runs_completed_total / erp_runs_created_total`，并按 tier 分层。P1 起 `runs_created` 带 tier 标签（与图路由同一个 `route_query_layer` 分层），各层分母是真实总数而非仅已结算的 Run。
+- **人工介入率** = `(approval{pending} + runs_failed) / created`。每个终态失败都经 `FailureQueue.record` 入队，`runs_failed` ≡ 人工队列入队数；RECOVERY_RECONCILIATION_REQUIRED 是失败子集，不重复计入分子。
+
+**接线已验证**（2-run 样本，确定性计数器）：4 创建（2 tier1 + 2 tier2）、3 完成（2 tier1 + 1 tier2）、1 失败（tier2）、2 次审批暂停 → 成功率 0.75、人工介入率 0.75、tier1/tier2/tier3 分层 1.0 / 0.5 / 0.0。断言见 [test_engineering_metrics.py](../tests/unit/evals/test_engineering_metrics.py)。
+
+> **诚实标注**：业务指标反映真实生产流量，需长窗口运行后从 `GET /metrics` 读取；本机 2 条用例的样本只证明接线正确，**数值一律待实测**，不冒充业务数字。
+
+## 7. 复现全部数字
 
 ```bash
 uv run pytest tests/ -q                      # 1691 通过
