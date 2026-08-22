@@ -153,8 +153,8 @@ class TestCollectE2ERuntime:
         # Task 7.3: the D2 structural gap is closed — the counters exist and the
         # evaluator reads their actual values. 2 runs, 1 retry -> retry_rate 0.5.
         metrics = create_metrics()
-        metrics.runs_created.inc()
-        metrics.runs_created.inc()
+        metrics.runs_created.labels(tier="tier1").inc()
+        metrics.runs_created.labels(tier="tier1").inc()
         metrics.runs_retries.inc()
         result = collect_e2e_runtime(
             driver=lambda: {
@@ -169,6 +169,55 @@ class TestCollectE2ERuntime:
         assert names["retry_rate"]["value"] == 0.5
         assert names["recovery_rate"]["status"] == MEASURED
         assert names["recovery_rate"]["value"] == 0.0
+
+    def test_business_rates_measured_from_counters(self) -> None:
+        # P1 business-value closure: success and human-intervention rates derive
+        # from the real counters. 4 created (2 tier1 + 2 tier2), 3 completed
+        # (2 tier1 + 1 tier2), 1 failed (tier2), 2 approval pauses ->
+        # success 0.75, intervention (2+1)/4 = 0.75, per-tier 1.0 / 0.5.
+        metrics = create_metrics()
+        for _ in range(2):
+            metrics.runs_created.labels(tier="tier1").inc()
+        for _ in range(2):
+            metrics.runs_created.labels(tier="tier2").inc()
+        metrics.runs_completed.labels(tier="tier1").inc()
+        metrics.runs_completed.labels(tier="tier1").inc()
+        metrics.runs_completed.labels(tier="tier2").inc()
+        metrics.runs_failed.labels(tier="tier2").inc()
+        metrics.approval_requests.labels(outcome="pending").inc()
+        metrics.approval_requests.labels(outcome="pending").inc()
+        result = collect_e2e_runtime(
+            driver=lambda: {
+                "happy_path_success": True,
+                "timeout_detected": True,
+                "phase_latency_ms": {},
+            },
+            metrics=metrics,
+        )
+        names = {m["name"]: m for m in result["metrics"]}
+        assert names["e2e_task_success_rate"]["value"] == 0.75
+        assert names["e2e_task_success_rate"]["status"] == MEASURED
+        assert names["human_intervention_rate"]["value"] == 0.75
+        assert names["human_intervention_rate"]["status"] == MEASURED
+        assert names["e2e_task_success_rate_tier1"]["value"] == 1.0
+        assert names["e2e_task_success_rate_tier2"]["value"] == 0.5
+        assert names["e2e_task_success_rate_tier3"]["value"] == 0.0
+
+    def test_business_rates_zero_when_no_runs(self) -> None:
+        metrics = create_metrics()
+        result = collect_e2e_runtime(
+            driver=lambda: {
+                "happy_path_success": True,
+                "timeout_detected": True,
+                "phase_latency_ms": {},
+            },
+            metrics=metrics,
+        )
+        names = {m["name"]: m for m in result["metrics"]}
+        assert names["e2e_task_success_rate"]["value"] == 0.0
+        assert names["e2e_task_success_rate"]["status"] == MEASURED
+        assert names["human_intervention_rate"]["value"] == 0.0
+        assert names["human_intervention_rate"]["status"] == MEASURED
 
     def test_driver_failure_marks_group_skipped_but_keeps_rate_metrics(self) -> None:
         def _boom() -> dict[str, object]:

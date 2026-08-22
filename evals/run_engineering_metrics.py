@@ -199,6 +199,81 @@ def _recovery_rate_metrics(metrics: Metrics) -> list[Metric]:
     ]
 
 
+def _counter_value_by_label(text: str, family: str, label: str, value: str) -> float:
+    """Return *family*'s sample for one specific label value from exposition text."""
+    prefix = f'{family}{{{label}="{value}"}}'
+    for line in text.splitlines():
+        if line.startswith(prefix) and line[len(prefix) : len(prefix) + 1] == " ":
+            try:
+                return float(line.split()[-1])
+            except (ValueError, IndexError):
+                return 0.0
+    return 0.0
+
+
+def _rate(part: float, whole: float) -> float:
+    return round(part / whole, 4) if whole else 0.0
+
+
+_TIER_NAMES = ("tier1", "tier2", "tier3")
+
+
+def _business_rates_metrics(metrics: Metrics) -> list[Metric]:
+    """P1 business-value closure: end-to-end success and human-intervention rates.
+
+    End-to-end task success = completed / created, overall and per funnel tier
+    (created carries the same route_query_layer tier label the graph routes on,
+    so the per-tier denominator is the true total, not just settled runs).
+    Human-intervention = (approval pauses + runs failed into the human queue) /
+    created — every terminal failure routes through FailureQueue
+    (run_persistence), so runs_failed IS the queue-enqueue count and the
+    RECOVERY_RECONCILIATION_REQUIRED failures are a subset of it, not an
+    additive term. Both are MEASURED once the families are registered (0.0 when
+    no runs have occurred); a missing family falls back to NOT_CONFIGURED.
+    """
+    text = generate_latest(metrics)
+    families = _metric_family_names(text)
+    created = _counter_value(text, "erp_runs_created_total")
+    completed = _counter_value(text, "erp_runs_completed_total")
+    failed = _counter_value(text, "erp_runs_failed_total")
+    approval_pending = _counter_value_by_label(
+        text, "erp_approval_requests_total", "outcome", "pending"
+    )
+    measured = MEASURED if "erp_runs_created_total" in families else NOT_CONFIGURED
+    rates: list[Metric] = [
+        _metric(
+            "e2e_task_success_rate",
+            _rate(completed, created),
+            "rate",
+            "记录",
+            measured,
+            "erp_runs_completed_total / erp_runs_created_total",
+        ),
+        _metric(
+            "human_intervention_rate",
+            _rate(approval_pending + failed, created),
+            "rate",
+            "记录",
+            MEASURED if "erp_approval_requests_total" in families else NOT_CONFIGURED,
+            "(approval{pending} + runs_failed) / runs_created",
+        ),
+    ]
+    for tier in _TIER_NAMES:
+        created_tier = _counter_value_by_label(text, "erp_runs_created_total", "tier", tier)
+        completed_tier = _counter_value_by_label(text, "erp_runs_completed_total", "tier", tier)
+        rates.append(
+            _metric(
+                f"e2e_task_success_rate_{tier}",
+                _rate(completed_tier, created_tier),
+                "rate",
+                "记录",
+                measured,
+                f"{tier} 层 completed/created",
+            )
+        )
+    return rates
+
+
 def _scan_call_sites(dirs: Iterable[Path], patterns: tuple[str, ...], exclude: set[Path]) -> int:
     """Count lines containing any of *patterns* under *dirs*, minus definitions.
 
@@ -561,7 +636,11 @@ def collect_e2e_runtime(
             _metric("phase_latency_verify_ms", 0.0, "ms", "记录", SKIPPED, ""),
             _metric("execution_success_rate", 0.0, "rate", "≥ 0.99", SKIPPED, ""),
         ]
-        return _group("e2e_runtime", SKIPPED, skipped + _recovery_rate_metrics(metrics))
+        return _group(
+            "e2e_runtime",
+            SKIPPED,
+            skipped + _recovery_rate_metrics(metrics) + _business_rates_metrics(metrics),
+        )
 
     phase = _as_dict(m.get("phase_latency_ms"))
     happy_ok = m.get("happy_path_success") is True
@@ -625,7 +704,7 @@ def collect_e2e_runtime(
     return _group(
         "e2e_runtime",
         _group_status(measured),
-        measured + _recovery_rate_metrics(metrics),
+        measured + _recovery_rate_metrics(metrics) + _business_rates_metrics(metrics),
     )
 
 
