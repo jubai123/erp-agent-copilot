@@ -33,6 +33,22 @@ class TestDomainToolMap:
         """L1 injection and tool filtering must share the intent taxonomy."""
         assert set(DOMAIN_TOOL_MAP) == _load_intent_keys()
 
+    def test_classifier_output_space_covered_by_tool_map(self) -> None:
+        """Every (domain, action) classify_intent can emit must be a map key.
+
+        filter_candidates returns [] for an unknown intent, which would starve
+        the build_plan LLM of candidates (it then invents tools and fails
+        OUT_OF_CANDIDATES). The reachable space is the intent rules plus the
+        product/query fallback — classify_intent's cross-entity upgrades all
+        resolve to registered intents, so rules ∪ fallback is the complete set.
+        """
+        from erp_copilot.agent.nodes.classify_intent import _FALLBACK, _INTENT_RULES
+
+        reachable = {(domain, action) for _kw, domain, action, _risk in _INTENT_RULES}
+        reachable.add(_FALLBACK[0:2])
+        missing = reachable - set(DOMAIN_TOOL_MAP)
+        assert not missing, f"classifier emits intents without candidates: {sorted(missing)}"
+
     def test_all_v6_tools_referenced(self) -> None:
         mapped = {t for tools in DOMAIN_TOOL_MAP.values() for t in tools}
         assert mapped == set(V6_TOOL_NAMES)
