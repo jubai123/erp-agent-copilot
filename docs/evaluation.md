@@ -112,6 +112,6 @@ uv run python evals/run_planner_eval.py
 uv run evals/run_all.py                 # 175 条五大分类评测
 uv run python evals/scripts/run_security_eval.py   # 25 条安全守卫评测
 uv run python evals/scripts/run_ablation.py        # 42 条检索消融
-uv run pytest tests/ -q                 # 单元测试（1691 条通过）
+uv run pytest tests/ -q                 # 单元测试（2100 条通过）
 uv run python tests/performance/fault_injection.py # 故障注入 3/3 PASS
 ```

@@ -6,7 +6,7 @@
 
 ## 1. 一句话交付
 
-把自然语言 ERP 业务需求编译为**可解释、可审批、可恢复**的跨系统工具调用 DAG 的 Agent Runtime：FastAPI + LangGraph 状态机 + Celery + PostgreSQL/pgvector 混合检索 + MCP，四个进程、两个基础设施，**1691 个单元测试**、175 条离线评测、故障注入 3/3，并接通 AI 生产指标闭环（Trace/LLM 接线、恢复/审批/采纳率、Tier 分层成功率、在线 groundedness、写路径对账）。
+把自然语言 ERP 业务需求编译为**可解释、可审批、可恢复**的跨系统工具调用 DAG 的 Agent Runtime：FastAPI + LangGraph 状态机 + Celery + PostgreSQL/pgvector 混合检索 + MCP，四个进程、两个基础设施，**2100 个单元测试**、175 条离线评测、故障注入 3/3，并接通 AI 生产指标闭环（Trace/LLM 接线、恢复/审批/采纳率、Tier 分层成功率、在线 groundedness、写路径对账）。
 
 ## 2. 交付范围（已实现）
 
@@ -58,7 +58,7 @@
 
 | 指标 | 结果 | 依据 |
 |---|---|---|
-| 单元测试 | **1691 通过** | `uv run pytest tests/ -q` |
+| 单元测试 | **2100 通过** | `uv run pytest tests/ -q` |
 | 类型检查 | 103 个 src+apps 文件 mypy 干净 | `uv run mypy src/ apps/` |
 | 静态检查 | ruff check / format 全绿 | `uv run ruff check .` / `uv run ruff format --check .` |
 | 检索消融（42 条） | Rerank 使 **Recall@5 0.7381→0.9167**、NDCG@5 0.6824→0.8249；代价 P50 ~53→~226ms；Vector-only Recall@1 0.3968 反最高 | `uv run python evals/scripts/run_ablation.py` |
@@ -99,12 +99,12 @@
 
 - **git**：分支 `main`（默认分支）；`v1.0.0` 注解标签指向 2026-08-09 的 `0954377`（阶段六收尾）；**`v1.2` 注解标签指向当前 HEAD（2026-08-20，阶段七 AI 生产指标闭环 / 87 任务全部完成）**；工作树干净。
 - **远端**：`origin` → `https://github.com/jubai123/erp-agent-copilot.git`，本地领先 `origin/main` 21+ 提交未推送。
-- **门禁**：`uv run pytest tests/ -q` **1691 通过**、`uv run mypy src/ apps/` 干净（103 文件）、`uv run ruff check` / `format` 全绿。
+- **门禁**：`uv run pytest tests/ -q` **2100 通过**、`uv run mypy src/ apps/` 干净（103 文件）、`uv run ruff check` / `format` 全绿。
 
 ## 7. 复现全部数字
 
 ```bash
-uv run pytest tests/ -q                       # 1691 通过
+uv run pytest tests/ -q                       # 2100 通过
 uv run mypy src/ apps/                            # 103 文件干净
 uv run ruff check . && uv run ruff format --check
 uv run python tests/performance/fault_injection.py   # 3/3 PASS

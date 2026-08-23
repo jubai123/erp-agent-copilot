@@ -29,7 +29,7 @@
 | 指标 | 定义 | 测量方法 | 验收标准 | 当前基线 |
 |---|---|---|---|---|
 | 评测集正确率 | 五分类 175 条加权通过率 | `run_all(CATEGORY_RUNNERS)` | ≥ 0.95 | 待本次实测 |
-| 单测通过 | `pytest tests/` 失败数 | 子进程 | 0 failed | 1691 passed |
+| 单测通过 | `pytest tests/` 失败数 | 子进程 | 0 failed | 2100 passed |
 | 类型检查 | `mypy src/ apps/` 干净文件数 | 子进程 | 0 error | 103 文件 |
 | 静态检查 | `ruff check` / `ruff format --check` | 子进程 | 0 error | 通过 |
 | 故障注入 | 三场景 pass/total | `fault_injection.run_all()` | 3/3 PASS | 3/3 |
