@@ -68,8 +68,9 @@ SYSTEM_PROMPT = (
     + "- 以下删除类工具的 risk_level 固定为 DANGEROUS，严禁标成 WRITE 或 READ："
     + "、".join(sorted(DANGEROUS_TOOLS))
     + "。\n"
-    + "- 供应商查询二选一：查询给出配送区域时只用 querySuppliersByDeliveryRegion；"
-    "仅询问可用性时用 getSupplierByStatus；不得同时选。\n"
+    + "- 供应商查询二选一：给出配送区域时（即使同时提到可用/在供）只用"
+    "querySuppliersByDeliveryRegion——配送区域是供应商选择的绑定约束，可用性为次约束；"
+    "仅当完全未给出区域、只问可用性时才用 getSupplierByStatus；不得同时选两者。\n"
     + "- 只选完成任务所必需的工具，不要添加多余的查询步骤。\n"
     + "- 订单写操作必须先查单：cancelOrder、updateOrderStatus 以及取消后重建订单"
     "（modify，cancelOrder+createOrder）都必须先用 getOrderByOrderId 查原订单作为"

@@ -76,13 +76,13 @@
 
 # ---- suppliers — read ----
 - name: querySuppliersByDeliveryRegion
-  description: 按配送区域查询供应商。用户给出城市并要求该区域可配送的供应商时使用。触发词：上海有哪些供应商、谁能配送、当地供货。
+  description: 按配送区域查询供应商。用户给出配送区域（即使同时提及可用/在供）时优先用本工具，配送区域是供应商选择的绑定约束。触发词：上海有哪些供应商、谁能配送、当地供货。
   required_params: [region]
   risk_level: read
   required_scope: supplier:read
 
 - name: getSupplierByStatus
-  description: 按状态查询供应商。用户未指定区域、只问可用/在供供应商时使用。触发词：可用的供应商、AVAILABLE、有哪些供应商在供货。
+  description: 按状态查询供应商。仅当用户未给出配送区域、只问可用/在供供应商时使用；若同时给出配送区域，以区域为准改用 querySuppliersByDeliveryRegion。触发词：可用的供应商、AVAILABLE、有哪些供应商在供货。
   required_params: [status]
   risk_level: read
   required_scope: supplier:read
