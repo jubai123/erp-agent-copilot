@@ -170,6 +170,31 @@ class TestDataset200:
                     if region is not None and isinstance(region, str) and "$" not in region:
                         assert region in REGIONS, case["case_id"]
 
+    def test_create_order_with_literal_region_uses_region_query(self) -> None:
+        """A regional order's supplier step must be the region query, not status.
+
+        The deterministic planner (_supplier_read_step region branch) and
+        tool_retrieval tool-023 both make delivery region the binding
+        constraint for a supplier step: a status-only query can return a
+        supplier that does not serve the order's region (广州 has only 华南物流,
+        which is UNAVAILABLE), leaving the order silently unfillable. The 16
+        create+status cases were bulk-added in task 7.10 under the
+        availability-priority reading; this invariant pins the region-priority
+        semantics the rest of the system already enforces.
+        """
+        for case in _cases():
+            tools = [step["tool"] for step in case["steps"]]
+            if "createOrder" not in tools:
+                continue
+            order = next(step for step in case["steps"] if step["tool"] == "createOrder")
+            region = order["params"].get("region")
+            if not isinstance(region, str) or "$" in region:
+                continue  # cancel-rebuy chains reference the region, no supplier step
+            for step in case["steps"]:
+                assert step["tool"] != "getSupplierByStatus", (
+                    f"{case['case_id']}: regional create must not use status query"
+                )
+
     def test_intent_spread_across_layers(self) -> None:
         """No layer is a single-intent monoculture."""
         per_layer_intents: dict[str, set[str]] = {}

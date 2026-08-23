@@ -1,0 +1,1023 @@
+{
+  "summary": {
+    "total_cases": 40,
+    "categories": 1,
+    "failed_cases": 6,
+    "overall_score": 0.925
+  },
+  "categories": {
+    "planning_llm": {
+      "category": "planning_llm",
+      "num_cases": 40,
+      "mode": "llm_planner",
+      "split": "heldout",
+      "primary_score": 0.925,
+      "metrics": {
+        "tool_set_exact_rate": 0.925,
+        "tool_seq_exact_rate": 0.925,
+        "tool_coverage": 0.9833333333333334,
+        "contract_valid_rate": 0.875,
+        "parse_success_rate": 1.0,
+        "single_step_set_acc": 1.0,
+        "multi_step_set_acc": 0.85,
+        "multi_step_count": 20,
+        "risk_downgrade_rate": 0.1
+      },
+      "per_case": [
+        {
+          "case_id": "plan-001",
+          "expected": [
+            "getProductByName"
+          ],
+          "actual": [
+            "getProductByName"
+          ],
+          "single_step": true,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-006",
+          "expected": [
+            "getProductById"
+          ],
+          "actual": [
+            "getProductById"
+          ],
+          "single_step": true,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-009",
+          "expected": [
+            "getProductSubstitutesByName"
+          ],
+          "actual": [
+            "getProductSubstitutesByName"
+          ],
+          "single_step": true,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-012",
+          "expected": [
+            "getProductByName"
+          ],
+          "actual": [
+            "getProductByName"
+          ],
+          "single_step": true,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-017",
+          "expected": [
+            "getOrderByOrderId"
+          ],
+          "actual": [
+            "getOrderByOrderId"
+          ],
+          "single_step": true,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-021",
+          "expected": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "actual": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": false,
+          "validation_errors": [
+            "RISK_DOWNGRADE"
+          ],
+          "passed": false,
+          "detail": "工具选对但计划未通过确定性校验: ['RISK_DOWNGRADE']"
+        },
+        {
+          "case_id": "plan-026",
+          "expected": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "actual": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-031",
+          "expected": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "actual": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-036",
+          "expected": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "actual": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": false,
+          "validation_errors": [
+            "RISK_DOWNGRADE"
+          ],
+          "passed": false,
+          "detail": "工具选对但计划未通过确定性校验: ['RISK_DOWNGRADE']"
+        },
+        {
+          "case_id": "plan-041",
+          "expected": [
+            "getOrderByOrderId",
+            "cancelOrder"
+          ],
+          "actual": [
+            "getOrderByOrderId",
+            "cancelOrder"
+          ],
+          "single_step": false,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-046",
+          "expected": [
+            "getOrderByOrderId",
+            "updateOrderStatus"
+          ],
+          "actual": [
+            "getOrderByOrderId",
+            "updateOrderStatus"
+          ],
+          "single_step": false,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-049",
+          "expected": [
+            "getOrderByOrderId",
+            "cancelOrder",
+            "createOrder"
+          ],
+          "actual": [
+            "getOrderByOrderId",
+            "cancelOrder",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-052",
+          "expected": [
+            "getProductByName"
+          ],
+          "actual": [
+            "getProductByName"
+          ],
+          "single_step": true,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-057",
+          "expected": [
+            "getProductByName"
+          ],
+          "actual": [
+            "getProductByName"
+          ],
+          "single_step": true,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-062",
+          "expected": [
+            "getProductById"
+          ],
+          "actual": [
+            "getProductById"
+          ],
+          "single_step": true,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-067",
+          "expected": [
+            "querySuppliersByDeliveryRegion"
+          ],
+          "actual": [
+            "querySuppliersByDeliveryRegion"
+          ],
+          "single_step": true,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-072",
+          "expected": [
+            "getSupplierByStatus"
+          ],
+          "actual": [
+            "getSupplierByStatus"
+          ],
+          "single_step": true,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-077",
+          "expected": [
+            "getOrderByOrderId"
+          ],
+          "actual": [
+            "getOrderByOrderId"
+          ],
+          "single_step": true,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-086",
+          "expected": [
+            "getProductSubstitutesByName"
+          ],
+          "actual": [
+            "getProductSubstitutesByName"
+          ],
+          "single_step": true,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-091",
+          "expected": [
+            "getProductSubstitutesByName"
+          ],
+          "actual": [
+            "getProductSubstitutesByName"
+          ],
+          "single_step": true,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-096",
+          "expected": [
+            "getProductSubstitutesByName"
+          ],
+          "actual": [
+            "getProductSubstitutesByName"
+          ],
+          "single_step": true,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-101",
+          "expected": [
+            "getProductSubstitutesByName"
+          ],
+          "actual": [
+            "getProductSubstitutesByName"
+          ],
+          "single_step": true,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-106",
+          "expected": [
+            "getProductByName"
+          ],
+          "actual": [
+            "getProductByName"
+          ],
+          "single_step": true,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-111",
+          "expected": [
+            "getProductByName"
+          ],
+          "actual": [
+            "getProductByName"
+          ],
+          "single_step": true,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-116",
+          "expected": [
+            "querySuppliersByDeliveryRegion"
+          ],
+          "actual": [
+            "querySuppliersByDeliveryRegion"
+          ],
+          "single_step": true,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-121",
+          "expected": [
+            "querySuppliersByDeliveryRegion"
+          ],
+          "actual": [
+            "querySuppliersByDeliveryRegion"
+          ],
+          "single_step": true,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-126",
+          "expected": [
+            "getOrderByOrderId"
+          ],
+          "actual": [
+            "getOrderByOrderId"
+          ],
+          "single_step": true,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-133",
+          "expected": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "actual": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-138",
+          "expected": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "actual": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-143",
+          "expected": [
+            "getOrderByOrderId",
+            "cancelOrder"
+          ],
+          "actual": [
+            "getOrderByOrderId",
+            "cancelOrder"
+          ],
+          "single_step": false,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-148",
+          "expected": [
+            "getOrderByOrderId",
+            "updateOrderStatus"
+          ],
+          "actual": [
+            "getOrderByOrderId",
+            "updateOrderStatus"
+          ],
+          "single_step": false,
+          "difficulty": "easy",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-156",
+          "expected": [
+            "getProductByName",
+            "getSupplierByStatus",
+            "createOrder"
+          ],
+          "actual": [
+            "getSupplierByStatus",
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": false,
+          "tool_set_exact": false,
+          "tool_coverage": 1.0,
+          "contract_valid": false,
+          "validation_errors": [
+            "UNRESOLVED_REFERENCE",
+            "UNRESOLVED_REFERENCE"
+          ],
+          "passed": false,
+          "detail": "选定工具 {'getSupplierByStatus', 'getProductByName', 'querySuppliersByDeliveryRegion', 'createOrder'} != 期望 {'getSupplierByStatus', 'getProductByName', 'createOrder'}"
+        },
+        {
+          "case_id": "plan-161",
+          "expected": [
+            "getProductByName",
+            "getSupplierByStatus",
+            "createOrder"
+          ],
+          "actual": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": false,
+          "tool_set_exact": false,
+          "tool_coverage": 0.6666666666666666,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": false,
+          "detail": "选定工具 {'getProductByName', 'querySuppliersByDeliveryRegion', 'createOrder'} != 期望 {'getSupplierByStatus', 'getProductByName', 'createOrder'}"
+        },
+        {
+          "case_id": "plan-166",
+          "expected": [
+            "getProductByName",
+            "getSupplierByStatus",
+            "createOrder"
+          ],
+          "actual": [
+            "getProductByName",
+            "getSupplierByStatus",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": false,
+          "validation_errors": [
+            "RISK_DOWNGRADE"
+          ],
+          "passed": false,
+          "detail": "工具选对但计划未通过确定性校验: ['RISK_DOWNGRADE']"
+        },
+        {
+          "case_id": "plan-171",
+          "expected": [
+            "getOrderByOrderId",
+            "cancelOrder",
+            "createOrder"
+          ],
+          "actual": [
+            "getOrderByOrderId",
+            "cancelOrder",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-176",
+          "expected": [
+            "getOrderByOrderId",
+            "cancelOrder",
+            "createOrder"
+          ],
+          "actual": [
+            "getOrderByOrderId",
+            "cancelOrder",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-181",
+          "expected": [
+            "getOrderByOrderId",
+            "cancelOrder",
+            "createOrder"
+          ],
+          "actual": [
+            "getOrderByOrderId",
+            "cancelOrder",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-186",
+          "expected": [
+            "getOrderByOrderId",
+            "cancelOrder",
+            "createOrder"
+          ],
+          "actual": [
+            "getOrderByOrderId",
+            "cancelOrder",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "case_id": "plan-191",
+          "expected": [
+            "getProductByName",
+            "getSupplierByStatus",
+            "createOrder"
+          ],
+          "actual": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": false,
+          "tool_set_exact": false,
+          "tool_coverage": 0.6666666666666666,
+          "contract_valid": false,
+          "validation_errors": [
+            "RISK_DOWNGRADE"
+          ],
+          "passed": false,
+          "detail": "选定工具 {'getProductByName', 'querySuppliersByDeliveryRegion', 'createOrder'} != 期望 {'getSupplierByStatus', 'getProductByName', 'createOrder'}"
+        },
+        {
+          "case_id": "plan-196",
+          "expected": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "actual": [
+            "getProductByName",
+            "querySuppliersByDeliveryRegion",
+            "createOrder"
+          ],
+          "single_step": false,
+          "difficulty": "hard",
+          "parse_success": true,
+          "tool_seq_exact": true,
+          "tool_set_exact": true,
+          "tool_coverage": 1.0,
+          "contract_valid": true,
+          "validation_errors": [],
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "layers": {
+        "multi_easy": {
+          "num_cases": 10,
+          "tool_set_exact_rate": 1.0,
+          "ci_lower": 0.7224598312333834,
+          "ci_upper": 1.0,
+          "ci_half_width": 0.1387700843833083,
+          "tool_seq_exact_rate": 1.0,
+          "contract_valid_rate": 0.8,
+          "parse_success_rate": 1.0
+        },
+        "multi_hard": {
+          "num_cases": 10,
+          "tool_set_exact_rate": 0.7,
+          "ci_lower": 0.39677321997956516,
+          "ci_upper": 0.892210712513788,
+          "ci_half_width": 0.24771874626711143,
+          "tool_seq_exact_rate": 0.7,
+          "contract_valid_rate": 0.7,
+          "parse_success_rate": 1.0
+        },
+        "single_easy": {
+          "num_cases": 10,
+          "tool_set_exact_rate": 1.0,
+          "ci_lower": 0.7224598312333834,
+          "ci_upper": 1.0,
+          "ci_half_width": 0.1387700843833083,
+          "tool_seq_exact_rate": 1.0,
+          "contract_valid_rate": 1.0,
+          "parse_success_rate": 1.0
+        },
+        "single_hard": {
+          "num_cases": 10,
+          "tool_set_exact_rate": 1.0,
+          "ci_lower": 0.7224598312333834,
+          "ci_upper": 1.0,
+          "ci_half_width": 0.1387700843833083,
+          "tool_seq_exact_rate": 1.0,
+          "contract_valid_rate": 1.0,
+          "parse_success_rate": 1.0
+        }
+      },
+      "drift": {
+        "status": "ok",
+        "alarm": false,
+        "threshold": 0.02,
+        "delta": {
+          "tool_set_exact_rate": 0.0833,
+          "tool_seq_exact_rate": 0.0833,
+          "contract_valid_rate": 0.0833,
+          "parse_success_rate": 0.0
+        },
+        "tool_set_exact_delta": 0.0833,
+        "message": "tool_set_exact 相对基线变化 +8.33%（阈值 2%）"
+      }
+    }
+  },
+  "failures": [
+    {
+      "category": "planning_llm",
+      "case_id": "plan-021",
+      "expected": [
+        "getProductByName",
+        "querySuppliersByDeliveryRegion",
+        "createOrder"
+      ],
+      "actual": [
+        "getProductByName",
+        "querySuppliersByDeliveryRegion",
+        "createOrder"
+      ],
+      "detail": "工具选对但计划未通过确定性校验: ['RISK_DOWNGRADE']"
+    },
+    {
+      "category": "planning_llm",
+      "case_id": "plan-036",
+      "expected": [
+        "getProductByName",
+        "querySuppliersByDeliveryRegion",
+        "createOrder"
+      ],
+      "actual": [
+        "getProductByName",
+        "querySuppliersByDeliveryRegion",
+        "createOrder"
+      ],
+      "detail": "工具选对但计划未通过确定性校验: ['RISK_DOWNGRADE']"
+    },
+    {
+      "category": "planning_llm",
+      "case_id": "plan-156",
+      "expected": [
+        "getProductByName",
+        "getSupplierByStatus",
+        "createOrder"
+      ],
+      "actual": [
+        "getSupplierByStatus",
+        "getProductByName",
+        "querySuppliersByDeliveryRegion",
+        "createOrder"
+      ],
+      "detail": "选定工具 {'getSupplierByStatus', 'getProductByName', 'querySuppliersByDeliveryRegion', 'createOrder'} != 期望 {'getSupplierByStatus', 'getProductByName', 'createOrder'}"
+    },
+    {
+      "category": "planning_llm",
+      "case_id": "plan-161",
+      "expected": [
+        "getProductByName",
+        "getSupplierByStatus",
+        "createOrder"
+      ],
+      "actual": [
+        "getProductByName",
+        "querySuppliersByDeliveryRegion",
+        "createOrder"
+      ],
+      "detail": "选定工具 {'getProductByName', 'querySuppliersByDeliveryRegion', 'createOrder'} != 期望 {'getSupplierByStatus', 'getProductByName', 'createOrder'}"
+    },
+    {
+      "category": "planning_llm",
+      "case_id": "plan-166",
+      "expected": [
+        "getProductByName",
+        "getSupplierByStatus",
+        "createOrder"
+      ],
+      "actual": [
+        "getProductByName",
+        "getSupplierByStatus",
+        "createOrder"
+      ],
+      "detail": "工具选对但计划未通过确定性校验: ['RISK_DOWNGRADE']"
+    },
+    {
+      "category": "planning_llm",
+      "case_id": "plan-191",
+      "expected": [
+        "getProductByName",
+        "getSupplierByStatus",
+        "createOrder"
+      ],
+      "actual": [
+        "getProductByName",
+        "querySuppliersByDeliveryRegion",
+        "createOrder"
+      ],
+      "detail": "选定工具 {'getProductByName', 'querySuppliersByDeliveryRegion', 'createOrder'} != 期望 {'getSupplierByStatus', 'getProductByName', 'createOrder'}"
+    }
+  ],
+  "errors": {}
+}
