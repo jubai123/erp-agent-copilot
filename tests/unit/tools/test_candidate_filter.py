@@ -14,6 +14,7 @@ import yaml
 
 from erp_copilot.tools.candidate_filter import (
     DOMAIN_TOOL_MAP,
+    TOOL_RETRIEVAL_THRESHOLD,
     V6_TOOL_NAMES,
     filter_candidates,
     should_use_tool_retrieval,
@@ -53,11 +54,18 @@ class TestDomainToolMap:
         mapped = {t for tools in DOMAIN_TOOL_MAP.values() for t in tools}
         assert mapped == set(V6_TOOL_NAMES)
 
-    def test_candidates_are_3_to_8_for_main_intents(self) -> None:
-        """Main write intents get 3-8 candidates (design doc: 3-5)."""
+    def test_main_intents_stay_within_rerank_threshold(self) -> None:
+        """Main intents keep a bounded candidate set ≤ the rerank threshold.
+
+        The real DOMAIN_TOOL_MAP distribution is 0-5; the second-level rerank
+        only triggers strictly above TOOL_RETRIEVAL_THRESHOLD, so main intents
+        must never exceed it (that keeps the rerank layer off in production).
+        """
         for intent in [("order", "create"), ("product", "query"), ("order", "cancel")]:
             candidates = DOMAIN_TOOL_MAP[intent]
-            assert 3 <= len(candidates) <= 8, f"{intent}: {len(candidates)} candidates"
+            assert 3 <= len(candidates) <= TOOL_RETRIEVAL_THRESHOLD, (
+                f"{intent}: {len(candidates)} candidates"
+            )
 
     def test_supplier_intents_have_all_v6_supplier_tools(self) -> None:
         """V6 registers 4 supplier tools — all must be candidates."""

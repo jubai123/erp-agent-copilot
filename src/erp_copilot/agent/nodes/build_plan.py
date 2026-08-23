@@ -1,8 +1,9 @@
 """LLM Plan DAG builder node — task 4.6.
 
 Turns the constrained inputs into a :class:`Plan` by prompting the LLM once.
-The input is deliberately small: intent-filtered tool candidates (3-8, never
-the full registry), L1 active rules (hard constraints) and L2 retrieved
+The input is deliberately small: intent-filtered tool candidates (≤5 via
+DOMAIN_TOOL_MAP, never the full registry), L1 active rules (hard constraints)
+and L2 retrieved
 knowledge (reference), assembled in the injection order
 System → L1 → L2 → candidates → user query (docs/03 section 4).
 

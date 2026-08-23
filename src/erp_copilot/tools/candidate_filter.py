@@ -1,9 +1,11 @@
 """Deterministic tool candidate filtering — ADR decision 5.
 
-First level: (domain, action) → 3-8 candidate tools via DOMAIN_TOOL_MAP,
-shrinking the build_plan LLM's choice space from 25 to 3-5 tools.
+First level: (domain, action) → at most TOOL_RETRIEVAL_THRESHOLD candidate
+tools via DOMAIN_TOOL_MAP (real distribution 0-5 across the 19 intents),
+shrinking the build_plan LLM's choice space from the 25-tool registry to a
+small deterministic subset.
 Second level (reserved, not implemented): vector recall + rerank, enabled
-only when candidates exceed the threshold.
+only when candidates strictly exceed the threshold.
 
 The intent keys MUST match intent_rule_map.yaml — L1 rule injection and
 tool filtering share one intent taxonomy.

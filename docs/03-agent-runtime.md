@@ -79,7 +79,7 @@ classify_intent
 - 只输出符合Schema的Plan DAG。
 - 不能调用Tool，也不能绕过Policy。
 - 每个参数必须记录来源或待确认状态。
-- **输入被约束**：收到的工具候选是意图过滤后的 3-8 个（见 决策五），不是全部工具；收到的知识是 L1 硬约束规则加 L2 检索结果，L1 优先。
+- **输入被约束**：收到的工具候选是意图过滤后的 ≤5 个（见 决策五），不是全部工具；收到的知识是 L1 硬约束规则加 L2 检索结果，L1 优先。
 - **L1/L2 注入顺序**：System → L1 硬约束规则 → L2 Retrieved Knowledge（参考）→ Available Tools（候选）→ User Query。
 
 **三层漏斗（词表外默认开 LLM）**：`classify_intent` 先判复杂度/区域/词表，Tier1 词表内查询走确定性 `build_plan` 快速路径；Tier2/Tier3 词表外查询（复杂度闸门、未知区域、EMPTY_PLAN）走 LLM 规划节点 `build_plan_llm`。LLM 漏斗**默认启用**（`LLM_PLANNING_ENABLED=true`，见 .env.example），词表外意图/规划真正进生产主路径；`resolve_llm_plan_node` 三态接线：`false` 保持离线（tier2/3 诚实失败 `ROUTED_TIER23_NO_LLM`）、启用但无 key 报配置错误 `LLM_NOT_CONFIGURED`、启用有 key 走真实 `build_plan_node`。LLM 输出仍被 §5.6 四层确定性护栏严格校验，路由边界（`route_query_layer`）不随开关变化。
@@ -145,14 +145,14 @@ classify_intent
 第一级：意图→域确定性过滤（主引擎，必过）
   classify_intent 输出 (domain, action)
     → DOMAIN_TOOL_MAP 精确映射
-    → 候选 3-8 个，直接进 build_plan Prompt
+    → 候选 ≤5 个，直接进 build_plan Prompt
 
 第二级：向量检索精排（按需，仅当候选 > 阈值时启用）
-  候选数超过阈值（如 5-8 个）或描述超过 Token 预算
+  候选数严格大于阈值 5（TOOL_RETRIEVAL_THRESHOLD）或描述超过 Token 预算
     → 向量粗筛 + Rerank 精排 → Top-N
 ```
 
-V6 当前 9 个工具，第一级过滤后候选 3-5 个，直接进 Prompt，第二级不启用。架构上预留第二级接口，工具数量增长到每域超过 5-8 个时激活。这是 V5 两阶段（Milvus 向量 + Rerank）在 V6 中的重定义：从"每次必走的唯一引擎"降级为"意图过滤后的按需精排层"。详见 [11-architecture-decisions.md](11-architecture-decisions.md) 决策五。
+V6 注册 25 个工具（V5 云 ERP OpenAPI 全量），`(domain, action)` 过滤后候选 0-5 个（多数 2-4），直接进 Prompt，第二级不启用。架构上预留第二级接口，候选数严格大于阈值 5 时激活。这是 V5 两阶段（Milvus 向量 + Rerank）在 V6 中的重定义：从"每次必走的唯一引擎"降级为"意图过滤后的按需精排层"。详见 [11-architecture-decisions.md](11-architecture-decisions.md) 决策五。
 
 ## 5.6 Plan 正确性的四层防御
 

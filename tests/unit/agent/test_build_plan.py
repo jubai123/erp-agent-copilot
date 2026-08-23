@@ -1,7 +1,7 @@
 """Unit tests for the build_plan node — task 4.6.
 
 The node is where the LLM turns the constrained inputs into a Plan DAG. It
-receives intent-filtered tool candidates (DOMAIN_TOOL_MAP, 3-8, never the full
+receives intent-filtered tool candidates (DOMAIN_TOOL_MAP, ≤5, never the full
 registry), L1 active rules (hard constraints) and L2 retrieved knowledge
 (reference), and assembles the prompt in that exact injection order (docs/03
 section 4). The LLM is injected as a plain callable so the node is testable

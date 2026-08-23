@@ -886,9 +886,9 @@
 - `tests/unit/tools/test_candidate_filter.py`
 
 **验收标准**（落地核对）：
-- ✅ 主写意图 `(order/create, product/query, order/cancel)` 精确映射 3-8 个候选（测试钉死）；`supplier/query` 恰为 V6 注册的 2 个供应商工具；`security/data_access`、`system/scenario` 无工具候选（空列表）
+- ✅ 主写意图 `(order/create, product/query, order/cancel)` 精确映射 ≤5 个候选（测试钉死）；`supplier/query` 恰为 V6 注册的 2 个供应商工具；`security/data_access`、`system/scenario` 无工具候选（空列表）
 - ✅ V5 25 工具基线：V6 工具集精简为 9 个（见 docs/05 工具表），映射表与 V5 不再一一对应。40 条 Tool 检索评测 Case 已在任务 6.5 落地（`evals/datasets/tool_retrieval_40.json` 覆盖 9 个 V6 工具）；2026-08-13 增量闭合 hard_negative 消费——11 条陷阱用例显式标注 `confusion_tool`（被误读时选中的错误主工具，读意图陷阱一律指向写工具），runner 断言未误导到混淆工具并观测 `confusion_surfaced` 指标（`tests/unit/evals/test_run_all.py::TestToolRetrievalHardNegative` 钉死）。V5 两阶段检索思想保留为按需精排增长路径（session 06 决策）
-- ✅ 预留向量精排接口（`should_use_tool_retrieval` 严格大于阈值 5 才启用第二级），当前 9 个工具任何意图均不触发（`test_current_v6_intents_never_trigger_rerank` 钉死）
+- ✅ 预留向量精排接口（`should_use_tool_retrieval` 严格大于阈值 5 才启用第二级），当前 25 个工具任何意图均不触发（`test_current_v6_intents_never_trigger_rerank` 钉死）
 
 **教学要点**：
 | 概念 | 讲解内容 |
@@ -909,7 +909,7 @@
 - 输入查询和上下文→输出 Plan DAG JSON
 - 每个 Step 有 tool_name、arguments、depends_on
 - Planner 只输出 Plan，不直接调用工具
-- **工具候选约束**：收到的工具是意图过滤后的 3-8 个（来自 DOMAIN_TOOL_MAP），不是全部工具
+- **工具候选约束**：收到的工具是意图过滤后的 ≤5 个（来自 DOMAIN_TOOL_MAP），不是全部工具
 - **L1/L2 注入顺序**：System → L1 硬约束规则 → L2 Retrieved Knowledge（参考）→ 候选工具 → User Query
 - 检测 L1 约束被违反时（如非法状态转换），直接拒绝生成对应 Step
 
