@@ -1,0 +1,5 @@
+{
+  "claudeMdExcludes": [
+    "**/agent-copilot-v6/.claude/rules/**"
+  ]
+}
