@@ -145,7 +145,7 @@ POST /v1/runs
 - `otel-collector`
 - 可选`langfuse`、`prometheus`和`grafana`
 
-首版不要求Kubernetes。生产化讨论可以描述水平扩展API和Worker，但[REDACTED]指标必须来自实际测试环境。
+首版不要求Kubernetes。生产化讨论可以描述水平扩展API和Worker，但对外引用指标必须来自实际测试环境。
 
 ## 8. 关键故障边界
 
