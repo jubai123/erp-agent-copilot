@@ -27,6 +27,10 @@ tests/performance/reports/
 .ruff_cache/
 .code-review-graph/
 
+# 私有工作文档：会话历史与学习笔记，不进版本库、不发布到远端
+session-history/
+learner-docs/
+
 # IDE
 .vscode/
 .idea/
